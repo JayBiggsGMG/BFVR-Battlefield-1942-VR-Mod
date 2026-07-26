@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "profile_id": "bf1942-win32-decbb52f",
+  "status": "observation-only",
+  "executable": {
+    "filename": "BF1942.exe",
+    "sha256": "DECBB52F2D10420AED4CE91F6BF0BF56895D42071D3483847026BEBC8B11A57C",
+    "size_bytes": 5648384,
+    "pe_signature": "0x00004550",
+    "machine": "0x014C (x86)",
+    "coff_timestamp_utc": "2004-10-19T19:02:28Z",
+    "image_base": "0x00400000"
+  },
+  "observed_environment": {
+    "module_inventory_status": "partial",
+    "observed_root_modules": [
+      "bfcprt.dll: 8B0D75909EC25BBAA49650D7DA383E05DDB6AEE5AE601681754B2B03B2F2B3AD",
+      "binkw32.dll: 892A51C4056EFCB22297A3B44A3491E3F5888F28B08ED1B17030F24ACFFEDB44",
+      "dsound.dll: 3A8B5ACA3BA3E4E75037DA743303DC8E5F4484A9F80AF1D42DA7D9636BDC164C",
+      "dxgi.dll: 17EE894D6380B99415449C2075BDF89D18200DB6418B11992043B7A11F4EDC21",
+      "mfc70.dll: A133F981269D550812AC443F8171013767EDF75FD5E8F45F28E10D87132DF5C7",
+      "msvcr70.dll: F68E4CDBC879423EA47D763A6768567F5F8063924F13A74239750C13FA8D168A"
+    ],
+    "community_fix_signals": [
+      "dxgi.dll identifies itself as ReShade 5.7.0.1712 / ReShade32.dll.",
+      "dsound.dll has no version metadata and a sibling dsound.dll.oldversion is present.",
+      "bf42plus.ini is present with smootherGameplay = on."
+    ],
+    "notes": [
+      "Root dxgi.dll is ReShade 5.7.0.1712 (32-bit), observed from ReShade.log.",
+      "Any root DLL may be a widescreen, Alt+Tab, audio, renderer, or other community fix until separately classified.",
+      "This profile records the current checkout only; it is not a supported attachment profile.",
+      "BFVR must never overwrite a non-BFVR file; coexistence requires an explicit compatibility result."
+    ]
+  },
+  "baseline_scenario": {
+    "status": "candidate-unvalidated",
+    "candidate": {
+      "level": "Aberdeen",
+      "gameplay_mode": "GPM_CQ",
+      "game": "BF1942",
+      "launch_arguments": [
+        "+hostServer",
+        "1",
+        "+level",
+        "Aberdeen",
+        "+gamePlayMode",
+        "GPM_CQ",
+        "+game",
+        "BF1942"
+      ]
+    },
+    "asset_evidence": "Mods/bf1942/Archives/bf1942/levels/Aberdeen.rfa and Aberdeen_006.rfa are present in this game root.",
+    "reason": "The current Settings/maplist.con instead names GC_Dantooine/GPM_CQ/GCMOD, while bf1942/levels/gc_mini_dant contains only loadcounter.dat. The explicit Aberdeen candidate still requires a successful flat local-host run before it becomes the reproducible baseline. Recent copy/stream observations occurred after the user manually loaded Battle of Britain and do not validate this candidate.",
+    "observer_note": "Do not pass +restart 1 to BFVRLoader: the initially injected process exits cleanly before D3D8 initialization, so its replacement process is not observed. A prior no-restart Aberdeen attempt exited before Direct3DCreate8; the recent user-loaded Battle of Britain sessions do not change that result."
+  },
+  "compatibility": {
+    "required_before_attach": [
+      "D3D8 device/reset/present path validated for this exact executable.",
+      "A complete offline/local regression map and launch procedure recorded."
+    ]
+  }
+}

@@ -1,0 +1,11 @@
+EXPORTS
+	ValidatePixelShader
+	ValidateVertexShader
+	DebugSetMute
+	Direct3DCreate8
+	BFVRD3D8To9GetRuntimeDiagnostics
+	BFVRD3D8To9GetSharedBridgeVersion
+	BFVRD3D8To9GetSharedDeviceDiagnostics
+	BFVRD3D8To9GetVertexShaderIdentity
+	BFVRD3D8To9CreateSharedRenderTarget
+	BFVRD3D8To9WaitForGpu

@@ -1,0 +1,863 @@
+#include "presenter/D3D11TextureScaler.h"
+
+#include <d3dcompiler.h>
+
+#include <algorithm>
+#include <cstdarg>
+#include <cstring>
+#include <cstdio>
+#include <iterator>
+
+namespace
+{
+constexpr char kFullscreenVertexShader[] = R"(
+struct VertexOutput
+{
+    float4 position : SV_Position;
+    float2 texcoord : TEXCOORD0;
+};
+
+VertexOutput main(uint vertexId : SV_VertexID)
+{
+    VertexOutput output;
+    const float2 position = vertexId == 0
+        ? float2(-1.0, -1.0)
+        : vertexId == 1
+        ? float2(-1.0, 3.0)
+        : float2(3.0, -1.0);
+    output.position = float4(position, 0.0, 1.0);
+    output.texcoord = float2(
+        (position.x + 1.0) * 0.5,
+        (1.0 - position.y) * 0.5);
+    return output;
+}
+)";
+
+constexpr char kTexturePixelShader[] = R"(
+Texture2D sourceTexture : register(t0);
+SamplerState sourceSampler : register(s0);
+cbuffer Configuration : register(b0)
+{
+    float sourceAlreadyLinear;
+    float bloomThreshold;
+    float bloomIntensity;
+    float configurationPadding0;
+    float2 bloomTexelSize;
+    float2 configurationPadding1;
+};
+
+float3 SrgbToLinear(float3 color)
+{
+    const float3 low = color / 12.92;
+    const float3 high = pow((color + 0.055) / 1.055, 2.4);
+    return lerp(high, low, step(color, 0.04045));
+}
+
+float4 main(float4 position : SV_Position, float2 texcoord : TEXCOORD0) : SV_Target
+{
+    const float4 encoded = sourceTexture.Sample(sourceSampler, texcoord);
+    const float3 linearColor = sourceAlreadyLinear > 0.5
+        ? encoded.rgb
+        : SrgbToLinear(encoded.rgb);
+    return float4(linearColor, encoded.a);
+}
+)";
+
+constexpr char kFxaaPixelShader[] = R"(
+Texture2D sourceTexture : register(t0);
+SamplerState sourceSampler : register(s0);
+cbuffer Configuration : register(b0)
+{
+    float sourceAlreadyLinear;
+    float bloomThreshold;
+    float bloomIntensity;
+    float configurationPadding0;
+    float2 bloomTexelSize;
+    float2 configurationPadding1;
+};
+
+float Luma(float3 color)
+{
+    return dot(color, float3(0.299, 0.587, 0.114));
+}
+
+float3 SrgbToLinear(float3 color)
+{
+    const float3 low = color / 12.92;
+    const float3 high = pow((color + 0.055) / 1.055, 2.4);
+    return lerp(high, low, step(color, 0.04045));
+}
+
+float4 main(float4 position : SV_Position, float2 texcoord : TEXCOORD0) : SV_Target
+{
+    uint width;
+    uint height;
+    sourceTexture.GetDimensions(width, height);
+    const float2 texel = 1.0 / float2(width, height);
+
+    const float4 center = sourceTexture.SampleLevel(
+        sourceSampler, texcoord, 0.0);
+    const float3 northwest = sourceTexture.SampleLevel(
+        sourceSampler, texcoord + float2(-1.0, -1.0) * texel, 0.0).rgb;
+    const float3 northeast = sourceTexture.SampleLevel(
+        sourceSampler, texcoord + float2(1.0, -1.0) * texel, 0.0).rgb;
+    const float3 southwest = sourceTexture.SampleLevel(
+        sourceSampler, texcoord + float2(-1.0, 1.0) * texel, 0.0).rgb;
+    const float3 southeast = sourceTexture.SampleLevel(
+        sourceSampler, texcoord + float2(1.0, 1.0) * texel, 0.0).rgb;
+
+    const float lumaCenter = Luma(center.rgb);
+    const float lumaNorthwest = Luma(northwest);
+    const float lumaNortheast = Luma(northeast);
+    const float lumaSouthwest = Luma(southwest);
+    const float lumaSoutheast = Luma(southeast);
+    const float lumaMinimum = min(
+        lumaCenter,
+        min(
+            min(lumaNorthwest, lumaNortheast),
+            min(lumaSouthwest, lumaSoutheast)));
+    const float lumaMaximum = max(
+        lumaCenter,
+        max(
+            max(lumaNorthwest, lumaNortheast),
+            max(lumaSouthwest, lumaSoutheast)));
+    const float lumaRange = lumaMaximum - lumaMinimum;
+
+    float3 filtered = center.rgb;
+    if (lumaRange >= max(0.0312, lumaMaximum * 0.125))
+    {
+        float2 direction = float2(
+            -((lumaNorthwest + lumaNortheast) -
+              (lumaSouthwest + lumaSoutheast)),
+            (lumaNorthwest + lumaSouthwest) -
+              (lumaNortheast + lumaSoutheast));
+        const float directionReduce = max(
+            (lumaNorthwest + lumaNortheast +
+             lumaSouthwest + lumaSoutheast) * (0.25 * 0.03125),
+            1.0 / 128.0);
+        const float reciprocalMinimum =
+            1.0 / (min(abs(direction.x), abs(direction.y)) +
+                   directionReduce);
+        direction = clamp(
+            direction * reciprocalMinimum,
+            float2(-8.0, -8.0),
+            float2(8.0, 8.0)) * texel;
+
+        const float3 rgbA = 0.5 * (
+            sourceTexture.SampleLevel(
+                sourceSampler,
+                texcoord + direction * (1.0 / 3.0 - 0.5),
+                0.0).rgb +
+            sourceTexture.SampleLevel(
+                sourceSampler,
+                texcoord + direction * (2.0 / 3.0 - 0.5),
+                0.0).rgb);
+        const float3 rgbB = rgbA * 0.5 + 0.25 * (
+            sourceTexture.SampleLevel(
+                sourceSampler,
+                texcoord + direction * -0.5,
+                0.0).rgb +
+            sourceTexture.SampleLevel(
+                sourceSampler,
+                texcoord + direction * 0.5,
+                0.0).rgb);
+        const float lumaB = Luma(rgbB);
+        filtered = lumaB < lumaMinimum || lumaB > lumaMaximum
+            ? rgbA
+            : rgbB;
+    }
+
+    const float3 linearColor = sourceAlreadyLinear > 0.5
+        ? filtered
+        : SrgbToLinear(filtered);
+    return float4(linearColor, center.a);
+}
+)";
+
+constexpr char kBloomDownsamplePixelShader[] = R"(
+Texture2D sourceTexture : register(t0);
+SamplerState sourceSampler : register(s0);
+cbuffer Configuration : register(b0)
+{
+    float sourceAlreadyLinear;
+    float bloomThreshold;
+    float bloomIntensity;
+    float configurationPadding0;
+    float2 bloomTexelSize;
+    float2 configurationPadding1;
+};
+
+float3 SrgbToLinear(float3 color)
+{
+    const float3 low = color / 12.92;
+    const float3 high = pow((color + 0.055) / 1.055, 2.4);
+    return lerp(high, low, step(color, 0.04045));
+}
+
+float4 main(float4 position : SV_Position, float2 texcoord : TEXCOORD0) : SV_Target
+{
+    uint width;
+    uint height;
+    sourceTexture.GetDimensions(width, height);
+    const float2 texel = 1.0 / float2(width, height);
+    const float2 offsets[5] = {
+        float2(0.0, 0.0),
+        float2(-1.0, -1.0),
+        float2(1.0, -1.0),
+        float2(-1.0, 1.0),
+        float2(1.0, 1.0)};
+    float3 encoded = float3(0.0, 0.0, 0.0);
+    [unroll]
+    for (uint index = 0; index < 5; ++index)
+    {
+        encoded += sourceTexture.SampleLevel(
+            sourceSampler,
+            texcoord + offsets[index] * texel,
+            0.0).rgb;
+    }
+    const float3 linearColor = sourceAlreadyLinear > 0.5
+        ? encoded * 0.2
+        : SrgbToLinear(encoded * 0.2);
+    const float luminance = dot(linearColor, float3(0.2126, 0.7152, 0.0722));
+    const float range = max(1.0 - bloomThreshold, 0.0001);
+    const float brightWeight = saturate((luminance - bloomThreshold) / range);
+    return float4(linearColor * brightWeight, 1.0);
+}
+)";
+
+constexpr char kBloomBlurHorizontalPixelShader[] = R"(
+Texture2D bloomTexture : register(t0);
+SamplerState sourceSampler : register(s0);
+cbuffer Configuration : register(b0)
+{
+    float sourceAlreadyLinear;
+    float bloomThreshold;
+    float bloomIntensity;
+    float configurationPadding0;
+    float2 bloomTexelSize;
+    float2 configurationPadding1;
+};
+
+float4 main(float4 position : SV_Position, float2 texcoord : TEXCOORD0) : SV_Target
+{
+    const float2 step = float2(bloomTexelSize.x, 0.0);
+    float3 color = bloomTexture.SampleLevel(sourceSampler, texcoord, 0.0).rgb * 0.227027;
+    color += bloomTexture.SampleLevel(sourceSampler, texcoord + step, 0.0).rgb * 0.1945946;
+    color += bloomTexture.SampleLevel(sourceSampler, texcoord - step, 0.0).rgb * 0.1945946;
+    color += bloomTexture.SampleLevel(sourceSampler, texcoord + step * 2.0, 0.0).rgb * 0.1216216;
+    color += bloomTexture.SampleLevel(sourceSampler, texcoord - step * 2.0, 0.0).rgb * 0.1216216;
+    color += bloomTexture.SampleLevel(sourceSampler, texcoord + step * 3.0, 0.0).rgb * 0.054054;
+    color += bloomTexture.SampleLevel(sourceSampler, texcoord - step * 3.0, 0.0).rgb * 0.054054;
+    return float4(color, 1.0);
+}
+)";
+
+constexpr char kBloomBlurVerticalPixelShader[] = R"(
+Texture2D bloomTexture : register(t0);
+SamplerState sourceSampler : register(s0);
+cbuffer Configuration : register(b0)
+{
+    float sourceAlreadyLinear;
+    float bloomThreshold;
+    float bloomIntensity;
+    float configurationPadding0;
+    float2 bloomTexelSize;
+    float2 configurationPadding1;
+};
+
+float4 main(float4 position : SV_Position, float2 texcoord : TEXCOORD0) : SV_Target
+{
+    const float2 step = float2(0.0, bloomTexelSize.y);
+    float3 color = bloomTexture.SampleLevel(sourceSampler, texcoord, 0.0).rgb * 0.227027;
+    color += bloomTexture.SampleLevel(sourceSampler, texcoord + step, 0.0).rgb * 0.1945946;
+    color += bloomTexture.SampleLevel(sourceSampler, texcoord - step, 0.0).rgb * 0.1945946;
+    color += bloomTexture.SampleLevel(sourceSampler, texcoord + step * 2.0, 0.0).rgb * 0.1216216;
+    color += bloomTexture.SampleLevel(sourceSampler, texcoord - step * 2.0, 0.0).rgb * 0.1216216;
+    color += bloomTexture.SampleLevel(sourceSampler, texcoord + step * 3.0, 0.0).rgb * 0.054054;
+    color += bloomTexture.SampleLevel(sourceSampler, texcoord - step * 3.0, 0.0).rgb * 0.054054;
+    return float4(color, 1.0);
+}
+)";
+
+bool CompileShader(
+    const char* source,
+    const char* target,
+    ID3DBlob** bytecode,
+    bfvr::shared::SharedTextureLogCallback logCallback,
+    void* logContext)
+{
+    ID3DBlob* errors = nullptr;
+    const HRESULT result = D3DCompile(
+        source,
+        strlen(source),
+        "BFVR-D3D11TextureScaler",
+        nullptr,
+        nullptr,
+        "main",
+        target,
+        D3DCOMPILE_ENABLE_STRICTNESS,
+        0,
+        bytecode,
+        &errors);
+    if (FAILED(result) && logCallback != nullptr)
+    {
+        wchar_t message[1024] = {};
+        if (errors != nullptr && errors->GetBufferPointer() != nullptr)
+        {
+            swprintf_s(
+                message,
+                L"D3D11 texture scaler could not compile %S: %S (HRESULT=0x%08lX).",
+                target,
+                static_cast<const char*>(errors->GetBufferPointer()),
+                static_cast<unsigned long>(result));
+        }
+        else
+        {
+            swprintf_s(
+                message,
+                L"D3D11 texture scaler could not compile %S (HRESULT=0x%08lX).",
+                target,
+                static_cast<unsigned long>(result));
+        }
+        logCallback(logContext, message);
+    }
+    if (errors != nullptr)
+    {
+        errors->Release();
+    }
+    return SUCCEEDED(result) && *bytecode != nullptr;
+}
+} // namespace
+
+namespace bfvr::shared
+{
+D3D11TextureScaler::~D3D11TextureScaler()
+{
+    Shutdown();
+}
+
+bool D3D11TextureScaler::Initialize(
+    ID3D11Device* device,
+    ID3D11DeviceContext* context,
+    SharedTextureLogCallback logCallback,
+    void* logContext,
+    bool enableBloom)
+{
+    Shutdown();
+    logCallback_ = logCallback;
+    logContext_ = logContext;
+    if (device == nullptr || context == nullptr)
+    {
+        WriteLog(L"D3D11 texture scaler received a null device or context.");
+        return false;
+    }
+    device_ = device;
+    device_->AddRef();
+
+    ID3DBlob* vertexBytecode = nullptr;
+    ID3DBlob* pixelBytecode = nullptr;
+    HRESULT result = E_FAIL;
+    if (CompileShader(
+            kFullscreenVertexShader,
+            "vs_4_0",
+            &vertexBytecode,
+            logCallback_,
+            logContext_))
+    {
+        result = device->CreateVertexShader(
+            vertexBytecode->GetBufferPointer(),
+            vertexBytecode->GetBufferSize(),
+            nullptr,
+            &vertexShader_);
+    }
+    if (SUCCEEDED(result) &&
+        CompileShader(
+            kTexturePixelShader,
+            "ps_4_0",
+            &pixelBytecode,
+            logCallback_,
+            logContext_))
+    {
+        result = device->CreatePixelShader(
+            pixelBytecode->GetBufferPointer(),
+            pixelBytecode->GetBufferSize(),
+            nullptr,
+            &colorPixelShader_);
+    }
+    if (pixelBytecode != nullptr)
+    {
+        pixelBytecode->Release();
+        pixelBytecode = nullptr;
+    }
+    if (vertexBytecode != nullptr)
+    {
+        vertexBytecode->Release();
+    }
+
+    if (SUCCEEDED(result) &&
+        CompileShader(
+            kFxaaPixelShader,
+            "ps_4_0",
+            &pixelBytecode,
+            logCallback_,
+            logContext_))
+    {
+        result = device->CreatePixelShader(
+            pixelBytecode->GetBufferPointer(),
+            pixelBytecode->GetBufferSize(),
+            nullptr,
+            &fxaaPixelShader_);
+    }
+    if (pixelBytecode != nullptr)
+    {
+        pixelBytecode->Release();
+        pixelBytecode = nullptr;
+    }
+
+    if (enableBloom)
+    {
+        if (SUCCEEDED(result) &&
+            CompileShader(
+                kBloomDownsamplePixelShader,
+                "ps_4_0",
+                &pixelBytecode,
+                logCallback_,
+                logContext_))
+        {
+            result = device->CreatePixelShader(
+                pixelBytecode->GetBufferPointer(),
+                pixelBytecode->GetBufferSize(),
+                nullptr,
+                &bloomDownsamplePixelShader_);
+        }
+        if (pixelBytecode != nullptr)
+        {
+            pixelBytecode->Release();
+            pixelBytecode = nullptr;
+        }
+        if (SUCCEEDED(result) &&
+            CompileShader(
+                kBloomBlurHorizontalPixelShader,
+                "ps_4_0",
+                &pixelBytecode,
+                logCallback_,
+                logContext_))
+        {
+            result = device->CreatePixelShader(
+                pixelBytecode->GetBufferPointer(),
+                pixelBytecode->GetBufferSize(),
+                nullptr,
+                &bloomBlurHorizontalPixelShader_);
+        }
+        if (pixelBytecode != nullptr)
+        {
+            pixelBytecode->Release();
+            pixelBytecode = nullptr;
+        }
+        if (SUCCEEDED(result) &&
+            CompileShader(
+                kBloomBlurVerticalPixelShader,
+                "ps_4_0",
+                &pixelBytecode,
+                logCallback_,
+                logContext_))
+        {
+            result = device->CreatePixelShader(
+                pixelBytecode->GetBufferPointer(),
+                pixelBytecode->GetBufferSize(),
+                nullptr,
+                &bloomBlurVerticalPixelShader_);
+        }
+        if (pixelBytecode != nullptr)
+        {
+            pixelBytecode->Release();
+            pixelBytecode = nullptr;
+        }
+    }
+
+    D3D11_BUFFER_DESC configurationDescription = {};
+    configurationDescription.ByteWidth = sizeof(float) * 8;
+    configurationDescription.Usage = D3D11_USAGE_DEFAULT;
+    configurationDescription.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+    if (SUCCEEDED(result))
+    {
+        result = device->CreateBuffer(
+            &configurationDescription,
+            nullptr,
+            &configurationBuffer_);
+    }
+
+    D3D11_SAMPLER_DESC samplerDescription = {};
+    samplerDescription.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+    samplerDescription.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
+    samplerDescription.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
+    samplerDescription.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+    samplerDescription.MaxLOD = D3D11_FLOAT32_MAX;
+    if (SUCCEEDED(result))
+    {
+        result = device->CreateSamplerState(&samplerDescription, &sampler_);
+    }
+    if (FAILED(result) ||
+        vertexShader_ == nullptr ||
+        colorPixelShader_ == nullptr ||
+        fxaaPixelShader_ == nullptr ||
+        (enableBloom &&
+            (bloomDownsamplePixelShader_ == nullptr ||
+             bloomBlurHorizontalPixelShader_ == nullptr ||
+             bloomBlurVerticalPixelShader_ == nullptr)) ||
+        configurationBuffer_ == nullptr ||
+        sampler_ == nullptr)
+    {
+        WriteLog(
+            L"D3D11 texture scaler initialization failed (HRESULT=0x%08lX).",
+            static_cast<unsigned long>(result));
+        Shutdown();
+        return false;
+    }
+
+    context_ = context;
+    context_->AddRef();
+    WriteLog(
+        enableBloom
+            ? L"D3D11 texture scaler initialized with aspect-fit sampling, legacy-sRGB transfer correction, world-only FXAA, and half-resolution bloom."
+            : L"D3D11 texture scaler initialized with aspect-fit sampling, legacy-sRGB transfer correction, and world-only FXAA; bloom shaders are not compiled.");
+    return true;
+}
+
+bool D3D11TextureScaler::ScaleAspectFit(
+    ID3D11ShaderResourceView* sourceView,
+    UINT sourceWidth,
+    UINT sourceHeight,
+    ID3D11RenderTargetView* destinationView,
+    UINT destinationWidth,
+    UINT destinationHeight,
+    bool transparentPadding,
+    bool sourceAlreadyLinear,
+    bool applyAntialiasing,
+    bool applyBloom,
+    float bloomThreshold,
+    float bloomIntensity)
+{
+    if (context_ == nullptr ||
+        device_ == nullptr ||
+        sourceView == nullptr ||
+        destinationView == nullptr ||
+        sourceWidth == 0 ||
+        sourceHeight == 0 ||
+        destinationWidth == 0 ||
+        destinationHeight == 0)
+    {
+        return false;
+    }
+
+    bloomThreshold = std::clamp(bloomThreshold, 0.0F, 1.0F);
+    bloomIntensity = std::clamp(bloomIntensity, 0.0F, 1.0F);
+    if (applyBloom &&
+        (!EnsureBloomResources(sourceWidth, sourceHeight) ||
+         !BuildBloom(sourceView, sourceAlreadyLinear, bloomThreshold)))
+    {
+        return false;
+    }
+
+    const float horizontalScale =
+        static_cast<float>(destinationWidth) / static_cast<float>(sourceWidth);
+    const float verticalScale =
+        static_cast<float>(destinationHeight) / static_cast<float>(sourceHeight);
+    const float scale = std::min(horizontalScale, verticalScale);
+    const float fittedWidth = static_cast<float>(sourceWidth) * scale;
+    const float fittedHeight = static_cast<float>(sourceHeight) * scale;
+    const D3D11_VIEWPORT viewport = {
+        (static_cast<float>(destinationWidth) - fittedWidth) * 0.5F,
+        (static_cast<float>(destinationHeight) - fittedHeight) * 0.5F,
+        fittedWidth,
+        fittedHeight,
+        0.0F,
+        1.0F};
+    const float clearColor[4] = {
+        0.0F,
+        0.0F,
+        0.0F,
+        transparentPadding ? 0.0F : 1.0F};
+
+    context_->ClearRenderTargetView(destinationView, clearColor);
+    context_->OMSetRenderTargets(1, &destinationView, nullptr);
+    context_->RSSetViewports(1, &viewport);
+    context_->IASetInputLayout(nullptr);
+    context_->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    context_->VSSetShader(vertexShader_, nullptr, 0);
+    UpdateConfiguration(
+        sourceAlreadyLinear,
+        bloomThreshold,
+        applyBloom ? bloomIntensity : 0.0F,
+        applyBloom ? 1.0F / static_cast<float>(bloomWidth_) : 0.0F,
+        applyBloom ? 1.0F / static_cast<float>(bloomHeight_) : 0.0F);
+    context_->PSSetShader(
+        applyAntialiasing ? fxaaPixelShader_ : colorPixelShader_,
+        nullptr,
+        0);
+    context_->PSSetConstantBuffers(0, 1, &configurationBuffer_);
+    context_->PSSetSamplers(0, 1, &sampler_);
+    context_->PSSetShaderResources(0, 1, &sourceView);
+    context_->Draw(3, 0);
+
+    ID3D11ShaderResourceView* nullView = nullptr;
+    context_->PSSetShaderResources(0, 1, &nullView);
+    ID3D11RenderTargetView* nullTarget = nullptr;
+    context_->OMSetRenderTargets(1, &nullTarget, nullptr);
+    return true;
+}
+
+bool D3D11TextureScaler::EnsureBloomResources(UINT sourceWidth, UINT sourceHeight)
+{
+    const UINT requiredWidth = std::max<UINT>(1, (sourceWidth + 1) / 2);
+    const UINT requiredHeight = std::max<UINT>(1, (sourceHeight + 1) / 2);
+    if (bloomWidth_ == requiredWidth &&
+        bloomHeight_ == requiredHeight &&
+        bloomTextures_[0] != nullptr && bloomTextures_[1] != nullptr &&
+        bloomViews_[0] != nullptr && bloomViews_[1] != nullptr &&
+        bloomTargets_[0] != nullptr && bloomTargets_[1] != nullptr)
+    {
+        return true;
+    }
+
+    ReleaseBloomResources();
+    D3D11_TEXTURE2D_DESC description = {};
+    description.Width = requiredWidth;
+    description.Height = requiredHeight;
+    description.MipLevels = 1;
+    description.ArraySize = 1;
+    description.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+    description.SampleDesc.Count = 1;
+    description.Usage = D3D11_USAGE_DEFAULT;
+    description.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
+
+    HRESULT result = S_OK;
+    for (std::size_t index = 0; index < std::size(bloomTextures_); ++index)
+    {
+        result = device_->CreateTexture2D(
+            &description,
+            nullptr,
+            &bloomTextures_[index]);
+        if (SUCCEEDED(result))
+        {
+            result = device_->CreateShaderResourceView(
+                bloomTextures_[index],
+                nullptr,
+                &bloomViews_[index]);
+        }
+        if (SUCCEEDED(result))
+        {
+            result = device_->CreateRenderTargetView(
+                bloomTextures_[index],
+                nullptr,
+                &bloomTargets_[index]);
+        }
+        if (FAILED(result))
+        {
+            WriteLog(
+                L"D3D11 texture scaler could not allocate half-resolution bloom targets %ux%u (HRESULT=0x%08lX).",
+                requiredWidth,
+                requiredHeight,
+                static_cast<unsigned long>(result));
+            ReleaseBloomResources();
+            return false;
+        }
+    }
+    bloomWidth_ = requiredWidth;
+    bloomHeight_ = requiredHeight;
+    WriteLog(
+        L"D3D11 texture scaler allocated two half-resolution HDR bloom targets (%ux%u).",
+        bloomWidth_,
+        bloomHeight_);
+    return true;
+}
+
+bool D3D11TextureScaler::BuildBloom(
+    ID3D11ShaderResourceView* sourceView,
+    bool sourceAlreadyLinear,
+    float bloomThreshold)
+{
+    if (sourceView == nullptr || bloomWidth_ == 0 || bloomHeight_ == 0)
+    {
+        return false;
+    }
+
+    const D3D11_VIEWPORT bloomViewport = {
+        0.0F,
+        0.0F,
+        static_cast<float>(bloomWidth_),
+        static_cast<float>(bloomHeight_),
+        0.0F,
+        1.0F};
+    auto drawBloomPass = [this, &bloomViewport](
+                             ID3D11ShaderResourceView* input,
+                             ID3D11RenderTargetView* output,
+                             ID3D11PixelShader* shader,
+                             bool inputAlreadyLinear,
+                             float threshold) -> bool
+    {
+        if (input == nullptr || output == nullptr || shader == nullptr)
+        {
+            return false;
+        }
+        UpdateConfiguration(
+            inputAlreadyLinear,
+            threshold,
+            0.0F,
+            1.0F / static_cast<float>(bloomWidth_),
+            1.0F / static_cast<float>(bloomHeight_));
+        context_->OMSetRenderTargets(1, &output, nullptr);
+        context_->RSSetViewports(1, &bloomViewport);
+        context_->IASetInputLayout(nullptr);
+        context_->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        context_->VSSetShader(vertexShader_, nullptr, 0);
+        context_->PSSetShader(shader, nullptr, 0);
+        context_->PSSetConstantBuffers(0, 1, &configurationBuffer_);
+        context_->PSSetSamplers(0, 1, &sampler_);
+        context_->PSSetShaderResources(0, 1, &input);
+        context_->Draw(3, 0);
+        ID3D11ShaderResourceView* nullView = nullptr;
+        context_->PSSetShaderResources(0, 1, &nullView);
+        ID3D11RenderTargetView* nullTarget = nullptr;
+        context_->OMSetRenderTargets(1, &nullTarget, nullptr);
+        return true;
+    };
+
+    return drawBloomPass(
+               sourceView,
+               bloomTargets_[0],
+               bloomDownsamplePixelShader_,
+               sourceAlreadyLinear,
+               bloomThreshold) &&
+        drawBloomPass(
+            bloomViews_[0],
+            bloomTargets_[1],
+            bloomBlurHorizontalPixelShader_,
+            true,
+            bloomThreshold) &&
+        drawBloomPass(
+            bloomViews_[1],
+            bloomTargets_[0],
+            bloomBlurVerticalPixelShader_,
+            true,
+            bloomThreshold);
+}
+
+void D3D11TextureScaler::ReleaseBloomResources()
+{
+    for (std::size_t index = 0; index < std::size(bloomTextures_); ++index)
+    {
+        if (bloomTargets_[index] != nullptr)
+        {
+            bloomTargets_[index]->Release();
+            bloomTargets_[index] = nullptr;
+        }
+        if (bloomViews_[index] != nullptr)
+        {
+            bloomViews_[index]->Release();
+            bloomViews_[index] = nullptr;
+        }
+        if (bloomTextures_[index] != nullptr)
+        {
+            bloomTextures_[index]->Release();
+            bloomTextures_[index] = nullptr;
+        }
+    }
+    bloomWidth_ = 0;
+    bloomHeight_ = 0;
+}
+
+void D3D11TextureScaler::UpdateConfiguration(
+    bool sourceAlreadyLinear,
+    float bloomThreshold,
+    float bloomIntensity,
+    float bloomTexelWidth,
+    float bloomTexelHeight)
+{
+    const float configuration[8] = {
+        sourceAlreadyLinear ? 1.0F : 0.0F,
+        bloomThreshold,
+        bloomIntensity,
+        0.0F,
+        bloomTexelWidth,
+        bloomTexelHeight,
+        0.0F,
+        0.0F};
+    context_->UpdateSubresource(
+        configurationBuffer_,
+        0,
+        nullptr,
+        configuration,
+        0,
+        0);
+}
+
+void D3D11TextureScaler::Shutdown()
+{
+    ReleaseBloomResources();
+    if (sampler_ != nullptr)
+    {
+        sampler_->Release();
+        sampler_ = nullptr;
+    }
+    if (configurationBuffer_ != nullptr)
+    {
+        configurationBuffer_->Release();
+        configurationBuffer_ = nullptr;
+    }
+    if (fxaaPixelShader_ != nullptr)
+    {
+        fxaaPixelShader_->Release();
+        fxaaPixelShader_ = nullptr;
+    }
+    if (bloomBlurVerticalPixelShader_ != nullptr)
+    {
+        bloomBlurVerticalPixelShader_->Release();
+        bloomBlurVerticalPixelShader_ = nullptr;
+    }
+    if (bloomBlurHorizontalPixelShader_ != nullptr)
+    {
+        bloomBlurHorizontalPixelShader_->Release();
+        bloomBlurHorizontalPixelShader_ = nullptr;
+    }
+    if (bloomDownsamplePixelShader_ != nullptr)
+    {
+        bloomDownsamplePixelShader_->Release();
+        bloomDownsamplePixelShader_ = nullptr;
+    }
+    if (colorPixelShader_ != nullptr)
+    {
+        colorPixelShader_->Release();
+        colorPixelShader_ = nullptr;
+    }
+    if (vertexShader_ != nullptr)
+    {
+        vertexShader_->Release();
+        vertexShader_ = nullptr;
+    }
+    if (context_ != nullptr)
+    {
+        context_->Release();
+        context_ = nullptr;
+    }
+    if (device_ != nullptr)
+    {
+        device_->Release();
+        device_ = nullptr;
+    }
+}
+
+void D3D11TextureScaler::WriteLog(const wchar_t* format, ...) const
+{
+    if (logCallback_ == nullptr)
+    {
+        return;
+    }
+    wchar_t message[1024] = {};
+    va_list arguments;
+    va_start(arguments, format);
+    _vsnwprintf_s(message, std::size(message), _TRUNCATE, format, arguments);
+    va_end(arguments);
+    logCallback_(logContext_, message);
+}
+} // namespace bfvr::shared
