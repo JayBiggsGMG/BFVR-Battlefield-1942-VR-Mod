@@ -41,9 +41,66 @@ BOOL TryGetD3D8ObserverLifecycle(bfvr::D3D8ObserverLifecycle* lifecycle)
     return TRUE;
 }
 
+// Continuous presentation needs the device as soon as the first native
+// Present proves its vtable and owning thread. Waiting for the later
+// Reset/post-Reset diagnostic chain makes BF1942's spawn transition the
+// accidental OpenXR startup gate.
+BOOL TryGetD3D8PresentationLifecycle(
+    bfvr::D3D8ObserverLifecycle* lifecycle)
+{
+    const LONG stage =
+        InterlockedCompareExchange(&g_createDeviceBreakpoint.stage, 0, 0);
+    if (lifecycle == nullptr ||
+        stage < 4 ||
+        g_createDeviceBreakpoint.device == nullptr ||
+        g_createDeviceBreakpoint.presentTarget == nullptr ||
+        !g_createDeviceBreakpoint.presentObserved ||
+        !g_createDeviceBreakpoint.presentationReadable)
+    {
+        return FALSE;
+    }
+
+    lifecycle->device = g_createDeviceBreakpoint.device;
+    lifecycle->deviceThreadId = g_createDeviceBreakpoint.threadId;
+    lifecycle->presentationReadable =
+        g_createDeviceBreakpoint.presentationReadable;
+    lifecycle->backBufferWidth =
+        g_createDeviceBreakpoint.presentation.backBufferWidth;
+    lifecycle->backBufferHeight =
+        g_createDeviceBreakpoint.presentation.backBufferHeight;
+    return TRUE;
+}
+
 BOOL IsD3D8ObserverCaptureEligible()
 {
     return InterlockedCompareExchange(&g_sustainedLocalPlayerAliveObserved, 0, 0) != 0;
+}
+
+// Presentation mode uses the immediate native gameplay transition for its
+// head-reference/UI policy. Bounded diagnostic captures retain the separate
+// eight-sample debounce above.
+BOOL IsD3D8ObserverGameplayActive()
+{
+    constexpr DWORD_PTR kPlayerManagerAddress = 0x0097D76C;
+    constexpr std::size_t kLocalPlayerOffset = 0x54;
+    constexpr std::size_t kIsAliveOffset = 0xA9;
+    __try
+    {
+        auto* const manager =
+            *reinterpret_cast<const std::byte* const*>(
+                kPlayerManagerAddress);
+        const auto* const localPlayer = manager == nullptr
+            ? nullptr
+            : *reinterpret_cast<const std::byte* const*>(
+                manager + kLocalPlayerOffset);
+        return localPlayer != nullptr &&
+            *reinterpret_cast<const BYTE*>(
+                localPlayer + kIsAliveOffset) != 0;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        return FALSE;
+    }
 }
 
 void AppendD3D8ObserverLog(const wchar_t* message)

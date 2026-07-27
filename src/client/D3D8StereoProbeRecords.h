@@ -180,6 +180,7 @@ struct StereoFrameRecord
     volatile LONG treeMeshAlphaBlockDraws = 0;
     volatile LONG treeMeshProgrammableSpriteDraws = 0;
     volatile LONG animatedMeshSkinningDraws = 0;
+    volatile LONG suppressedFirstPersonArmDraws = 0;
     volatile LONG translucentSpriteDraws = 0;
     volatile LONG ref2FontGlyphBatchDraws = 0;
     volatile LONG ref2MenuQuadDraws = 0;
@@ -237,6 +238,7 @@ struct PresentationRunRecord
     volatile LONG totalTreeMeshAlphaBlockDraws = 0;
     volatile LONG totalTreeMeshProgrammableSpriteDraws = 0;
     volatile LONG totalAnimatedMeshSkinningDraws = 0;
+    volatile LONG totalSuppressedFirstPersonArmDraws = 0;
     volatile LONG totalTranslucentSpriteDraws = 0;
     std::int64_t totalReplayQpcTicks = 0;
     std::int64_t totalReadbackQpcTicks = 0;

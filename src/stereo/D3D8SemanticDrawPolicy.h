@@ -43,4 +43,14 @@ struct BF1942D3D8DrawSignature
 [[nodiscard]] D3D8SemanticDrawClass ClassifyBF1942Win32SemanticDraw(
     const BF1942D3D8DrawSignature& signature) noexcept;
 
+// The profiled first-person arms use the exact AnimatedMeshSkinning family
+// above, but unlike remote soldiers they are rendered through BF1942's narrow
+// viewmodel projection. This fail-closed conjunction lets the VR replay omit
+// those assets globally without changing the game's flat render or content.
+[[nodiscard]] bool IsBF1942FirstPersonArmDraw(
+    D3D8SemanticDrawClass semanticClass,
+    bool perspective,
+    float projectionM00,
+    float projectionM11) noexcept;
+
 } // namespace bfvr::stereo

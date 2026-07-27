@@ -226,6 +226,48 @@ std::optional<EyePoses> ComputeEyePoses(const Pose& headPose, float ipdMeters) n
     return eyes;
 }
 
+std::optional<Pose> ComputeCentreViewPose(
+    const Pose& leftEye,
+    const Pose& rightEye) noexcept
+{
+    if (!IsFinite(leftEye.position) || !IsFinite(rightEye.position))
+    {
+        return std::nullopt;
+    }
+    const auto leftOrientation = Normalize(leftEye.orientation);
+    const auto rightOrientation = Normalize(rightEye.orientation);
+    if (!leftOrientation.has_value() || !rightOrientation.has_value())
+    {
+        return std::nullopt;
+    }
+
+    // Unit quaternions q and -q encode the same rotation. Put the right eye in
+    // the left eye's hemisphere before taking the normalized midpoint, which
+    // is the shortest-path halfway orientation for a stereo pair.
+    const float dot =
+        leftOrientation->x * rightOrientation->x +
+        leftOrientation->y * rightOrientation->y +
+        leftOrientation->z * rightOrientation->z +
+        leftOrientation->w * rightOrientation->w;
+    const float rightSign = dot < 0.0F ? -1.0F : 1.0F;
+    const auto centreOrientation = Normalize({
+        leftOrientation->x + rightOrientation->x * rightSign,
+        leftOrientation->y + rightOrientation->y * rightSign,
+        leftOrientation->z + rightOrientation->z * rightSign,
+        leftOrientation->w + rightOrientation->w * rightSign});
+    if (!centreOrientation.has_value())
+    {
+        return std::nullopt;
+    }
+
+    Pose result = {};
+    result.position = Scale(Add(leftEye.position, rightEye.position), 0.5F);
+    result.orientation = *centreOrientation;
+    return IsFinite(result.position) && IsFinite(result.orientation)
+        ? std::optional<Pose>(result)
+        : std::nullopt;
+}
+
 std::optional<Matrix4> MakeD3D8ViewFromOpenXRPose(const Pose& eyePose) noexcept
 {
     if (!IsFinite(eyePose.position))

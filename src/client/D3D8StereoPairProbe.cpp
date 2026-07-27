@@ -1,8 +1,12 @@
 #include "client/D3D8StereoPairProbe.h"
 #include "client/D3D8PresentationConfiguration.h"
-#include "client/D3D8PresentationRunControl.h"
 #include "client/D3D8RenderViewPoseHook.h"
 #include "client/ControllerInputOverlay.h"
+#include "client/CrosshairOverlay.h"
+#include "client/MenuPointerOverlay.h"
+#include "client/StartupMenuPresentation.h"
+#include "client/D3D8WeaponMotionOverlay.h"
+#include "client/WeaponAimOverlay.h"
 #include "client/D3D8SharedPresentationBridge.h"
 #include "client/D3D8StereoFrameTransfer.h"
 #include "client/D3D8StereoReadback.h"
@@ -224,6 +228,8 @@ struct FrameDrawInvocation
     UINT vertexStride = 0;
     void* gameStack[kProvenanceStackDepth] = {};
     UINT gameStackDepth = 0;
+    bool replayWeaponMotion = false;
+    D3DMatrix weaponMotionWorldAttachment = {};
 };
 
 struct DeviceMethods
@@ -259,6 +265,7 @@ struct DrawStateSnapshot
     D3DSurfaceDescription colorDescription = {};
     D3DSurfaceDescription depthDescription = {};
     D3DViewport viewport = {};
+    D3DMatrix world = {};
     D3DMatrix view = {};
     D3DMatrix projection = {};
     D3DMatrix leftView = {};
@@ -304,17 +311,18 @@ volatile LONG g_started = 0;
 std::uintptr_t g_gameImageBegin = 0;
 std::uintptr_t g_gameImageEnd = 0;
 bfvr::D3D8SharedPresentationBridge g_presentationBridge;
+bfvr::D3D8PresentationConfiguration g_presentationConfiguration = {};
 bfvr::D3D8RenderViewPoseHook g_renderViewPoseHook;
 bfvr::d3d8probe::D3D8StereoReadbackApi g_readbackApi = {};
 bfvr::D3D8RuntimeRenderRequest g_runtimeRenderRequest = {};
 bfvr::D3D8RuntimeView g_runtimeHeadReference = {};
 bool g_runtimeHeadReferenceReady = false;
+bool g_gameplayActive = false;
+bool g_frameUiHeadLocked = false;
 D3DViewport g_runtimeWorldViewport = {};
 bool g_presentationFramePublished = false;
 bool g_offlinePresentation = false;
 bool g_runUntilStopped = false;
-HANDLE g_runStopEvent = nullptr;
-volatile LONG g_runStopRequested = 0;
 PresentationRunRecord g_presentationRun = {};
 bool IsFullFrameMode()
 {
@@ -324,6 +332,45 @@ bool IsFullFrameMode()
 bool IsPresentationMode()
 {
     return g_mode == ProbeMode::FullFramePresentation;
+}
+
+void AppendLog(const wchar_t* format, ...);
+
+bool IsGameplayActive()
+{
+    return g_callbacks.isCaptureEligible != nullptr &&
+        g_callbacks.isCaptureEligible();
+}
+
+void PrepareRuntimeRenderRequestPose()
+{
+    const bool gameplayActive = IsGameplayActive();
+    g_frameUiHeadLocked =
+        gameplayActive &&
+        !bfvr::IsMenuPointerOverlayActive();
+    if (!gameplayActive)
+    {
+        g_gameplayActive = false;
+    }
+
+    const bool gameplayStarted =
+        gameplayActive && !g_gameplayActive;
+    if (!g_runtimeHeadReferenceReady || gameplayStarted)
+    {
+        g_runtimeHeadReference =
+            bfvr::MakeD3D8RuntimeHeadReference(
+                g_runtimeRenderRequest);
+        g_runtimeHeadReferenceReady = true;
+        if (gameplayStarted)
+        {
+            AppendLog(
+                L"Rebased the stereo head reference on gameplay entry so startup/menu head motion cannot displace the first-person scene.");
+        }
+    }
+    g_gameplayActive = gameplayActive;
+    g_renderViewPoseHook.UpdatePose(
+        g_runtimeHeadReference,
+        g_runtimeRenderRequest);
 }
 
 void AppendLog(const wchar_t* format, ...)
@@ -620,6 +667,7 @@ bool AcquireFrameDrawState(void* device, DrawStateSnapshot& snapshot, bool& elig
     }
 
     if (FAILED(g_methods.getViewport(device, &snapshot.viewport)) ||
+        FAILED(g_methods.getTransform(device, kD3DTransformWorld, &snapshot.world)) ||
         FAILED(g_methods.getTransform(device, kD3DTransformView, &snapshot.view)) ||
         FAILED(g_methods.getTransform(
             device,
@@ -649,7 +697,8 @@ bool AcquireFrameDrawState(void* device, DrawStateSnapshot& snapshot, bool& elig
             translatedIdentity.creationOrdinal;
     }
     ReadProvenanceRenderStates(device, snapshot);
-    if (!IsFiniteMatrix(snapshot.view) ||
+    if (!IsFiniteMatrix(snapshot.world) ||
+        !IsFiniteMatrix(snapshot.view) ||
         !IsFiniteMatrix(snapshot.projection) ||
         !BuildFramePolicyTransforms(snapshot))
     {
@@ -685,15 +734,20 @@ bool RestoreAndVerifyFrameState(void* device, const DrawStateSnapshot& snapshot)
         g_methods.setTransform(device, kD3DTransformView, &snapshot.view);
     const HRESULT projectionResult =
         g_methods.setTransform(device, kD3DTransformProjection, &snapshot.projection);
+    const HRESULT worldResult =
+        g_methods.setTransform(device, kD3DTransformWorld, &snapshot.world);
 
     void* actualColor = nullptr;
     void* actualDepth = nullptr;
     D3DViewport actualViewport = {};
+    D3DMatrix actualWorld = {};
     D3DMatrix actualView = {};
     D3DMatrix actualProjection = {};
     const HRESULT getColorResult = g_methods.getRenderTarget(device, &actualColor);
     const HRESULT getDepthResult = g_methods.getDepthStencilSurface(device, &actualDepth);
     const HRESULT getViewportResult = g_methods.getViewport(device, &actualViewport);
+    const HRESULT getWorldResult =
+        g_methods.getTransform(device, kD3DTransformWorld, &actualWorld);
     const HRESULT getViewResult =
         g_methods.getTransform(device, kD3DTransformView, &actualView);
     const HRESULT getProjectionResult =
@@ -704,15 +758,18 @@ bool RestoreAndVerifyFrameState(void* device, const DrawStateSnapshot& snapshot)
         SUCCEEDED(viewportResult) &&
         SUCCEEDED(viewResult) &&
         SUCCEEDED(projectionResult) &&
+        SUCCEEDED(worldResult) &&
         SUCCEEDED(getColorResult) &&
         SUCCEEDED(getDepthResult) &&
         SUCCEEDED(getViewportResult) &&
+        SUCCEEDED(getWorldResult) &&
         SUCCEEDED(getViewResult) &&
         SUCCEEDED(getProjectionResult) &&
         shaderConstantsExact &&
         actualColor == snapshot.sourceColor &&
         actualDepth == snapshot.sourceDepth &&
         EqualViewport(actualViewport, snapshot.viewport) &&
+        EqualMatrix(actualWorld, snapshot.world) &&
         EqualMatrix(actualView, snapshot.view) &&
         EqualMatrix(actualProjection, snapshot.projection);
     ReleaseUnknown(actualColor);
@@ -1027,6 +1084,18 @@ bool MirrorDrawIntoFrame(
         return true;
     }
     ApplyFrameSemanticPolicy(invocation, snapshot);
+    if (IsPresentationMode() &&
+        bfvr::stereo::IsBF1942FirstPersonArmDraw(
+            snapshot.semanticClass,
+            snapshot.drawPolicy ==
+                bfvr::stereo::D3D8DrawPolicy::StereoPerspective,
+            snapshot.projection.values[0][0],
+            snapshot.projection.values[1][1]))
+    {
+        InterlockedIncrement(&g_frame.suppressedFirstPersonArmDraws);
+        ReleaseFrameSourceReferences(snapshot);
+        return true;
+    }
     if (!PrepareFrameSkinningShaderTransforms(device, snapshot) ||
         !PrepareFrameSpriteShaderTransforms(device, snapshot) ||
         !PrepareFrameTreeSpriteShaderTransforms(device, snapshot))
@@ -1097,18 +1166,39 @@ bool MirrorDrawIntoFrame(
                     kD3DTransformProjection,
                     eyeProjections[eye])
                 : E_FAIL;
+            HRESULT weaponWorldResult = projectionResult;
+            if (SUCCEEDED(weaponWorldResult) && invocation.replayWeaponMotion)
+            {
+                bfvr::D3D8WeaponMotionMatrix replayWorld = {};
+                bfvr::D3D8WeaponMotionMatrix worldSpaceAttachment = {};
+                std::memcpy(&replayWorld, &snapshot.world, sizeof(replayWorld));
+                std::memcpy(
+                    &worldSpaceAttachment,
+                    &invocation.weaponMotionWorldAttachment,
+                    sizeof(worldSpaceAttachment));
+                weaponWorldResult =
+                    bfvr::BuildD3D8WeaponMotionReplayWorld(
+                        replayWorld,
+                        worldSpaceAttachment,
+                        replayWorld)
+                    ? g_methods.setTransform(
+                        device,
+                        kD3DTransformWorld,
+                        &replayWorld)
+                    : E_FAIL;
+            }
             const bfvr::d3d8probe::D3D8VertexShaderConstantApi shaderApi = {
                 g_methods.setVertexShaderConstant,
                 g_methods.getVertexShaderConstant};
             const HRESULT shaderResult =
-                SUCCEEDED(projectionResult) &&
+                SUCCEEDED(weaponWorldResult) &&
                 snapshot.skinningShaderTransform.prepared
                 ? bfvr::d3d8probe::ApplyD3D8SkinningShaderEye(
                     shaderApi,
                     device,
                     snapshot.skinningShaderTransform,
                     eye)
-                : projectionResult;
+                : weaponWorldResult;
             const HRESULT spriteShaderResult =
                 SUCCEEDED(shaderResult) &&
                 snapshot.spriteShaderTransform.prepared
@@ -1234,12 +1324,9 @@ bool CompletePresentationFrame(void* device)
         g_frame,
         sequence);
 
-    if (bfvr::d3d8probe::CheckPresentationStopRequested(
-            g_runStopEvent,
-            g_runStopRequested) ||
-        (!g_runUntilStopped &&
-         GetTickCount() - g_presentationRun.startedAt >=
-             kPresentationDurationMs))
+    if (!g_runUntilStopped &&
+        GetTickCount() - g_presentationRun.startedAt >=
+            kPresentationDurationMs)
     {
         ReleaseFrameOwnedResources();
         InterlockedExchange(&g_record.state, 4);
@@ -1259,9 +1346,7 @@ bool CompletePresentationFrame(void* device)
         bfvr::d3d8probe::ReadPerformanceCounter() - requestWaitStarted;
     if (nextReady)
     {
-        g_renderViewPoseHook.UpdatePose(
-            g_runtimeHeadReference,
-            g_runtimeRenderRequest);
+        PrepareRuntimeRenderRequestPose();
     }
     else if (!g_runUntilStopped)
     {
@@ -1517,29 +1602,7 @@ AttemptResult TryReplayStereoPair(
         : AttemptResult::EmptyOrIdentical;
 }
 
-HRESULT WINAPI HookReset(void* device, void* presentationParameters)
-{
-    InterlockedIncrement(&g_record.activeCallbacks);
-    g_vertexShaderIdentityResolver.ClearCache();
-    if (IsFullFrameMode() &&
-        device == g_record.device)
-    {
-        const LONG state = InterlockedCompareExchange(&g_record.state, 0, 0);
-        if (state == 2 || state == 3)
-        {
-            ReleaseFrameOwnedResources();
-            InterlockedExchange(&g_frame.resetAborted, 1);
-            InterlockedExchange(&g_record.state, 5);
-        }
-    }
-
-    const HRESULT result = g_originalReset == nullptr
-        ? E_FAIL
-        : g_originalReset(device, presentationParameters);
-    g_frame.resetResult = result;
-    InterlockedDecrement(&g_record.activeCallbacks);
-    return result;
-}
+#include "client/internal/D3D8StereoPairReset.inl"
 
 HRESULT WINAPI HookPresent(
     void* device,
@@ -1595,8 +1658,14 @@ HRESULT WINAPI HookPresent(
         g_frame.ownedColor[0] = presentationTargets[0];
         g_frame.ownedColor[1] = presentationTargets[1];
         g_frame.menuColor = presentationTargets[2];
+        // The process-lifetime OpenXR route must present Ref2-only startup,
+        // spawn, death, and pause frames. Gameplay overlays retain their own
+        // alive-local-player gates; only frame production starts before spawn.
+        const bool processLifetimePresentation =
+            IsPresentationMode() && g_runUntilStopped;
         const bool captureEligible =
             g_offlinePresentation ||
+            processLifetimePresentation ||
             (g_callbacks.isCaptureEligible != nullptr &&
              g_callbacks.isCaptureEligible());
         const bool renderReady =
@@ -1612,19 +1681,13 @@ HRESULT WINAPI HookPresent(
         {
             if (!g_runtimeHeadReferenceReady)
             {
-                g_runtimeHeadReference =
-                    bfvr::MakeD3D8RuntimeHeadReference(
-                        g_runtimeRenderRequest);
-                g_runtimeHeadReferenceReady = true;
                 g_presentationRun.startedAt = GetTickCount();
             }
             // A continuous-mode request can become ready here after a prior
             // non-blocking poll left it pending.  Keep RenderView in lockstep
             // with every accepted request; otherwise BF1942 culls for the
             // first request while D3D8 replays a later headset pose.
-            g_renderViewPoseHook.UpdatePose(
-                g_runtimeHeadReference,
-                g_runtimeRenderRequest);
+            PrepareRuntimeRenderRequestPose();
         }
         if (!transportReady)
         {
@@ -1709,6 +1772,19 @@ HRESULT WINAPI HookDrawIndexedPrimitive(
     UINT primitiveCount)
 {
     InterlockedIncrement(&g_record.activeCallbacks);
+    const bfvr::D3D8WeaponMotionD3D8Api weaponMotionApi = {
+        g_methods.setTransform,
+        g_methods.getTransform,
+        g_methods.getRenderState,
+        g_methods.getVertexShader};
+    bfvr::D3D8WeaponMotionRestore weaponMotionRestore = {};
+    const bool weaponMotionApplied =
+        IsPresentationMode() && !g_offlinePresentation &&
+        bfvr::BeginD3D8WeaponMotionOverlayDraw(
+            device,
+            weaponMotionApi,
+            reinterpret_cast<void**>(_AddressOfReturnAddress()),
+            weaponMotionRestore);
     const HRESULT originalResult = g_originalDrawIndexedPrimitive == nullptr
         ? E_FAIL
         : g_originalDrawIndexedPrimitive(
@@ -1718,6 +1794,13 @@ HRESULT WINAPI HookDrawIndexedPrimitive(
             vertexCount,
             startIndex,
             primitiveCount);
+    if (weaponMotionApplied)
+    {
+        bfvr::EndD3D8WeaponMotionOverlayDraw(
+            device,
+            weaponMotionApi,
+            weaponMotionRestore);
+    }
 
     if (IsFullFrameMode())
     {
@@ -1734,6 +1817,14 @@ HRESULT WINAPI HookDrawIndexedPrimitive(
             reinterpret_cast<void**>(_AddressOfReturnAddress()),
             kGameDrawIndexedPrimitiveReturn,
             10);
+        if (weaponMotionApplied)
+        {
+            invocation.replayWeaponMotion = true;
+            std::memcpy(
+                &invocation.weaponMotionWorldAttachment,
+                &weaponMotionRestore.worldSpaceAttachment,
+                sizeof(invocation.weaponMotionWorldAttachment));
+        }
         TryMirrorFrameDrawAfterGame(device, originalResult, invocation);
     }
     else if (g_mode == ProbeMode::OneDraw &&
@@ -2085,13 +2176,26 @@ bool InstallHooks()
 DWORD WINAPI RunProbe(void*)
 {
     constexpr DWORD kLifecycleReadyTimeoutMs = 60000;
+    g_presentationConfiguration =
+        bfvr::ReadD3D8PresentationConfiguration();
+    bfvr::StartupMenuPresentation startupMenuPresentation;
     if (g_runUntilStopped)
     {
-        // Open this before waiting for D3D8.  A game can legitimately delay
-        // device creation past the bounded diagnostic window, and explicit
-        // run-until-stopped mode must remain cancellable while it waits.
-        g_runStopEvent =
-            bfvr::d3d8probe::OpenAndLogPresentationStopEvent(AppendLog);
+        // Gameplay presentation now follows BF1942's process lifetime only.
+        // PID 27344 proved that an independently polled named stop handle can
+        // end the injected renderer while the loader and game remain alive.
+        // The game process already provides the authoritative lifetime; an
+        // explicit diagnostic stop channel is not part of the player launch.
+        AppendLog(
+            L"Continuous OpenXR presentation is bound to BF1942 process lifetime; no independent renderer-stop event is opened.");
+    }
+    if (IsPresentationMode() &&
+        g_runUntilStopped &&
+        !g_offlinePresentation)
+    {
+        startupMenuPresentation.Start(
+            GetModuleHandleW(nullptr),
+            AppendPresentationLog);
     }
     const DWORD lifecycleStartedAt = GetTickCount();
     while (g_runUntilStopped ||
@@ -2102,23 +2206,10 @@ DWORD WINAPI RunProbe(void*)
         {
             break;
         }
-        if (g_runUntilStopped &&
-            bfvr::d3d8probe::CheckPresentationStopRequested(
-                g_runStopEvent,
-                g_runStopRequested))
-        {
-            AppendLog(
-                L"Run-until-stopped D3D8 stereo probe stopped while waiting for the verified lifecycle.");
-            if (g_runStopEvent != nullptr)
-            {
-                CloseHandle(g_runStopEvent);
-                g_runStopEvent = nullptr;
-            }
-            SignalCompletion();
-            return 0;
-        }
-        Sleep(10);
+        startupMenuPresentation.Pump();
+        Sleep(2);
     }
+    startupMenuPresentation.Stop();
     if (g_lifecycle.device == nullptr || g_lifecycle.deviceThreadId == 0)
     {
         AppendLog(
@@ -2127,23 +2218,21 @@ DWORD WINAPI RunProbe(void*)
         SignalCompletion();
         return 0;
     }
-    const bfvr::D3D8PresentationConfiguration presentationConfiguration =
-        bfvr::ReadD3D8PresentationConfiguration();
     g_vertexShaderIdentityResolver.Resolve();
     if (IsPresentationMode() &&
-        presentationConfiguration.scaleSource ==
+        g_presentationConfiguration.scaleSource ==
             bfvr::D3D8PresentationScaleSource::InvalidEnvironment)
     {
         AppendLog(
             L"Ignoring invalid BFVR_OPENXR_WORLD_RENDER_SCALE; expected 0.50 through 1.25 and using default %.2f.",
-            presentationConfiguration.worldRenderScale);
+            g_presentationConfiguration.worldRenderScale);
     }
     if (IsPresentationMode() &&
         (!g_lifecycle.presentationReadable ||
          !g_presentationBridge.Initialize(
              g_lifecycle.backBufferWidth,
              g_lifecycle.backBufferHeight,
-             presentationConfiguration.worldRenderScale,
+             g_presentationConfiguration.worldRenderScale,
              g_offlinePresentation
                 ? bfvr::D3D8PresentationCompanion::OfflineTransport
                 : bfvr::D3D8PresentationCompanion::OpenXR,
@@ -2177,6 +2266,20 @@ DWORD WINAPI RunProbe(void*)
         bfvr::StartControllerInputOverlay(
             reinterpret_cast<void*>(g_gameImageBegin),
             AppendPresentationLog);
+        bfvr::StartMenuPointerOverlay(
+            reinterpret_cast<void*>(g_gameImageBegin),
+            g_presentationBridge.RuntimeUiWidth(),
+            g_presentationBridge.RuntimeUiHeight(),
+            g_lifecycle.backBufferWidth,
+            g_lifecycle.backBufferHeight,
+            AppendPresentationLog);
+        bfvr::StartD3D8WeaponMotionOverlay(AppendPresentationLog);
+        bfvr::StartWeaponAimOverlay(
+            reinterpret_cast<void*>(g_gameImageBegin),
+            AppendPresentationLog);
+        bfvr::StartCrosshairOverlay(
+            reinterpret_cast<void*>(g_gameImageBegin),
+            AppendPresentationLog);
     }
 
     InterlockedExchange(&g_record.state, 1);
@@ -2184,7 +2287,7 @@ DWORD WINAPI RunProbe(void*)
     {
         AppendLog(
             g_runUntilStopped
-                ? L"Enabled run-until-stopped full-draw-frame D3D8 stereo probe: Reset=%p Present=%p DrawPrimitive=%p DrawIndexedPrimitive=%p DrawPrimitiveUP=%p DrawIndexedPrimitiveUP=%p. After the sustained local-player-isAlive gate it will mirror at most %ld eligible full-size draws per frame into frame-lived BFVR-owned left/right world targets plus one transparent Ref2 UI target. The stop event completes at a frame boundary; Reset-safe cleanup and exact state restoration remain active."
+                ? L"Enabled process-lifetime full-draw-frame D3D8 stereo presentation after launch-time CPU-bridge handoff: Reset=%p Present=%p DrawPrimitive=%p DrawIndexedPrimitive=%p DrawPrimitiveUP=%p DrawIndexedPrimitiveUP=%p. It requests OpenXR frames from the first game-device Present, including spawn/death/pause Ref2-only transitions, and mirrors at most %ld eligible full-size draws per frame into frame-lived BFVR-owned left/right world targets plus one transparent Ref2 UI target. Native menus use a latched world-space reference and the gameplay HUD uses a head-locked reference. Gameplay input/weapon overlays retain their independent alive-local-player gates; Reset-safe transport recreation and exact state restoration remain active."
                 : L"Enabled bounded full-draw-frame D3D8 stereo probe: Reset=%p Present=%p DrawPrimitive=%p DrawIndexedPrimitive=%p DrawPrimitiveUP=%p DrawIndexedPrimitiveUP=%p. After the sustained local-player-isAlive gate it will mirror at most %ld eligible full-size draws into frame-lived BFVR-owned left/right world targets plus one transparent Ref2 UI target. Exact NewRendFont glyph batches and Ref2 menu quads are omitted from both world eyes and replayed once into that layer; the skybox policy remains separate. The probe excludes non-presentation/depthless targets, verifies state after every draw, finalizes at the next Present, and releases before Reset.",
             g_record.resetTarget,
             g_record.presentTarget,
@@ -2207,23 +2310,7 @@ DWORD WINAPI RunProbe(void*)
     while (g_runUntilStopped ||
         GetTickCount() - captureStartedAt < kCaptureTimeoutMs)
     {
-        const bool stopRequested =
-            bfvr::d3d8probe::CheckPresentationStopRequested(
-                g_runStopEvent,
-                g_runStopRequested);
         LONG state = InterlockedCompareExchange(&g_record.state, 0, 0);
-        if (stopRequested &&
-            state != 3 &&
-            state != 4 &&
-            state != 5 &&
-            InterlockedCompareExchange(
-                &g_record.activeCallbacks,
-                0,
-                0) == 0)
-        {
-            InterlockedExchange(&g_record.state, 5);
-            state = 5;
-        }
         if (state == 4 || state == 5)
         {
             break;
@@ -2237,12 +2324,6 @@ DWORD WINAPI RunProbe(void*)
         while (InterlockedCompareExchange(&g_record.activeCallbacks, 0, 0) != 0)
         {
             Sleep(1);
-        }
-        if (bfvr::d3d8probe::CheckPresentationStopRequested(
-                g_runStopEvent,
-                g_runStopRequested))
-        {
-            ReleaseFrameOwnedResources();
         }
         if (IsFullFrameMode())
         {
@@ -2293,24 +2374,23 @@ DWORD WINAPI RunProbe(void*)
 
     if (IsPresentationMode() && !g_offlinePresentation)
     {
+        bfvr::StopCrosshairOverlay();
+        bfvr::StopWeaponAimOverlay();
+        bfvr::StopD3D8WeaponMotionOverlay();
+        bfvr::StopMenuPointerOverlay();
         bfvr::StopControllerInputOverlay();
     }
     RemoveHooks();
     MH_Uninitialize();
     AppendLog(
         IsFullFrameMode() && g_runUntilStopped
-            ? L"D3D8 full-draw-frame stereo probe removed its Reset, Present, and four draw-family hooks after the external stop request."
+            ? L"D3D8 full-draw-frame stereo probe removed its Reset, Present, and four draw-family hooks after the presentation pipeline ended."
             : IsFullFrameMode()
             ? L"D3D8 full-draw-frame stereo probe removed its Reset, Present, and four draw-family hooks after the bounded window."
             : L"D3D8 stereo-pair probe removed both hooks after its bounded window.");
     if (IsPresentationMode())
     {
         g_presentationBridge.Shutdown();
-    }
-    if (g_runStopEvent != nullptr)
-    {
-        CloseHandle(g_runStopEvent);
-        g_runStopEvent = nullptr;
     }
     SignalCompletion();
     return 0;
@@ -2349,10 +2429,10 @@ void StartStereoProbe(
     AppendLog(
         mode == ProbeMode::FullFramePresentation &&
             g_offlinePresentation
-            ? L"Requested the bounded D3D9Ex-to-x64 no-HMD shared-target proof; it remains inactive until the verified lifecycle, offline companion, and sustained local-player-isAlive gate are ready."
+            ? L"Requested the bounded D3D9Ex-to-x64 no-HMD shared-target proof; it remains inactive until the verified lifecycle and offline companion are ready."
             : mode == ProbeMode::FullFramePresentation &&
                 g_runUntilStopped
-            ? L"Requested a D3D8-to-x64 OpenXR presentation proof that runs until the game exits or the loader stop event is signaled; it remains inactive until the verified lifecycle, runtime companion, and sustained local-player-isAlive gate are ready."
+            ? L"Requested a D3D8-to-x64 OpenXR presentation proof bound to BF1942 process lifetime; a CPU startup-menu bridge opens OpenXR immediately, then hands off to GPU-resident stereo when BF1942 creates its D3D8 device."
             : mode == ProbeMode::FullFramePresentation
             ? L"Requested the bounded continuous D3D8-to-x64 OpenXR presentation proof; it remains inactive until the verified lifecycle, runtime companion, and sustained local-player-isAlive gate are ready."
             : mode != ProbeMode::OneDraw

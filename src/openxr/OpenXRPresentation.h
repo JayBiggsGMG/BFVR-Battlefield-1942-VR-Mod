@@ -16,6 +16,12 @@ enum class OpenXRUiLayerMode
     Cylinder
 };
 
+enum class OpenXRUiReferenceMode
+{
+    WorldLocked,
+    HeadLocked
+};
+
 // The world and UI sources are BFVR-owned D3D11 textures. They must match the
 // requirements returned by OpenXRPresentation::GetTextureRequirements exactly;
 // this first presentation boundary intentionally does not resample textures or
@@ -57,9 +63,13 @@ struct OpenXRControllerHandState
     bool aimActive = false;
     bool aimPositionValid = false;
     bool aimOrientationValid = false;
+    bool aimPositionTracked = false;
+    bool aimOrientationTracked = false;
     bool gripActive = false;
     bool gripPositionValid = false;
     bool gripOrientationValid = false;
+    bool gripPositionTracked = false;
+    bool gripOrientationTracked = false;
     bool triggerActive = false;
     bool squeezeActive = false;
     bool thumbstickActive = false;
@@ -90,6 +100,9 @@ struct OpenXRPresentationFrameState
     std::int64_t predictedDisplayTime = 0;
     bool shouldRender = false;
     bool viewsValid = false;
+    bool headPoseValid = false;
+    bool headPoseTracked = false;
+    OpenXRPresentationPose headPose = {};
     std::array<OpenXRPresentationView, 2> views = {};
     OpenXRControllerInputState controllerInput = {};
 };
@@ -150,14 +163,20 @@ public:
     // Waits/begins/ends one OpenXR frame. When the session is running and the
     // runtime requests rendering, it copies the three supplied BFVR-owned
     // textures into the acquired swapchain images and submits world+UI layers.
-    bool SubmitFrame(const OpenXRPresentationTextures& textures);
+    bool SubmitFrame(
+        const OpenXRPresentationTextures& textures,
+        OpenXRUiReferenceMode uiReferenceMode =
+            OpenXRUiReferenceMode::HeadLocked);
 
     // Two-phase form used by the cross-process presenter. BeginFrame waits for
     // runtime timing and locates both predicted eye views before the x86 game
     // renders. EndFrame consumes the resulting BFVR textures and submits those
     // exact views. Every successful BeginFrame must be paired with EndFrame.
     bool BeginFrame(OpenXRPresentationFrameState& frameState);
-    bool EndFrame(const OpenXRPresentationTextures& textures);
+    bool EndFrame(
+        const OpenXRPresentationTextures& textures,
+        OpenXRUiReferenceMode uiReferenceMode =
+            OpenXRUiReferenceMode::HeadLocked);
 
     [[nodiscard]] bool IsInitialized() const noexcept;
     [[nodiscard]] bool IsSessionRunning() const noexcept;

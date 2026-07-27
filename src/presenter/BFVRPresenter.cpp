@@ -12,6 +12,7 @@
 namespace
 {
 FILE* g_output = stdout;
+constexpr DWORD kRuntimeTimedSourceGraceMs = 100;
 
 void WriteLog(void*, const wchar_t* message)
 {
@@ -134,12 +135,24 @@ DWORD MakeControllerHandFlags(const bfvr::OpenXRControllerHandState& hand)
     flags |= hand.aimOrientationValid
         ? bfvr::shared::kControllerHandFlagAimOrientationValid
         : 0;
+    flags |= hand.aimPositionTracked
+        ? bfvr::shared::kControllerHandFlagAimPositionTracked
+        : 0;
+    flags |= hand.aimOrientationTracked
+        ? bfvr::shared::kControllerHandFlagAimOrientationTracked
+        : 0;
     flags |= hand.gripActive ? bfvr::shared::kControllerHandFlagGripActive : 0;
     flags |= hand.gripPositionValid
         ? bfvr::shared::kControllerHandFlagGripPositionValid
         : 0;
     flags |= hand.gripOrientationValid
         ? bfvr::shared::kControllerHandFlagGripOrientationValid
+        : 0;
+    flags |= hand.gripPositionTracked
+        ? bfvr::shared::kControllerHandFlagGripPositionTracked
+        : 0;
+    flags |= hand.gripOrientationTracked
+        ? bfvr::shared::kControllerHandFlagGripOrientationTracked
         : 0;
     flags |= hand.triggerActive
         ? bfvr::shared::kControllerHandFlagTriggerActive
@@ -205,6 +218,9 @@ void PublishRenderRequest(
     block.renderRequest.predictedDisplayTime = frame.predictedDisplayTime;
     block.renderRequest.shouldRender = frame.shouldRender ? 1 : 0;
     block.renderRequest.viewsValid = frame.viewsValid ? 1 : 0;
+    block.renderRequest.headPoseValid = frame.headPoseValid ? 1 : 0;
+    block.renderRequest.headPoseTracked = frame.headPoseTracked ? 1 : 0;
+    CopyControllerPose(frame.headPose, block.renderRequest.headPose);
     for (std::size_t eye = 0; eye < frame.views.size(); ++eye)
     {
         const bfvr::OpenXRPresentationView& source = frame.views[eye];
@@ -364,10 +380,14 @@ int RunPresenter(
     bool haveFrame = false;
     bool sampledPixels = false;
     bool healthy = true;
+    bfvr::OpenXRUiReferenceMode acceptedUiReferenceMode =
+        bfvr::OpenXRUiReferenceMode::WorldLocked;
     const bool runtimeTimedProducer =
         (block->producerFlags &
          bfvr::shared::kProducerFlagRuntimeTimedRender) != 0;
     LONG completedRenderRequest = 0;
+    LONG pendingSourceSequence = 0;
+    bool sourceGapReported = false;
     auto consumeSequence = [&](LONG availableSequence)
     {
         if (!consumer.ConsumeFrame())
@@ -375,6 +395,15 @@ int RunPresenter(
             return false;
         }
         consumedSequence = availableSequence;
+        acceptedUiReferenceMode =
+            InterlockedCompareExchange(
+                &block->frameUiReferenceMode,
+                0,
+                0) ==
+                static_cast<LONG>(
+                    bfvr::shared::UiReferenceMode::HeadLocked)
+            ? bfvr::OpenXRUiReferenceMode::HeadLocked
+            : bfvr::OpenXRUiReferenceMode::WorldLocked;
         InterlockedExchange(&block->consumedFrameSequence, consumedSequence);
         InterlockedIncrement(&block->transportedFrameCount);
         haveFrame = true;
@@ -416,6 +445,60 @@ int RunPresenter(
 
         if (runtimeTimedProducer)
         {
+            if (pendingSourceSequence != 0)
+            {
+                const LONG availableSequence =
+                    InterlockedCompareExchange(&block->frameSequence, 0, 0);
+                if (availableSequence == pendingSourceSequence)
+                {
+                    if (!consumeSequence(availableSequence) ||
+                        !presentation.SubmitFrame(
+                            consumer.GetLocalTextures(),
+                            acceptedUiReferenceMode))
+                    {
+                        healthy = false;
+                        break;
+                    }
+                    InterlockedIncrement(&block->presentedFrameCount);
+                    InterlockedExchange(
+                        &block->renderedFrameSequence,
+                        pendingSourceSequence);
+                    if (sourceGapReported)
+                    {
+                        fwprintf(
+                            g_output,
+                            L"[PRESENTER] Source frame %ld arrived after a transition gap; normal runtime-timed presentation resumed.\n",
+                            pendingSourceSequence);
+                        fflush(g_output);
+                    }
+                    completedRenderRequest = pendingSourceSequence;
+                    pendingSourceSequence = 0;
+                    sourceGapReported = false;
+                    continue;
+                }
+
+                // Do not leave an OpenXR frame open merely because BF1942 has
+                // no eligible world draw during death, spectator, or loading.
+                // Re-submit the last accepted textures while preserving the
+                // outstanding source sequence for a later acknowledgement.
+                if (haveFrame)
+                {
+                    if (!presentation.SubmitFrame(
+                            consumer.GetLocalTextures(),
+                            acceptedUiReferenceMode))
+                    {
+                        healthy = false;
+                        break;
+                    }
+                    InterlockedIncrement(&block->presentedFrameCount);
+                }
+                else
+                {
+                    Sleep(2);
+                }
+                continue;
+            }
+
             const LONG readySequence =
                 InterlockedCompareExchange(&block->renderReadySequence, 0, 0);
             if (!presentation.IsSessionRunning() ||
@@ -433,15 +516,17 @@ int RunPresenter(
             }
             if (!frame.shouldRender || !frame.viewsValid)
             {
-                presentation.EndFrame({});
+                presentation.EndFrame({}, acceptedUiReferenceMode);
                 continue;
             }
             PublishRenderRequest(*block, readySequence, frame);
 
             const DWORD renderWaitStarted = GetTickCount();
             LONG availableSequence = 0;
-            while ((runUntilStopped ||
-                    GetTickCount() - renderWaitStarted < 2000) &&
+            const DWORD sourceWaitLimit = runUntilStopped
+                ? kRuntimeTimedSourceGraceMs
+                : 2000;
+            while (GetTickCount() - renderWaitStarted < sourceWaitLimit &&
                 InterlockedCompareExchange(&block->shutdownRequested, 0, 0) == 0 &&
                 producerIsAlive())
             {
@@ -456,18 +541,47 @@ int RunPresenter(
             }
             if (availableSequence != readySequence)
             {
-                // A continuous owner-requested session has no presentation
-                // deadline.  A game pause may leave this frame request
-                // outstanding until the producer resumes or requests a
-                // clean stop; neither case is a presentation fault.
                 if (!runUntilStopped)
                 {
                     healthy = false;
+                    break;
                 }
-                break;
+                // End this runtime frame with the last accepted scene instead
+                // of holding xrBeginFrame open. The matching source remains
+                // outstanding and is acknowledged when BF1942 renders again.
+                const bool submittedFallback = haveFrame
+                    ? presentation.EndFrame(
+                        consumer.GetLocalTextures(),
+                        acceptedUiReferenceMode)
+                    : presentation.EndFrame(
+                        {},
+                        acceptedUiReferenceMode);
+                if (haveFrame && !submittedFallback)
+                {
+                    healthy = false;
+                    break;
+                }
+                if (haveFrame)
+                {
+                    InterlockedIncrement(&block->presentedFrameCount);
+                }
+                pendingSourceSequence = readySequence;
+                if (!sourceGapReported)
+                {
+                    fwprintf(
+                        g_output,
+                        L"[PRESENTER] Runtime source frame %ld did not arrive within %lu ms; continuing to submit the last accepted image until BF1942 produces a new eligible draw.\n",
+                        readySequence,
+                        static_cast<unsigned long>(sourceWaitLimit));
+                    fflush(g_output);
+                    sourceGapReported = true;
+                }
+                continue;
             }
             if (!consumeSequence(availableSequence) ||
-                !presentation.EndFrame(consumer.GetLocalTextures()))
+                !presentation.EndFrame(
+                    consumer.GetLocalTextures(),
+                    acceptedUiReferenceMode))
             {
                 healthy = false;
                 break;
@@ -488,7 +602,9 @@ int RunPresenter(
         }
         if (presentation.IsSessionRunning() && haveFrame)
         {
-            if (!presentation.SubmitFrame(consumer.GetLocalTextures()))
+            if (!presentation.SubmitFrame(
+                    consumer.GetLocalTextures(),
+                    acceptedUiReferenceMode))
             {
                 healthy = false;
                 break;

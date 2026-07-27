@@ -165,6 +165,9 @@ void AccumulateContinuousPresentationFrame(
         &run.totalAnimatedMeshSkinningDraws,
         frame.animatedMeshSkinningDraws);
     InterlockedExchangeAdd(
+        &run.totalSuppressedFirstPersonArmDraws,
+        frame.suppressedFirstPersonArmDraws);
+    InterlockedExchangeAdd(
         &run.totalTranslucentSpriteDraws,
         frame.translucentSpriteDraws);
     run.totalReplayQpcTicks += frame.replayQpcTicks;

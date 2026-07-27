@@ -16,4 +16,21 @@ D3D8FrameCompositionLayer SelectD3D8FrameCompositionLayer(
     }
 }
 
+bool IsD3D8FrameCompositionComplete(
+    const D3D8FrameCompletionFacts& facts) noexcept
+{
+    if (!facts.hasMirroredDraws || !facts.stateRestorationExact ||
+        !facts.layerPartitionExact)
+    {
+        return false;
+    }
+    if (facts.presentationMode)
+    {
+        return facts.frameTransferred &&
+            (facts.worldEyesHaveColor || facts.uiLayerHasContent);
+    }
+    return facts.worldEyesHaveColor && facts.eyeImagesDiffer &&
+        facts.uiLayerHasContent;
+}
+
 } // namespace bfvr::stereo

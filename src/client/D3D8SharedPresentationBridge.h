@@ -71,6 +71,9 @@ struct D3D8RuntimeRenderRequest
 {
     LONG sequence = 0;
     std::int64_t predictedDisplayTime = 0;
+    bool headPoseValid = false;
+    bool headPoseTracked = false;
+    D3D8RuntimeView headPose = {};
     std::array<D3D8RuntimeView, 2> views = {};
     D3D8RuntimeControllerSample controllerInput = {};
 };
@@ -97,7 +100,8 @@ public:
         UINT logicalUiHeight,
         float worldRenderScale,
         D3D8PresentationCompanion companion,
-        D3D8SharedPresentationLogCallback logCallback);
+        D3D8SharedPresentationLogCallback logCallback,
+        bool forceCpuTransport = false);
     bool EnsureGpuFrameTargets(
         void* d3d8Device,
         std::array<void*, 3>& surfaces);
@@ -106,11 +110,13 @@ public:
         DWORD timeoutMs);
     bool PublishFrame(
         const D3D8RuntimeRenderRequest& request,
-        const std::array<D3D8SharedFramePixels, 3>& frame);
+        const std::array<D3D8SharedFramePixels, 3>& frame,
+        bool uiHeadLocked);
     bool PublishGpuFrame(
         void* d3d8Device,
         const D3D8RuntimeRenderRequest& request,
-        DWORD timeoutMs);
+        DWORD timeoutMs,
+        bool uiHeadLocked);
     bool WaitForPresentation(LONG sequence, DWORD timeoutMs);
     void PrepareForResourceRelease();
     void Shutdown();
@@ -122,6 +128,10 @@ public:
     [[nodiscard]] UINT RightWorldHeight() const noexcept;
     [[nodiscard]] UINT UiWidth() const noexcept;
     [[nodiscard]] UINT UiHeight() const noexcept;
+    // Runtime swapchain dimensions before the game-resolution Ref2 producer
+    // size replaces the UI fields in the x86-side requirements.
+    [[nodiscard]] UINT RuntimeUiWidth() const noexcept;
+    [[nodiscard]] UINT RuntimeUiHeight() const noexcept;
     [[nodiscard]] DWORD WorldD3DFormat() const noexcept;
     [[nodiscard]] DWORD UiD3DFormat() const noexcept;
     [[nodiscard]] DXGI_FORMAT Format() const noexcept;

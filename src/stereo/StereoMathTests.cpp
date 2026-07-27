@@ -2,28 +2,28 @@
 #include "stereo/D3D8FrameCompositionPolicy.h"
 #include "stereo/D3D8SemanticDrawPolicy.h"
 #include "stereo/D3D8ShaderTransform.h"
+#include "stereo/D3D8WeaponDrawPolicy.h"
 #include "stereo/StereoMath.h"
 #include "stereo/TreeAngleSlicePolicy.h"
+#include "stereo/UiPointerMath.h"
+#include "stereo/WeaponMotionPolicy.h"
+#include "stereo/WeaponPoseMath.h"
 #include "client/D3D8StereoProbeRecords.h"
 #include "client/D3D8SpriteShaderTransform.h"
 #include "client/D3D8StereoShaderTransform.h"
 #include "client/D3D8TreeSpriteShaderTransform.h"
-
 #include <cmath>
 #include <cstring>
 #include <iostream>
 #include <limits>
 #include <string_view>
-
 namespace
 {
 int g_failures = 0;
-
 struct FakeShaderConstantDevice
 {
     bfvr::d3d8probe::D3DMatrix constants = {};
 };
-
 struct FakeSpriteShaderConstantDevice
 {
     float registers[16][4] = {};
@@ -124,6 +124,25 @@ void ExpectNear(std::string_view test, float actual, float expected, float toler
     }
 }
 
+bfvr::stereo::Matrix4 MultiplyTestMatrices(
+    const bfvr::stereo::Matrix4& lhs,
+    const bfvr::stereo::Matrix4& rhs)
+{
+    bfvr::stereo::Matrix4 result = {};
+    for (std::size_t row = 0; row < 4; ++row)
+    {
+        for (std::size_t column = 0; column < 4; ++column)
+        {
+            for (std::size_t inner = 0; inner < 4; ++inner)
+            {
+                result.values[row][column] +=
+                    lhs.values[row][inner] * rhs.values[inner][column];
+            }
+        }
+    }
+    return result;
+}
+
 void TestIdentityEyeOffsets()
 {
     constexpr std::string_view test = "identity eye offsets";
@@ -141,6 +160,44 @@ void TestIdentityEyeOffsets()
     ExpectNear(test, eyes->right.position.x, 1.032F);
     ExpectNear(test, eyes->right.position.y, 2.0F);
     ExpectNear(test, eyes->right.position.z, 3.0F);
+}
+
+void TestCentreViewPose()
+{
+    constexpr std::string_view test = "centre view pose";
+    constexpr float sinQuarterTurn = 0.38268343236F;
+    constexpr float cosQuarterTurn = 0.92387953251F;
+    const auto centre = bfvr::stereo::ComputeCentreViewPose(
+        {
+            {-0.032F, 1.60F, -0.10F},
+            {0.0F, -sinQuarterTurn, 0.0F, cosQuarterTurn}},
+        {
+            {0.032F, 1.60F, -0.10F},
+            {0.0F, sinQuarterTurn, 0.0F, cosQuarterTurn}});
+    if (!centre.has_value())
+    {
+        Fail(test, "valid canted stereo poses were rejected");
+        return;
+    }
+    ExpectNear(test, centre->position.x, 0.0F);
+    ExpectNear(test, centre->position.y, 1.60F);
+    ExpectNear(test, centre->position.z, -0.10F);
+    ExpectNear(test, centre->orientation.x, 0.0F);
+    ExpectNear(test, centre->orientation.y, 0.0F);
+    ExpectNear(test, centre->orientation.z, 0.0F);
+    ExpectNear(test, centre->orientation.w, 1.0F);
+
+    // Antipodal quaternions encode the same orientation and must not average
+    // to the invalid zero quaternion.
+    const auto antipodal = bfvr::stereo::ComputeCentreViewPose(
+        {{-0.032F, 0.0F, 0.0F}, {0.0F, 0.0F, 0.0F, 1.0F}},
+        {{0.032F, 0.0F, 0.0F}, {0.0F, 0.0F, 0.0F, -1.0F}});
+    if (!antipodal.has_value())
+    {
+        Fail(test, "equivalent antipodal eye orientations were rejected");
+        return;
+    }
+    ExpectNear(test, antipodal->orientation.w, 1.0F);
 }
 
 void TestRotatedEyeOffsets()
@@ -531,6 +588,857 @@ void TestRuntimeHeadCameraComposition()
     ExpectNear(test, cameraForward.z, 30.25F);
 }
 
+void TestViewSpaceWeaponPose()
+{
+    constexpr std::string_view test = "view-space weapon pose";
+    const bfvr::stereo::Pose referenceHead = {
+        {0.0F, 1.60F, 0.0F},
+        {0.0F, 0.0F, 0.0F, 1.0F}};
+    const bfvr::stereo::Pose referenceGrip = {
+        {0.20F, 1.30F, -0.45F},
+        {0.0F, 0.0F, 0.0F, 1.0F}};
+
+    // Physical head movement shared by the controller must not move a
+    // view-model. Only controller motion relative to the HMD is visual input.
+    const bfvr::stereo::Pose movedHead = {
+        {0.0F, 1.60F, -0.30F},
+        {0.0F, 0.0F, 0.0F, 1.0F}};
+    const bfvr::stereo::Pose movedGrip = {
+        {0.20F, 1.30F, -0.75F},
+        {0.0F, 0.0F, 0.0F, 1.0F}};
+    const auto headCancelled = bfvr::stereo::MakeD3D8ViewSpaceWeaponDelta(
+        referenceHead,
+        referenceGrip,
+        movedHead,
+        movedGrip,
+        1.0F,
+        1.0F);
+    if (!headCancelled.has_value())
+    {
+        Fail(test, "shared head/controller movement was rejected");
+        return;
+    }
+    ExpectNear(test, headCancelled->values[3][0], 0.0F);
+    ExpectNear(test, headCancelled->values[3][1], 0.0F);
+    ExpectNear(test, headCancelled->values[3][2], 0.0F);
+
+    // A shared rigid movement includes orientation, not just position. Rotate
+    // and translate both the HMD and grip together in LOCAL space; their
+    // head-relative relationship and therefore the weapon delta stay identity.
+    constexpr float rootHalf = 0.70710678118F;
+    const bfvr::stereo::Pose rigidlyMovedHead = {
+        {1.0F, 2.0F, 3.0F},
+        {0.0F, rootHalf, 0.0F, rootHalf}};
+    const bfvr::stereo::Pose rigidlyMovedGrip = {
+        {0.55F, 1.70F, 2.80F},
+        {0.0F, rootHalf, 0.0F, rootHalf}};
+    const auto rigidHeadCancelled =
+        bfvr::stereo::MakeD3D8ViewSpaceWeaponDelta(
+            referenceHead,
+            referenceGrip,
+            rigidlyMovedHead,
+            rigidlyMovedGrip,
+            1.0F,
+            1.0F);
+    if (!rigidHeadCancelled.has_value())
+    {
+        Fail(test, "shared rigid HMD/controller movement was rejected");
+        return;
+    }
+    for (std::size_t row = 0; row < 4; ++row)
+    {
+        for (std::size_t column = 0; column < 4; ++column)
+        {
+            ExpectNear(
+                test,
+                rigidHeadCancelled->values[row][column],
+                row == column ? 1.0F : 0.0F);
+        }
+    }
+
+    const bfvr::stereo::Pose currentGrip = {
+        {0.30F, 1.30F, -0.65F},
+        {0.0F, 0.0F, 0.0F, 1.0F}};
+    const auto delta = bfvr::stereo::MakeD3D8ViewSpaceWeaponDelta(
+        referenceHead,
+        referenceGrip,
+        referenceHead,
+        currentGrip,
+        10.0F,
+        1.0F);
+    if (!delta.has_value())
+    {
+        Fail(test, "valid controller translation was rejected");
+        return;
+    }
+    ExpectNear(test, delta->values[3][0], 1.0F);
+    ExpectNear(test, delta->values[3][1], 0.0F);
+    ExpectNear(test, delta->values[3][2], 2.0F);
+
+    const bfvr::stereo::Pose rotatedGrip = {
+        referenceGrip.position,
+        {0.0F, rootHalf, 0.0F, rootHalf}};
+    const auto rotationDelta = bfvr::stereo::MakeD3D8ViewSpaceWeaponDelta(
+        referenceHead,
+        referenceGrip,
+        referenceHead,
+        rotatedGrip,
+        1.0F,
+        1.0F);
+    if (!rotationDelta.has_value())
+    {
+        Fail(test, "valid controller rotation was rejected");
+        return;
+    }
+    const bfvr::stereo::Vec4 rotatedForward =
+        bfvr::stereo::TransformRowVector(
+            {0.0F, 0.0F, 1.0F, 0.0F},
+            *rotationDelta);
+    ExpectNear(test, rotatedForward.x, -1.0F);
+    ExpectNear(test, rotatedForward.y, 0.0F);
+    ExpectNear(test, rotatedForward.z, 0.0F);
+    // Rotating a controller in place requires a compensating translation in
+    // the post-multiplied delta. That conjugation keeps the tracked grip fixed
+    // while rotating attached geometry around it. A rotation-only delta with
+    // a zero translation would instead rotate this already-positioned grip
+    // around the HMD/view origin.
+    const bfvr::stereo::Vec4 gripPivot = {
+        referenceGrip.position.x - referenceHead.position.x,
+        referenceGrip.position.y - referenceHead.position.y,
+        -(referenceGrip.position.z - referenceHead.position.z),
+        1.0F};
+    const bfvr::stereo::Vec4 transformedGripPivot =
+        bfvr::stereo::TransformRowVector(gripPivot, *rotationDelta);
+    ExpectNear(test, transformedGripPivot.x, gripPivot.x);
+    ExpectNear(test, transformedGripPivot.y, gripPivot.y);
+    ExpectNear(test, transformedGripPivot.z, gripPivot.z);
+    ExpectNear(test, transformedGripPivot.w, 1.0F);
+
+    const bfvr::stereo::Vec4 markerFromGrip = {
+        gripPivot.x,
+        gripPivot.y,
+        gripPivot.z + 1.0F,
+        1.0F};
+    const bfvr::stereo::Vec4 transformedMarker =
+        bfvr::stereo::TransformRowVector(markerFromGrip, *rotationDelta);
+    ExpectNear(test, transformedMarker.x, gripPivot.x - 1.0F);
+    ExpectNear(test, transformedMarker.y, gripPivot.y);
+    ExpectNear(test, transformedMarker.z, gripPivot.z);
+    ExpectNear(test, transformedMarker.w, 1.0F);
+
+    const auto projection = bfvr::stereo::MakeD3D8ProjectionFromFovTangents(
+        {-1.0F, 1.0F, 1.0F, -1.0F},
+        0.1F,
+        100.0F);
+    if (!projection.has_value())
+    {
+        Fail(test, "test projection could not be built");
+        return;
+    }
+    const auto adjustedWvp = bfvr::stereo::ApplyViewSpaceWeaponDeltaToD3D8Wvp(
+        *projection,
+        *projection,
+        *delta);
+    if (!adjustedWvp.has_value())
+    {
+        Fail(test, "valid view-space WVP adjustment was rejected");
+        return;
+    }
+    const bfvr::stereo::Vec4 vertex = {0.0F, 0.0F, 2.0F, 1.0F};
+    const bfvr::stereo::Vec4 expected = bfvr::stereo::TransformRowVector(
+        bfvr::stereo::TransformRowVector(vertex, *delta),
+        *projection);
+    const bfvr::stereo::Vec4 actual =
+        bfvr::stereo::TransformRowVector(vertex, *adjustedWvp);
+    ExpectNear(test, actual.x, expected.x);
+    ExpectNear(test, actual.y, expected.y);
+    ExpectNear(test, actual.z, expected.z);
+    ExpectNear(test, actual.w, expected.w);
+
+    const bfvr::stereo::Matrix4 sourceWorld = {
+        {{{1.0F, 0.0F, 0.0F, 0.0F},
+          {0.0F, 1.0F, 0.0F, 0.0F},
+          {0.0F, 0.0F, 1.0F, 0.0F},
+          {3.0F, -2.0F, 5.0F, 1.0F}}}};
+    const auto sourceView = bfvr::stereo::MakeD3D8ViewFromOpenXRPose(
+        {{4.0F, 1.0F, -2.0F}, {0.0F, rootHalf, 0.0F, rootHalf}});
+    if (!sourceView.has_value())
+    {
+        Fail(test, "test fixed-function view could not be built");
+        return;
+    }
+    const auto adjustedWorld =
+        bfvr::stereo::ApplyViewSpaceWeaponDeltaToD3D8World(
+            sourceWorld,
+            *sourceView,
+            *delta);
+    if (!adjustedWorld.has_value())
+    {
+        Fail(test, "valid view-space World adjustment was rejected");
+        return;
+    }
+    const bfvr::stereo::Vec4 worldActual = bfvr::stereo::TransformRowVector(
+        bfvr::stereo::TransformRowVector(vertex, *adjustedWorld),
+        *sourceView);
+    const bfvr::stereo::Vec4 worldExpected = bfvr::stereo::TransformRowVector(
+        bfvr::stereo::TransformRowVector(
+            bfvr::stereo::TransformRowVector(vertex, sourceWorld),
+            *sourceView),
+        *delta);
+    ExpectNear(test, worldActual.x, worldExpected.x);
+    ExpectNear(test, worldActual.y, worldExpected.y);
+    ExpectNear(test, worldActual.z, worldExpected.z);
+    ExpectNear(test, worldActual.w, worldExpected.w);
+
+    // Stereo replay must insert the centre-HMD controller delta before the
+    // residual eye transform. Building the temporary World from sourceView,
+    // then applying the eye residual, is algebraically identical to
+    // World * sourceView * delta * residualEye. Building it from the full
+    // eye View would reverse the last two factors and give each eye a
+    // different attachment pivot when the controller rotates.
+    const bfvr::stereo::Matrix4 residualEyeView = {
+        {{{1.0F, 0.0F, 0.0F, 0.0F},
+          {0.0F, 1.0F, 0.0F, 0.0F},
+          {0.0F, 0.0F, 1.0F, 0.0F},
+          {0.032F, 0.0F, 0.0F, 1.0F}}}};
+    const auto adjustedRotationWorld =
+        bfvr::stereo::ApplyViewSpaceWeaponDeltaToD3D8World(
+            sourceWorld,
+            *sourceView,
+            *rotationDelta);
+    if (!adjustedRotationWorld.has_value())
+    {
+        Fail(test, "rotated stereo replay World adjustment was rejected");
+        return;
+    }
+
+    // Conversion to a World attachment is a same-frame transaction shared by
+    // the original draw and both eyes.
+    const auto calibrationWorldAttachment =
+        bfvr::stereo::MakeD3D8WorldSpaceWeaponDelta(
+            *sourceView,
+            *rotationDelta);
+    if (!calibrationWorldAttachment.has_value())
+    {
+        Fail(test, "valid calibration World attachment was rejected");
+        return;
+    }
+    const auto recoveredCalibrationOffset =
+        bfvr::stereo::MakeD3D8CalibrationViewWeaponOffset(
+            *sourceView,
+            *calibrationWorldAttachment);
+    if (!recoveredCalibrationOffset.has_value())
+    {
+        Fail(test, "valid calibration World attachment could not be recovered");
+        return;
+    }
+    for (std::size_t row = 0; row < 4; ++row)
+    {
+        for (std::size_t column = 0; column < 4; ++column)
+        {
+            ExpectNear(
+                test,
+                recoveredCalibrationOffset->values[row][column],
+                rotationDelta->values[row][column]);
+        }
+    }
+    const auto calibrationAnchoredWorld =
+        bfvr::stereo::ApplyWorldSpaceWeaponDeltaToD3D8World(
+            sourceWorld,
+            *calibrationWorldAttachment);
+    if (!calibrationAnchoredWorld.has_value())
+    {
+        Fail(test, "valid fixed World attachment was rejected");
+        return;
+    }
+    const bfvr::stereo::Vec4 calibrationAnchoredActual =
+        bfvr::stereo::TransformRowVector(vertex, *calibrationAnchoredWorld);
+    const bfvr::stereo::Vec4 calibrationAnchoredExpected =
+        bfvr::stereo::TransformRowVector(vertex, *adjustedRotationWorld);
+    ExpectNear(
+        test,
+        calibrationAnchoredActual.x,
+        calibrationAnchoredExpected.x);
+    ExpectNear(
+        test,
+        calibrationAnchoredActual.y,
+        calibrationAnchoredExpected.y);
+    ExpectNear(
+        test,
+        calibrationAnchoredActual.z,
+        calibrationAnchoredExpected.z);
+    ExpectNear(
+        test,
+        calibrationAnchoredActual.w,
+        calibrationAnchoredExpected.w);
+
+    // The source View contains current physical head pose after the RenderView
+    // camera hook. Remove that pose but retain BF1942 player/body movement.
+    const bfvr::stereo::Pose neutralRoomHead = {
+        {0.0F, 0.0F, 0.0F},
+        {0.0F, 0.0F, 0.0F, 1.0F}};
+    const bfvr::stereo::Pose movedRoomHead = {
+        {0.25F, 0.20F, -0.40F},
+        {0.0F, rootHalf, 0.0F, rootHalf}};
+    const auto movedHeadView =
+        bfvr::stereo::MakeD3D8ViewFromOpenXRPose(movedRoomHead);
+    if (!movedHeadView.has_value())
+    {
+        Fail(test, "test moved-head View could not be built");
+        return;
+    }
+    const bfvr::stereo::Matrix4 movedPlayerBodyView = {
+        {{{0.0F, 0.0F, -1.0F, 0.0F},
+          {0.0F, 1.0F, 0.0F, 0.0F},
+          {1.0F, 0.0F, 0.0F, 0.0F},
+          {8.0F, -1.0F, 4.0F, 1.0F}}}};
+    const bfvr::stereo::Matrix4 movedSourceView = MultiplyTestMatrices(
+        movedPlayerBodyView,
+        *movedHeadView);
+    const auto recoveredPlayerBodyView =
+        bfvr::stereo::MakeD3D8PlayerBodyWeaponView(
+            movedSourceView,
+            neutralRoomHead,
+            movedRoomHead,
+            1.0F);
+    if (!recoveredPlayerBodyView.has_value())
+    {
+        Fail(test, "head-cancelled player/body View was rejected");
+        return;
+    }
+    for (std::size_t row = 0; row < 4; ++row)
+    {
+        for (std::size_t column = 0; column < 4; ++column)
+        {
+            ExpectNear(
+                test,
+                recoveredPlayerBodyView->values[row][column],
+                movedPlayerBodyView.values[row][column]);
+        }
+    }
+    const auto locomotedWorldAttachment =
+        bfvr::stereo::MakeD3D8WorldSpaceWeaponDelta(
+            *recoveredPlayerBodyView,
+            *rotationDelta);
+    if (!locomotedWorldAttachment.has_value())
+    {
+        Fail(test, "locomoted player/body attachment was rejected");
+        return;
+    }
+    const bfvr::stereo::Vec4 locomotedAttachmentPoint =
+        bfvr::stereo::TransformRowVector(vertex, *locomotedWorldAttachment);
+    const bfvr::stereo::Vec4 fixedCalibrationAttachmentPoint =
+        bfvr::stereo::TransformRowVector(vertex, *calibrationWorldAttachment);
+    if (std::fabs(
+            locomotedAttachmentPoint.x - fixedCalibrationAttachmentPoint.x) < 0.001F &&
+        std::fabs(
+            locomotedAttachmentPoint.y - fixedCalibrationAttachmentPoint.y) < 0.001F &&
+        std::fabs(
+            locomotedAttachmentPoint.z - fixedCalibrationAttachmentPoint.z) < 0.001F)
+    {
+        Fail(test, "player locomotion did not move the attachment frame");
+    }
+
+    const bfvr::stereo::Vec4 stereoReplayActual =
+        bfvr::stereo::TransformRowVector(
+            bfvr::stereo::TransformRowVector(
+                bfvr::stereo::TransformRowVector(
+                    vertex,
+                    *adjustedRotationWorld),
+                *sourceView),
+            residualEyeView);
+    const bfvr::stereo::Vec4 stereoReplayExpected =
+        bfvr::stereo::TransformRowVector(
+            bfvr::stereo::TransformRowVector(
+                bfvr::stereo::TransformRowVector(
+                    bfvr::stereo::TransformRowVector(
+                        vertex,
+                        sourceWorld),
+                    *sourceView),
+                *rotationDelta),
+            residualEyeView);
+    ExpectNear(test, stereoReplayActual.x, stereoReplayExpected.x);
+    ExpectNear(test, stereoReplayActual.y, stereoReplayExpected.y);
+    ExpectNear(test, stereoReplayActual.z, stereoReplayExpected.z);
+    ExpectNear(test, stereoReplayActual.w, stereoReplayExpected.w);
+
+    // Prove this fixture actually distinguishes the old order. Translation
+    // deltas commute with the residual eye translation and gave a false sense
+    // of coverage; a grip rotation does not.
+    const bfvr::stereo::Vec4 oldEyeThenGripOrder =
+        bfvr::stereo::TransformRowVector(
+            bfvr::stereo::TransformRowVector(
+                bfvr::stereo::TransformRowVector(
+                    bfvr::stereo::TransformRowVector(
+                        vertex,
+                        sourceWorld),
+                    *sourceView),
+                residualEyeView),
+            *rotationDelta);
+    if (std::fabs(oldEyeThenGripOrder.x - stereoReplayExpected.x) <
+            0.001F &&
+        std::fabs(oldEyeThenGripOrder.y - stereoReplayExpected.y) <
+            0.001F &&
+        std::fabs(oldEyeThenGripOrder.z - stereoReplayExpected.z) <
+            0.001F)
+    {
+        Fail(test, "stereo-order fixture does not distinguish the old order");
+    }
+
+    // A development calibration persists the actual controller attachment A,
+    // not the target delta D from one session. Reconstructing with the commit
+    // grip must return D exactly, and the same physical head-relative grip in
+    // a translated/rotated tracking session must return the same D.
+    const auto portableAttachment =
+        bfvr::stereo::MakeD3D8ControllerToWeaponAttachment(
+            referenceHead,
+            referenceGrip,
+            *rotationDelta,
+            1.0F);
+    if (!portableAttachment.has_value())
+    {
+        Fail(test, "portable controller attachment was rejected");
+        return;
+    }
+    const auto reconstructedAtCommit =
+        bfvr::stereo::MakeD3D8AttachedWeaponViewDelta(
+            *portableAttachment,
+            referenceHead,
+            referenceGrip,
+            1.0F);
+    const auto reconstructedInNewSession =
+        bfvr::stereo::MakeD3D8AttachedWeaponViewDelta(
+            *portableAttachment,
+            rigidlyMovedHead,
+            rigidlyMovedGrip,
+            1.0F);
+    if (!reconstructedAtCommit.has_value() ||
+        !reconstructedInNewSession.has_value())
+    {
+        Fail(test, "portable controller attachment could not be reconstructed");
+        return;
+    }
+    for (std::size_t row = 0; row < 4; ++row)
+    {
+        for (std::size_t column = 0; column < 4; ++column)
+        {
+            ExpectNear(
+                test,
+                reconstructedAtCommit->values[row][column],
+                rotationDelta->values[row][column]);
+            ExpectNear(
+                test,
+                reconstructedInNewSession->values[row][column],
+                rotationDelta->values[row][column]);
+        }
+    }
+
+    const auto capturedAndMoved =
+        bfvr::stereo::ComposeD3D8ViewSpaceWeaponDeltas(
+            *rotationDelta,
+            *delta);
+    if (!capturedAndMoved.has_value())
+    {
+        Fail(test, "valid captured weapon offset did not compose");
+        return;
+    }
+    const bfvr::stereo::Vec4 composedActual =
+        bfvr::stereo::TransformRowVector(vertex, *capturedAndMoved);
+    const bfvr::stereo::Vec4 composedExpected =
+        bfvr::stereo::TransformRowVector(
+            bfvr::stereo::TransformRowVector(vertex, *rotationDelta),
+            *delta);
+    ExpectNear(test, composedActual.x, composedExpected.x);
+    ExpectNear(test, composedActual.y, composedExpected.y);
+    ExpectNear(test, composedActual.z, composedExpected.z);
+    ExpectNear(test, composedActual.w, composedExpected.w);
+
+    if (bfvr::stereo::MakeD3D8ViewSpaceWeaponDelta(
+            referenceHead,
+            referenceGrip,
+            referenceHead,
+            currentGrip,
+            1.0F,
+            0.0F)
+            .has_value())
+    {
+        Fail(test, "invalid translation limit did not fail closed");
+    }
+    bfvr::stereo::Matrix4 singularProjection = {};
+    if (bfvr::stereo::ApplyViewSpaceWeaponDeltaToD3D8Wvp(
+            *projection,
+            singularProjection,
+            *delta)
+            .has_value())
+    {
+        Fail(test, "singular projection did not fail closed");
+    }
+    if (bfvr::stereo::ApplyViewSpaceWeaponDeltaToD3D8World(
+            sourceWorld,
+            singularProjection,
+            *delta)
+            .has_value())
+    {
+        Fail(test, "singular View did not fail closed");
+    }
+}
+
+void TestD3D8WeaponDrawPolicy()
+{
+    constexpr std::string_view test = "D3D8 weapon draw policy";
+    bfvr::stereo::WeaponDrawPolicyInput input = {};
+    input.indexedDraw = true;
+    input.rendererRoute = bfvr::stereo::WeaponRendererRoute::GenericMesh;
+    input.vertexShaderOrFvf = 0x112U;
+    input.zEnabled = true;
+    input.firstPersonProjection = true;
+    input.worldKnown = true;
+    input.viewKnown = true;
+    for (std::size_t axis = 0; axis < 4; ++axis)
+    {
+        input.world.values[axis][axis] = 1.0F;
+        input.view.values[axis][axis] = 1.0F;
+    }
+    input.world.values[3][0] = 10.5F;
+    input.world.values[3][1] = 20.0F;
+    input.world.values[3][2] = 29.5F;
+    input.view.values[3][0] = -10.0F;
+    input.view.values[3][1] = -20.0F;
+    input.view.values[3][2] = -30.0F;
+
+    if (bfvr::stereo::ClassifyWeaponDraw(input, 2.0F) !=
+        bfvr::stereo::WeaponDrawDisposition::SharedFixedFunctionWeaponCandidate)
+    {
+        Fail(test, "shared fixed-function candidate was rejected");
+    }
+
+    input.alphaBlendEnabled = true;
+    if (bfvr::stereo::ClassifyWeaponDraw(input, 2.0F) !=
+        bfvr::stereo::WeaponDrawDisposition::Unclassified)
+    {
+        Fail(test, "alpha-enabled draw was classified as a weapon");
+    }
+    input.alphaBlendEnabled = false;
+    input.rendererRoute = bfvr::stereo::WeaponRendererRoute::AnimatedMesh;
+    if (bfvr::stereo::ClassifyWeaponDraw(input, 2.0F) !=
+        bfvr::stereo::WeaponDrawDisposition::Unclassified)
+    {
+        Fail(test, "animated route was classified as a static weapon");
+    }
+    input.rendererRoute = bfvr::stereo::WeaponRendererRoute::GenericMesh;
+    input.world.values[3][0] = 11.0F;
+    input.world.values[3][2] = 30.0F;
+    if (bfvr::stereo::ClassifyWeaponDraw(input, 2.0F) !=
+        bfvr::stereo::WeaponDrawDisposition::Unclassified)
+    {
+        Fail(test, "nearby lateral world/vehicle mesh was classified as a weapon");
+    }
+    input.world.values[3][0] = 30.0F;
+    if (bfvr::stereo::ClassifyWeaponDraw(input, 2.0F) !=
+        bfvr::stereo::WeaponDrawDisposition::Unclassified)
+    {
+        Fail(test, "distant generic mesh was classified as a weapon");
+    }
+    input.world.values[3][0] = 10.5F;
+    input.view.values[0][0] = 2.0F;
+    if (bfvr::stereo::ClassifyWeaponDraw(input, 2.0F) !=
+        bfvr::stereo::WeaponDrawDisposition::Unclassified)
+    {
+        Fail(test, "non-rigid View was classified as a weapon");
+    }
+}
+
+void TestViewModelPerspectiveCorrection()
+{
+    constexpr std::string_view test =
+        "viewmodel perspective correction before grip";
+    const auto ordinaryProjection =
+        bfvr::stereo::MakeD3D8ProjectionFromFovTangents(
+            {-1.0F, 1.0F, 0.5625F, -0.5625F},
+            0.1F,
+            1000.0F);
+    const auto viewModelProjection =
+        bfvr::stereo::MakeD3D8ProjectionFromFovTangents(
+            {-0.5F, 0.5F, 0.28125F, -0.28125F},
+            0.01F,
+            10.0F);
+    if (!ordinaryProjection.has_value() ||
+        !viewModelProjection.has_value())
+    {
+        Fail(test, "test projections could not be built");
+        return;
+    }
+
+    const auto correction =
+        bfvr::stereo::MakeD3D8ViewModelPerspectiveCorrection(
+            *viewModelProjection,
+            *ordinaryProjection);
+    if (!correction.has_value())
+    {
+        Fail(test, "valid projection pair was rejected");
+        return;
+    }
+    ExpectNear(test, correction->values[0][0], 2.0F);
+    ExpectNear(test, correction->values[1][1], 2.0F);
+    ExpectNear(test, correction->values[2][2], 1.0F);
+    ExpectNear(test, correction->values[3][3], 1.0F);
+
+    bfvr::stereo::Matrix4 gripAttachment = {};
+    for (std::size_t index = 0; index < 4; ++index)
+    {
+        gripAttachment.values[index][index] = 1.0F;
+    }
+    gripAttachment.values[3][0] = 0.25F;
+    gripAttachment.values[3][1] = -0.15F;
+    gripAttachment.values[3][2] = 0.40F;
+    const auto correctedAttachment =
+        bfvr::stereo::ComposeD3D8ViewSpaceWeaponDeltas(
+            *correction,
+            gripAttachment);
+    if (!correctedAttachment.has_value())
+    {
+        Fail(test, "perspective and grip transforms did not compose");
+        return;
+    }
+
+    // The perspective morph changes base geometry, but because it precedes
+    // the rigid grip attachment it cannot attenuate or amplify physical
+    // controller translation.
+    ExpectNear(test, correctedAttachment->values[0][0], 2.0F);
+    ExpectNear(test, correctedAttachment->values[1][1], 2.0F);
+    ExpectNear(test, correctedAttachment->values[3][0], 0.25F);
+    ExpectNear(test, correctedAttachment->values[3][1], -0.15F);
+    ExpectNear(test, correctedAttachment->values[3][2], 0.40F);
+
+    bfvr::stereo::Matrix4 invalidProjection = {};
+    if (bfvr::stereo::MakeD3D8ViewModelPerspectiveCorrection(
+            invalidProjection,
+            *ordinaryProjection)
+            .has_value())
+    {
+        Fail(test, "singular viewmodel projection was accepted");
+    }
+}
+
+void TestWeaponMotionTracker()
+{
+    constexpr std::string_view test = "weapon motion tracker";
+    bfvr::stereo::WeaponMotionTracker tracker;
+    bfvr::stereo::WeaponMotionTrackingInput input = {};
+    input.gripTrackingValid = true;
+    input.predictedDisplayTime = 100;
+    input.head = {{0.0F, 1.60F, 0.0F}, {0.0F, 0.0F, 0.0F, 1.0F}};
+    input.grip = {{0.20F, 1.30F, -0.45F}, {0.0F, 0.0F, 0.0F, 1.0F}};
+    input.worldUnitsPerMeter = 1.0F;
+    if (tracker.Update(input).has_value() || !tracker.IsCalibrated())
+    {
+        Fail(test, "first valid pose did not calibrate without an offset");
+        return;
+    }
+
+    input.predictedDisplayTime = 101;
+    input.grip.position.x += 0.10F;
+    const auto moved = tracker.Update(input);
+    if (!moved.has_value())
+    {
+        Fail(test, "valid tracked grip translation was rejected");
+        return;
+    }
+    ExpectNear(test, moved->values[3][0], 0.10F);
+    ExpectNear(test, moved->values[3][1], 0.0F);
+    ExpectNear(test, moved->values[3][2], 0.0F);
+
+    // The tracker retains its calibration-time HMD basis. A later HMD move
+    // with an unchanged LOCAL grip must preserve the controller-only delta.
+    input.predictedDisplayTime = 102;
+    input.head = {
+        {0.25F, 1.80F, -0.40F},
+        {0.0F, 0.70710678118F, 0.0F, 0.70710678118F}};
+    const auto headOnly = tracker.Update(input);
+    if (!headOnly.has_value())
+    {
+        Fail(test, "head-only sample was rejected");
+        return;
+    }
+    for (std::size_t row = 0; row < 4; ++row)
+    {
+        for (std::size_t column = 0; column < 4; ++column)
+        {
+            const float expected = row == 3 && column == 0
+                ? 0.10F
+                : row == column ? 1.0F : 0.0F;
+            ExpectNear(test, headOnly->values[row][column], expected);
+        }
+    }
+
+    // Finite tracked reach is unrestricted; there is no viewmodel leash.
+    for (int step = 0; step < 10; ++step)
+    {
+        input.predictedDisplayTime += 1;
+        input.grip.position.x += 0.15F;
+        if (!tracker.Update(input).has_value())
+        {
+            Fail(test, "finite arm extension was restricted");
+            return;
+        }
+    }
+
+    input.gripTrackingValid = false;
+    if (tracker.Update(input).has_value() || tracker.IsCalibrated())
+    {
+        Fail(test, "invalid tracking did not reset calibration");
+        return;
+    }
+
+    input.gripTrackingValid = true;
+    input.predictedDisplayTime = 102;
+    if (tracker.Update(input).has_value())
+    {
+        Fail(test, "tracking recovery did not recalibrate in place");
+        return;
+    }
+
+    input.predictedDisplayTime = 101;
+    input.grip.position.x += 0.05F;
+    if (tracker.Update(input).has_value())
+    {
+        Fail(test, "predicted-time reversal was applied as motion");
+        return;
+    }
+
+    input.predictedDisplayTime = 103;
+    input.grip.position.x += 1.0F;
+    if (!tracker.Update(input).has_value())
+    {
+        Fail(test, "large finite controller translation was restricted");
+    }
+}
+
+void TestUiPointerMapping()
+{
+    constexpr std::string_view test = "OpenXR aim to BF1942 UI canvas";
+    constexpr float quadWidth = 1.6F;
+    constexpr float quadHeight = quadWidth * 2016.0F / 1872.0F;
+    const bfvr::stereo::Pose quad = {
+        {0.0F, 0.0F, -1.5F},
+        {0.0F, 0.0F, 0.0F, 1.0F}};
+
+    const auto center =
+        bfvr::stereo::MapOpenXRAimPoseToAspectFitUiCanvas(
+            {{0.0F, 0.0F, 0.0F}, {0.0F, 0.0F, 0.0F, 1.0F}},
+            quad,
+            quadWidth,
+            quadHeight,
+            1872,
+            2016,
+            1920,
+            1080,
+            800,
+            600);
+    if (!center.has_value())
+    {
+        Fail(test, "center aim ray did not hit the UI canvas");
+        return;
+    }
+    ExpectNear(test, center->normalizedX, 0.5F);
+    ExpectNear(test, center->normalizedY, 0.5F);
+    ExpectNear(test, center->pixelX, 400.0F);
+    ExpectNear(test, center->pixelY, 300.0F);
+
+    // BFVR aspect-fits a 1920x1080 render target into the 1872x2016 OpenXR
+    // texture, while BF1942's menu projection and native input remain on an
+    // 800x600 logical canvas. The mapper must unpad the raster before applying
+    // the separate logical coordinate scale.
+    const auto upperRight =
+        bfvr::stereo::MapOpenXRAimPoseToAspectFitUiCanvas(
+            {{0.4F, 0.225F, 0.0F}, {0.0F, 0.0F, 0.0F, 1.0F}},
+            quad,
+            quadWidth,
+            quadHeight,
+            1872,
+            2016,
+            1920,
+            1080,
+            800,
+            600);
+    if (!upperRight.has_value())
+    {
+        Fail(test, "valid aim ray inside aspect-fitted content was rejected");
+        return;
+    }
+    ExpectNear(test, upperRight->normalizedX, 0.75F);
+    ExpectNear(test, upperRight->normalizedY, 0.25F);
+    ExpectNear(test, upperRight->pixelX, 600.0F);
+    ExpectNear(test, upperRight->pixelY, 150.0F);
+
+    if (bfvr::stereo::MapOpenXRAimPoseToAspectFitUiCanvas(
+            {{0.0F, 0.70F, 0.0F}, {0.0F, 0.0F, 0.0F, 1.0F}},
+            quad,
+            quadWidth,
+            quadHeight,
+            1872,
+            2016,
+            1920,
+            1080,
+            800,
+            600)
+            .has_value())
+    {
+        Fail(test, "transparent aspect-fit padding produced a canvas point");
+    }
+
+    // A ray facing away from the panel intersects its plane only behind the
+    // controller and must never become a cursor coordinate.
+    if (bfvr::stereo::MapOpenXRAimPoseToAspectFitUiCanvas(
+            {{0.0F, 0.0F, 0.0F}, {0.0F, 1.0F, 0.0F, 0.0F}},
+            quad,
+            quadWidth,
+            quadHeight,
+            1872,
+            2016,
+            1920,
+            1080,
+            800,
+            600)
+            .has_value())
+    {
+        Fail(test, "back-facing aim ray produced a canvas point");
+    }
+
+    // A controller behind the panel can intersect the same mathematical plane,
+    // but a one-sided menu must not be interactive through its back face.
+    if (bfvr::stereo::MapOpenXRAimPoseToAspectFitUiCanvas(
+            {{0.0F, 0.0F, -2.0F}, {0.0F, 1.0F, 0.0F, 0.0F}},
+            quad,
+            quadWidth,
+            quadHeight,
+            1872,
+            2016,
+            1920,
+            1080,
+            800,
+            600)
+            .has_value())
+    {
+        Fail(test, "back-face UI ray produced a canvas point");
+    }
+
+    constexpr float halfSine45 = 0.70710678118F;
+    const bfvr::stereo::Pose movedHead = {{2.0F, 1.0F, -3.0F},
+        {0.0F, halfSine45, 0.0F, halfSine45}};
+    const bfvr::stereo::Pose movedAim = movedHead;
+    const auto relativeAim = bfvr::stereo::MakePoseRelativeToReference(
+        movedHead, movedAim);
+    if (!relativeAim.has_value())
+        return Fail(test, "valid head-relative controller pose was rejected");
+    const auto movedCenter = bfvr::stereo::MapOpenXRAimPoseToAspectFitUiCanvas(
+        *relativeAim, quad, quadWidth, quadHeight, 1872, 2016, 1920, 1080,
+        800, 600);
+    if (!movedCenter.has_value())
+        return Fail(test, "head-relative ray missed the VIEW-space UI");
+    ExpectNear(test, movedCenter->pixelX, 400.0F);
+    ExpectNear(test, movedCenter->pixelY, 300.0F);
+}
 void TestD3D8DrawPolicy()
 {
     constexpr std::string_view test = "D3D8 draw policy";
@@ -622,7 +1530,6 @@ void TestBF1942SemanticDrawPolicy()
     {
         Fail(test, "different renderer return did not fail closed");
     }
-
     signature = {
         0x00667EF4,
         0x0064D84C,
@@ -760,6 +1667,24 @@ void TestBF1942SemanticDrawPolicy()
         D3D8SemanticDrawClass::Unclassified)
     {
         Fail(test, "translated skinning-shader byte count did not fail closed");
+    }
+    const bool exactFirstPersonArm = bfvr::stereo::IsBF1942FirstPersonArmDraw(
+        D3D8SemanticDrawClass::AnimatedMeshSkinning, true, 2.25F, 3.75F);
+    const bool ordinarySoldier = bfvr::stereo::IsBF1942FirstPersonArmDraw(
+        D3D8SemanticDrawClass::AnimatedMeshSkinning, true, 1.60F, 2.84F);
+    const bool unclassifiedViewmodel = bfvr::stereo::IsBF1942FirstPersonArmDraw(
+        D3D8SemanticDrawClass::Unclassified, true, 2.25F, 3.75F);
+    if (!exactFirstPersonArm)
+    {
+        Fail(test, "exact animated first-person projection was not suppressible");
+    }
+    if (ordinarySoldier)
+    {
+        Fail(test, "ordinary-world animated soldier was suppressible");
+    }
+    if (unclassifiedViewmodel)
+    {
+        Fail(test, "unclassified first-person draw was suppressible");
     }
 
     signature = {
@@ -942,6 +1867,40 @@ void TestD3D8FrameCompositionPolicy()
             D3D8FrameCompositionLayer::WorldEyes)
     {
         Fail(test, "non-UI semantic class escaped the world-eye layer");
+    }
+
+    bfvr::stereo::D3D8FrameCompletionFacts standalone = {};
+    standalone.hasMirroredDraws = true;
+    standalone.stateRestorationExact = true;
+    standalone.worldEyesHaveColor = true;
+    standalone.eyeImagesDiffer = true;
+    standalone.layerPartitionExact = true;
+    standalone.uiLayerHasContent = true;
+    if (bfvr::stereo::IsD3D8FrameCompositionComplete(standalone) == false)
+    {
+        Fail(test, "complete standalone stereo/UI frame was rejected");
+    }
+
+    standalone.worldEyesHaveColor = false;
+    standalone.presentationMode = true;
+    standalone.frameTransferred = true;
+    standalone.eyeImagesDiffer = false;
+    if (bfvr::stereo::IsD3D8FrameCompositionComplete(standalone) == false)
+    {
+        Fail(test, "transferred UI-only presentation frame was rejected");
+    }
+
+    standalone.frameTransferred = false;
+    if (bfvr::stereo::IsD3D8FrameCompositionComplete(standalone))
+    {
+        Fail(test, "untransferred UI-only presentation frame was accepted");
+    }
+
+    standalone.frameTransferred = true;
+    standalone.stateRestorationExact = false;
+    if (bfvr::stereo::IsD3D8FrameCompositionComplete(standalone))
+    {
+        Fail(test, "state-corrupt UI-only presentation frame was accepted");
     }
 }
 
@@ -1503,6 +2462,7 @@ void TestStereoFrameResourceReuseReset()
 int main()
 {
     TestIdentityEyeOffsets();
+    TestCentreViewPose();
     TestRotatedEyeOffsets();
     TestCoordinateAndViewConversion();
     TestYawedViewConversion();
@@ -1512,6 +2472,11 @@ int main()
     TestRuntimeFovD3D8StereoPair();
     TestRuntimePoseD3D8StereoPair();
     TestRuntimeHeadCameraComposition();
+    TestViewSpaceWeaponPose();
+    TestViewModelPerspectiveCorrection();
+    TestD3D8WeaponDrawPolicy();
+    TestWeaponMotionTracker();
+    TestUiPointerMapping();
     TestD3D8SkinningShaderConstants();
     TestD3D8SpriteShaderConstants();
     TestD3D8TreeSpriteShaderConstants();

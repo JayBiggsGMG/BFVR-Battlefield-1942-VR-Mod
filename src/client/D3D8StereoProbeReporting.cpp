@@ -366,11 +366,12 @@ void ReportContinuousPresentationResult(
         run.totalRestoreChecks - run.totalRestoreFailures,
         run.totalRestoreChecks);
     appendLog(
-        L"D3D8 OpenXR session geometry families: treeRendererBillboards=%ld treeMeshAlphaBlocks=%ld treeMeshProgrammableSprites=%ld animatedMeshSkinning=%ld translucentSprites=%ld. These are accumulated across every presented world frame, including frames before a menu exit.",
+        L"D3D8 OpenXR session geometry families: treeRendererBillboards=%ld treeMeshAlphaBlocks=%ld treeMeshProgrammableSprites=%ld animatedMeshSkinning=%ld firstPersonArmsSuppressed=%ld translucentSprites=%ld. These are accumulated across every presented world frame, including frames before a menu exit.",
         run.totalTreeRendererBillboardDraws,
         run.totalTreeMeshAlphaBlockDraws,
         run.totalTreeMeshProgrammableSpriteDraws,
         run.totalAnimatedMeshSkinningDraws,
+        run.totalSuppressedFirstPersonArmDraws,
         run.totalTranslucentSpriteDraws);
 
     LARGE_INTEGER frequency = {};

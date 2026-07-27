@@ -3,8 +3,11 @@
 #include "client/D3D8ImportRoute.h"
 #include "client/D3D8RuntimeRedirect.h"
 #include "client/D3D8StateCensus.h"
+#include "client/D3D8WeaponTransformOwnershipProbe.h"
+#include "client/D3D8WeaponViewModelProbe.h"
 #include "client/D3D8StereoPairProbe.h"
 #include "client/PlayerInputProbe.h"
+#include "client/WeaponFireProbe.h"
 #include "presenter/D3DSystemRuntime.h"
 #include "bfvr_runtime_diagnostics.hpp"
 
@@ -134,6 +137,10 @@ constexpr ULONG_PTR
 constexpr ULONG_PTR
     kObserverInitializationRequestD3D8To9OpenXRPresentationProbe = 23;
 constexpr ULONG_PTR kObserverInitializationRequestPlayerInputProbe = 24;
+constexpr ULONG_PTR kObserverInitializationRequestWeaponViewModelProbe = 25;
+constexpr ULONG_PTR
+    kObserverInitializationRequestWeaponTransformOwnershipProbe = 26;
+constexpr ULONG_PTR kObserverInitializationRequestWeaponFireProbe = 27;
 constexpr DWORD kObserverInitializationParametersMagic = 0x52564642;
 constexpr LONG kProjectionStreamCopyLimit = 60;
 constexpr DWORD_PTR kProjectionWrapperReturnAddress = 0x0045FE21;
@@ -1790,9 +1797,35 @@ extern "C" __declspec(dllexport) DWORD WINAPI BFVRInitializeObserver(LPVOID init
     {
         StartD3D8StateCensusProbe();
     }
+    if (initializationRequest ==
+        kObserverInitializationRequestWeaponViewModelProbe)
+    {
+        const bfvr::D3D8ObserverCallbacks callbacks = {
+            TryGetD3D8ObserverLifecycle,
+            IsD3D8ObserverCaptureEligible,
+            AppendD3D8ObserverLog,
+            SignalD3D8ObserverProbeCompletion};
+        bfvr::StartD3D8WeaponViewModelProbe(callbacks);
+    }
+    if (initializationRequest ==
+        kObserverInitializationRequestWeaponTransformOwnershipProbe)
+    {
+        const bfvr::D3D8ObserverCallbacks callbacks = {
+            TryGetD3D8ObserverLifecycle,
+            IsD3D8ObserverCaptureEligible,
+            AppendD3D8ObserverLog,
+            SignalD3D8ObserverProbeCompletion};
+        bfvr::StartD3D8WeaponTransformOwnershipProbe(callbacks);
+    }
     if (initializationRequest == kObserverInitializationRequestPlayerInputProbe)
     {
         bfvr::StartPlayerInputProbe(
+            GetModuleHandleW(nullptr),
+            AppendD3D8ObserverLog);
+    }
+    if (initializationRequest == kObserverInitializationRequestWeaponFireProbe)
+    {
+        bfvr::StartWeaponFireProbe(
             GetModuleHandleW(nullptr),
             AppendD3D8ObserverLog);
     }
@@ -1819,8 +1852,8 @@ extern "C" __declspec(dllexport) DWORD WINAPI BFVRInitializeObserver(LPVOID init
         isD3D8To9OpenXRPresentationProbe)
     {
         const bfvr::D3D8ObserverCallbacks callbacks = {
-            TryGetD3D8ObserverLifecycle,
-            IsD3D8ObserverCaptureEligible,
+            TryGetD3D8PresentationLifecycle,
+            IsD3D8ObserverGameplayActive,
             AppendD3D8ObserverLog,
             SignalD3D8ObserverProbeCompletion};
         bfvr::StartD3D8StereoFramePresentationProbe(callbacks);

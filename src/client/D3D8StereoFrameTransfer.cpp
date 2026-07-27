@@ -16,7 +16,8 @@ bool TransferStereoFrameToSharedPresentation(
     DWORD uiClearColor,
     D3D8SharedPresentationBridge& presentationBridge,
     const D3D8RuntimeRenderRequest& renderRequest,
-    bool analyzePixels)
+    bool analyzePixels,
+    bool uiHeadLocked)
 {
     if (presentationBridge.UsesGpuSharedTargets())
     {
@@ -25,7 +26,8 @@ bool TransferStereoFrameToSharedPresentation(
         const bool published = presentationBridge.PublishGpuFrame(
             device,
             renderRequest,
-            2000);
+            2000,
+            uiHeadLocked);
         frame.uploadQpcTicks =
             ReadPerformanceCounter() - publishStarted;
         return published;
@@ -90,7 +92,10 @@ bool TransferStereoFrameToSharedPresentation(
         }
         const std::int64_t uploadStarted = ReadPerformanceCounter();
         published =
-            presentationBridge.PublishFrame(renderRequest, sharedFrame);
+            presentationBridge.PublishFrame(
+                renderRequest,
+                sharedFrame,
+                uiHeadLocked);
         frame.uploadQpcTicks =
             ReadPerformanceCounter() - uploadStarted;
     }

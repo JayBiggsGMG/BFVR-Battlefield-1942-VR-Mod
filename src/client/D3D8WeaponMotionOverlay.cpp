@@ -1,0 +1,790 @@
+#include "client/D3D8WeaponMotionOverlay.h"
+
+#include "client/ControllerInputCache.h"
+#include "client/WeaponPoseRuntimeCache.h"
+#include "presenter/SharedPresentationProtocol.h"
+#include "stereo/D3D8WeaponDrawPolicy.h"
+#include "stereo/WeaponMotionPolicy.h"
+#include "stereo/WeaponPoseMath.h"
+
+#include <array>
+#include <cstdarg>
+#include <cmath>
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
+#include <cwchar>
+#include <intrin.h>
+
+namespace
+{
+
+constexpr DWORD kTransformView = 2;
+constexpr DWORD kTransformProjection = 3;
+constexpr DWORD kTransformWorld = 0x100;
+constexpr DWORD kRenderStateZEnable = 7;
+constexpr DWORD kRenderStateAlphaBlendEnable = 27;
+constexpr DWORD kGenericMeshDrawReturn = 0x0062B83FU;
+constexpr DWORD kControllerHandLeft = 0;
+constexpr DWORD kControllerHandRight = 1;
+constexpr DWORD kControllerSampleMaximumAgeMs = 125;
+// The BF1942 Mod Development Toolkit defines map/object coordinates in metres.
+constexpr float kBf1942WorldUnitsPerMeter = 1.0F;
+constexpr wchar_t kEnableWeaponMotionEnvironment[] =
+    L"BFVR_ENABLE_WEAPON_MOTION";
+
+enum class CalibrationState : std::uint8_t
+{
+    Tracking,
+    FrozenTarget
+};
+
+struct OverlayRecord
+{
+    volatile LONG enabled = 0;
+    volatile LONG classifiedCandidates = 0;
+    volatile LONG calibratedFrames = 0;
+    volatile LONG appliedDraws = 0;
+    volatile LONG sourceStateReadFailures = 0;
+    volatile LONG staleTrackingSamples = 0;
+    volatile LONG rejectedTrackingSamples = 0;
+    volatile LONG adjustedSetFailures = 0;
+    volatile LONG restoreFailures = 0;
+    volatile LONG calibrationBegins = 0;
+    volatile LONG calibrationCommits = 0;
+    LONG lastCalibrationGeneration = 0;
+    bool leftMenuWasDown = false;
+    CalibrationState calibrationState = CalibrationState::Tracking;
+    // Portable A in Dcurrent = A * Gcurrent. Gcurrent is the absolute grip
+    // transform in attachmentHeadBasis coordinates, not a session-relative
+    // motion from whichever controller pose happened to be sampled first.
+    bfvr::stereo::Matrix4 controllerToWeaponAttachment = {};
+    bool hasControllerToWeaponAttachment = false;
+    bfvr::stereo::Pose attachmentHeadBasis = {};
+    bool hasAttachmentHeadBasis = false;
+    bfvr::stereo::Pose lastAcceptedHead = {};
+    bool hasLastAcceptedHead = false;
+    // The calibration target remains in the head-cancelled player/body View.
+    // Each draw converts it through the current body View, so locomotion moves
+    // it with the player while physical head motion alone does not.
+    bfvr::stereo::Matrix4 frozenWeaponViewOffset = {};
+    bfvr::stereo::WeaponMotionTracker tracker = {};
+    void (*appendLog)(const wchar_t* message) = nullptr;
+};
+
+OverlayRecord g_overlay = {};
+
+void AppendLog(const wchar_t* format, ...) noexcept
+{
+    if (g_overlay.appendLog == nullptr)
+    {
+        return;
+    }
+    std::array<wchar_t, 1400> message = {};
+    va_list arguments;
+    va_start(arguments, format);
+    _vsnwprintf_s(message.data(), message.size(), _TRUNCATE, format, arguments);
+    va_end(arguments);
+    g_overlay.appendLog(message.data());
+}
+
+bool IsEnabled() noexcept
+{
+    return InterlockedCompareExchange(&g_overlay.enabled, 0, 0) != 0;
+}
+
+bool SafeCopy(void* destination, const void* source, std::size_t size) noexcept
+{
+    if (destination == nullptr || source == nullptr || size == 0)
+    {
+        return false;
+    }
+    __try
+    {
+        std::memcpy(destination, source, size);
+        return true;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        return false;
+    }
+}
+
+bool StackSlotsContainAddress(
+    const void* const* returnAddressSlot,
+    DWORD expectedAddress) noexcept
+{
+    if (returnAddressSlot == nullptr)
+    {
+        return false;
+    }
+    constexpr std::size_t kMaximumStackSlots = 32;
+    for (std::size_t index = 0; index < kMaximumStackSlots; ++index)
+    {
+        const void* candidate = nullptr;
+        if (!SafeCopy(&candidate, returnAddressSlot + index, sizeof(candidate)))
+        {
+            return false;
+        }
+        if (reinterpret_cast<DWORD_PTR>(candidate) == expectedAddress)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+bfvr::stereo::Matrix4 ToStereoMatrix(
+    const bfvr::D3D8WeaponMotionMatrix& source) noexcept
+{
+    bfvr::stereo::Matrix4 result = {};
+    for (std::size_t row = 0; row < 4; ++row)
+    {
+        for (std::size_t column = 0; column < 4; ++column)
+        {
+            result.values[row][column] = source.values[row][column];
+        }
+    }
+    return result;
+}
+
+bfvr::D3D8WeaponMotionMatrix ToD3D8Matrix(
+    const bfvr::stereo::Matrix4& source) noexcept
+{
+    bfvr::D3D8WeaponMotionMatrix result = {};
+    for (std::size_t row = 0; row < 4; ++row)
+    {
+        for (std::size_t column = 0; column < 4; ++column)
+        {
+            result.values[row][column] = source.values[row][column];
+        }
+    }
+    return result;
+}
+
+bool IsFirstPersonProjection(
+    const bfvr::D3D8WeaponMotionMatrix& projection) noexcept
+{
+    const float horizontal = projection.values[0][0];
+    const float vertical = projection.values[1][1];
+    return std::isfinite(horizontal) && std::isfinite(vertical) &&
+        horizontal >= 2.0F && vertical >= 3.5F;
+}
+
+bool IsNearlyIdentity(const bfvr::stereo::Matrix4& matrix) noexcept
+{
+    constexpr float kEpsilon = 0.00001F;
+    for (std::size_t row = 0; row < 4; ++row)
+    {
+        for (std::size_t column = 0; column < 4; ++column)
+        {
+            const float expected = row == column ? 1.0F : 0.0F;
+            if (!std::isfinite(matrix.values[row][column]) ||
+                std::fabs(matrix.values[row][column] - expected) > kEpsilon)
+            {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+void AppendCalibrationTransform(
+    const bfvr::stereo::Matrix4& targetViewOffset,
+    const bfvr::stereo::Matrix4& controllerAttachment,
+    const bfvr::stereo::Pose& head,
+    const bfvr::stereo::Pose& grip) noexcept
+{
+    AppendLog(
+        L"Weapon calibration values: headLocal p=(%.4f,%.4f,%.4f) q=(%.5f,%.5f,%.5f,%.5f); rightGripLocal p=(%.4f,%.4f,%.4f) q=(%.5f,%.5f,%.5f,%.5f); targetWeaponView=[%.5f %.5f %.5f %.5f | %.5f %.5f %.5f %.5f | %.5f %.5f %.5f %.5f | %.5f %.5f %.5f %.5f]; controllerToWeaponAttachment=[%.5f %.5f %.5f %.5f | %.5f %.5f %.5f %.5f | %.5f %.5f %.5f %.5f | %.5f %.5f %.5f %.5f].",
+        head.position.x,
+        head.position.y,
+        head.position.z,
+        head.orientation.x,
+        head.orientation.y,
+        head.orientation.z,
+        head.orientation.w,
+        grip.position.x,
+        grip.position.y,
+        grip.position.z,
+        grip.orientation.x,
+        grip.orientation.y,
+        grip.orientation.z,
+        grip.orientation.w,
+        targetViewOffset.values[0][0], targetViewOffset.values[0][1], targetViewOffset.values[0][2], targetViewOffset.values[0][3],
+        targetViewOffset.values[1][0], targetViewOffset.values[1][1], targetViewOffset.values[1][2], targetViewOffset.values[1][3],
+        targetViewOffset.values[2][0], targetViewOffset.values[2][1], targetViewOffset.values[2][2], targetViewOffset.values[2][3],
+        targetViewOffset.values[3][0], targetViewOffset.values[3][1], targetViewOffset.values[3][2], targetViewOffset.values[3][3],
+        controllerAttachment.values[0][0], controllerAttachment.values[0][1], controllerAttachment.values[0][2], controllerAttachment.values[0][3],
+        controllerAttachment.values[1][0], controllerAttachment.values[1][1], controllerAttachment.values[1][2], controllerAttachment.values[1][3],
+        controllerAttachment.values[2][0], controllerAttachment.values[2][1], controllerAttachment.values[2][2], controllerAttachment.values[2][3],
+        controllerAttachment.values[3][0], controllerAttachment.values[3][1], controllerAttachment.values[3][2], controllerAttachment.values[3][3]);
+}
+
+bfvr::stereo::Matrix4 IdentityMatrix() noexcept
+{
+    bfvr::stereo::Matrix4 result = {};
+    for (std::size_t index = 0; index < 4; ++index)
+    {
+        result.values[index][index] = 1.0F;
+    }
+    return result;
+}
+
+std::optional<bfvr::stereo::Matrix4>
+ProvisionalDefaultControllerToWeaponAttachment() noexcept
+{
+    // Owner-accepted PID 6632 calibration. The prior build incorrectly saved
+    // only targetWeaponView. Convert the logged complete head/grip/target tuple
+    // into the portable attachment A = target * inverse(gripAtCommit).
+    const bfvr::stereo::Pose head = {
+        {0.0513F, 0.0102F, 0.0445F},
+        {-0.15199F, 0.00706F, 0.01019F, -0.98830F}};
+    const bfvr::stereo::Pose grip = {
+        {0.1297F, -0.0037F, -0.4444F},
+        {0.66393F, 0.04390F, -0.16858F, 0.72722F}};
+    bfvr::stereo::Matrix4 targetView = IdentityMatrix();
+    targetView.values[0][0] = 0.99928F;
+    targetView.values[0][1] = -0.03700F;
+    targetView.values[0][2] = 0.00866F;
+    targetView.values[1][0] = 0.03710F;
+    targetView.values[1][1] = 0.99923F;
+    targetView.values[1][2] = -0.01242F;
+    targetView.values[2][0] = -0.00819F;
+    targetView.values[2][1] = 0.01274F;
+    targetView.values[2][2] = 0.99988F;
+    targetView.values[3][0] = 0.10175F;
+    targetView.values[3][1] = 0.11276F;
+    targetView.values[3][2] = -0.10742F;
+    return bfvr::stereo::MakeD3D8ControllerToWeaponAttachment(
+        head,
+        grip,
+        targetView,
+        kBf1942WorldUnitsPerMeter);
+}
+
+bfvr::stereo::Pose ToHeadPose(const bfvr::D3D8RuntimeView& head) noexcept
+{
+    return {
+        {head.positionX, head.positionY, head.positionZ},
+        {head.orientationX, head.orientationY, head.orientationZ, head.orientationW}};
+}
+
+bfvr::stereo::Pose ToGripPose(
+    const bfvr::D3D8RuntimeControllerHand& hand) noexcept
+{
+    return {
+        {
+            hand.gripPose.positionX,
+            hand.gripPose.positionY,
+            hand.gripPose.positionZ},
+        {
+            hand.gripPose.orientationX,
+            hand.gripPose.orientationY,
+            hand.gripPose.orientationZ,
+            hand.gripPose.orientationW}};
+}
+
+bool TakeCalibrationAction(
+    const bfvr::D3D8RuntimeControllerSample& sample,
+    LONG generation) noexcept
+{
+    // The same accepted sample can classify several parts of one view model.
+    // Process its button edge only once, otherwise one Menu press would change
+    // calibration state separately for each draw.
+    if (generation == g_overlay.lastCalibrationGeneration)
+    {
+        return false;
+    }
+    g_overlay.lastCalibrationGeneration = generation;
+
+    const bool leftMenuDown =
+        (sample.hands[kControllerHandLeft].buttons &
+         bfvr::shared::kControllerHandButtonMenu) != 0;
+    const bool requested = leftMenuDown && !g_overlay.leftMenuWasDown;
+    g_overlay.leftMenuWasDown = leftMenuDown;
+    return requested;
+}
+
+bool BuildWorldAndReplayAttachments(
+    const bfvr::stereo::Matrix4& bodyView,
+    const bfvr::stereo::Matrix4& weaponViewOffset,
+    bfvr::stereo::Matrix4& worldSpaceAttachment,
+    bfvr::stereo::Matrix4& replayWorldSpaceAttachment) noexcept
+{
+    const auto world =
+        bfvr::stereo::MakeD3D8WorldSpaceWeaponDelta(
+            bodyView,
+            weaponViewOffset);
+    if (!world.has_value())
+    {
+        return false;
+    }
+    worldSpaceAttachment = *world;
+    replayWorldSpaceAttachment = *world;
+    return true;
+}
+
+bool ReadGripDelta(
+    const bfvr::stereo::Matrix4& sourceView,
+    bfvr::stereo::Matrix4& worldSpaceAttachment,
+    bfvr::stereo::Matrix4& replayWorldSpaceAttachment) noexcept
+{
+    bfvr::D3D8RuntimeControllerSample sample = {};
+    bfvr::D3D8RuntimeView head = {};
+    LONG generation = 0;
+    if (!bfvr::ReadFreshAcceptedWeaponTracking(
+            sample,
+            head,
+            generation,
+            kControllerSampleMaximumAgeMs))
+    {
+        bfvr::ClearWeaponViewOffset();
+        g_overlay.tracker.Reset();
+        InterlockedIncrement(&g_overlay.staleTrackingSamples);
+        if (g_overlay.calibrationState == CalibrationState::FrozenTarget &&
+            g_overlay.hasAttachmentHeadBasis &&
+            g_overlay.hasLastAcceptedHead)
+        {
+            const auto bodyView =
+                bfvr::stereo::MakeD3D8PlayerBodyWeaponView(
+                    sourceView,
+                    g_overlay.attachmentHeadBasis,
+                    g_overlay.lastAcceptedHead,
+                    kBf1942WorldUnitsPerMeter);
+            if (!bodyView.has_value() ||
+                !BuildWorldAndReplayAttachments(
+                    *bodyView,
+                    g_overlay.frozenWeaponViewOffset,
+                    worldSpaceAttachment,
+                    replayWorldSpaceAttachment))
+            {
+                return false;
+            }
+            return !IsNearlyIdentity(worldSpaceAttachment);
+        }
+        return false;
+    }
+
+    const bfvr::D3D8RuntimeControllerHand& right =
+        sample.hands[kControllerHandRight];
+    constexpr DWORD kRequiredGripFlags =
+        bfvr::shared::kControllerHandFlagGripActive |
+        bfvr::shared::kControllerHandFlagGripPositionValid |
+        bfvr::shared::kControllerHandFlagGripOrientationValid |
+        bfvr::shared::kControllerHandFlagGripPositionTracked |
+        bfvr::shared::kControllerHandFlagGripOrientationTracked;
+    bfvr::stereo::WeaponMotionTrackingInput input = {};
+    input.gripTrackingValid =
+        (right.flags & kRequiredGripFlags) == kRequiredGripFlags;
+    if (!input.gripTrackingValid)
+    {
+        bfvr::ClearWeaponViewOffset();
+    }
+    input.predictedDisplayTime = sample.predictedDisplayTime;
+    input.head = ToHeadPose(head);
+    input.grip = ToGripPose(right);
+    input.worldUnitsPerMeter = kBf1942WorldUnitsPerMeter;
+
+    if (input.gripTrackingValid)
+    {
+        g_overlay.lastAcceptedHead = input.head;
+        g_overlay.hasLastAcceptedHead = true;
+    }
+    if (!g_overlay.hasAttachmentHeadBasis && input.gripTrackingValid)
+    {
+        g_overlay.attachmentHeadBasis = input.head;
+        g_overlay.hasAttachmentHeadBasis = true;
+    }
+    if (!g_overlay.hasControllerToWeaponAttachment && input.gripTrackingValid)
+    {
+        // Flat-safe fallback when no development calibration is available:
+        // solve A against identity at the first usable grip, reproducing the
+        // original no-offset pose while retaining the portable representation.
+        const auto neutralAttachment =
+            bfvr::stereo::MakeD3D8ControllerToWeaponAttachment(
+                g_overlay.attachmentHeadBasis,
+                input.grip,
+                IdentityMatrix(),
+                kBf1942WorldUnitsPerMeter);
+        if (!neutralAttachment.has_value())
+        {
+            bfvr::ClearWeaponViewOffset();
+            InterlockedIncrement(&g_overlay.rejectedTrackingSamples);
+            return false;
+        }
+        g_overlay.controllerToWeaponAttachment = *neutralAttachment;
+        g_overlay.hasControllerToWeaponAttachment = true;
+    }
+
+    const auto makeBodyView = [&](const bfvr::stereo::Pose& currentHead)
+    {
+        return g_overlay.hasAttachmentHeadBasis
+            ? bfvr::stereo::MakeD3D8PlayerBodyWeaponView(
+                sourceView,
+                g_overlay.attachmentHeadBasis,
+                currentHead,
+                kBf1942WorldUnitsPerMeter)
+            : std::optional<bfvr::stereo::Matrix4>{};
+    };
+    const auto makeWorldAttachment = [&](
+        const bfvr::stereo::Pose& currentHead,
+        const bfvr::stereo::Matrix4& viewOffset,
+        bfvr::stereo::Matrix4& worldAttachment,
+        bfvr::stereo::Matrix4& replayAttachment)
+    {
+        const auto bodyView = makeBodyView(currentHead);
+        return bodyView.has_value() &&
+            BuildWorldAndReplayAttachments(
+                *bodyView,
+                viewOffset,
+                worldAttachment,
+                replayAttachment);
+    };
+
+    const bool calibrationAction = TakeCalibrationAction(sample, generation);
+    if (g_overlay.calibrationState == CalibrationState::FrozenTarget)
+    {
+        bfvr::stereo::Matrix4 frozenWorld = {};
+        bfvr::stereo::Matrix4 frozenReplayWorld = {};
+        const bool frozenBuilt = makeWorldAttachment(
+            input.head,
+            g_overlay.frozenWeaponViewOffset,
+            frozenWorld,
+            frozenReplayWorld);
+        if (!frozenBuilt)
+        {
+            bfvr::ClearWeaponViewOffset();
+            InterlockedIncrement(&g_overlay.rejectedTrackingSamples);
+            return false;
+        }
+        if (calibrationAction)
+        {
+            if (!input.gripTrackingValid)
+            {
+                InterlockedIncrement(&g_overlay.rejectedTrackingSamples);
+                AppendLog(
+                    L"Weapon calibration commit ignored because the right grip pose is invalid; the weapon remains frozen.");
+            }
+            else
+            {
+                // The controller is now physically placed at the fixed weapon.
+                // Preserve the target while moving to a new HMD basis, then
+                // solve the portable absolute attachment A from the complete
+                // current grip rather than saving a session-relative delta.
+                const auto committedViewOffset =
+                    bfvr::stereo::MakeD3D8CalibrationViewWeaponOffset(
+                        sourceView,
+                        frozenWorld);
+                const auto committedAttachment =
+                    committedViewOffset.has_value()
+                    ? bfvr::stereo::MakeD3D8ControllerToWeaponAttachment(
+                        input.head,
+                        input.grip,
+                        *committedViewOffset,
+                        kBf1942WorldUnitsPerMeter)
+                    : std::nullopt;
+                if (!committedViewOffset.has_value() ||
+                    !committedAttachment.has_value())
+                {
+                    InterlockedIncrement(&g_overlay.rejectedTrackingSamples);
+                    AppendLog(
+                        L"Weapon calibration commit ignored because the temporary target could not be expressed as a portable grip attachment; the weapon remains frozen.");
+                    bfvr::PublishWeaponViewOffset(
+                        g_overlay.frozenWeaponViewOffset,
+                        generation);
+                    worldSpaceAttachment = frozenWorld;
+                    replayWorldSpaceAttachment = frozenReplayWorld;
+                    return !IsNearlyIdentity(worldSpaceAttachment);
+                }
+                g_overlay.controllerToWeaponAttachment = *committedAttachment;
+                g_overlay.hasControllerToWeaponAttachment = true;
+                g_overlay.attachmentHeadBasis = input.head;
+                g_overlay.hasAttachmentHeadBasis = true;
+                g_overlay.calibrationState = CalibrationState::Tracking;
+                g_overlay.tracker.Reset();
+                (void)g_overlay.tracker.Update(input);
+                InterlockedIncrement(&g_overlay.calibrationCommits);
+                AppendLog(
+                    L"Weapon calibration committed for development: the frozen target is now a portable absolute grip-to-weapon attachment in the head-cancelled player frame. Native camera and fire state are unchanged.");
+                AppendCalibrationTransform(
+                    *committedViewOffset,
+                    g_overlay.controllerToWeaponAttachment,
+                    input.head,
+                    input.grip);
+            }
+        }
+        bfvr::PublishWeaponViewOffset(
+            g_overlay.frozenWeaponViewOffset,
+            generation);
+        worldSpaceAttachment = frozenWorld;
+        replayWorldSpaceAttachment = frozenReplayWorld;
+        return !IsNearlyIdentity(worldSpaceAttachment);
+    }
+
+    const bool hadTrackerReference = g_overlay.tracker.IsCalibrated();
+    const auto result = g_overlay.tracker.Update(input);
+    if (!result.has_value())
+    {
+        if (!g_overlay.tracker.IsCalibrated())
+        {
+            bfvr::ClearWeaponViewOffset();
+            InterlockedIncrement(&g_overlay.rejectedTrackingSamples);
+            return false;
+        }
+        InterlockedIncrement(&g_overlay.calibratedFrames);
+        // A null result after a valid reference is a deliberately rejected
+        // discontinuity or time reversal. Preserve the fail-closed behavior
+        // for that draw. A first accepted reference can already reconstruct
+        // the portable absolute attachment and continues below.
+        if (hadTrackerReference)
+        {
+            bfvr::ClearWeaponViewOffset();
+            return false;
+        }
+    }
+
+    const auto currentViewOffset =
+        bfvr::stereo::MakeD3D8AttachedWeaponViewDelta(
+            g_overlay.controllerToWeaponAttachment,
+            g_overlay.attachmentHeadBasis,
+            input.grip,
+            kBf1942WorldUnitsPerMeter);
+    if (!currentViewOffset.has_value())
+    {
+        bfvr::ClearWeaponViewOffset();
+        InterlockedIncrement(&g_overlay.rejectedTrackingSamples);
+        return false;
+    }
+    bfvr::stereo::Matrix4 currentWorldAttachment = {};
+    bfvr::stereo::Matrix4 currentReplayWorldAttachment = {};
+    const bool currentAttachmentsBuilt = makeWorldAttachment(
+        input.head,
+        *currentViewOffset,
+        currentWorldAttachment,
+        currentReplayWorldAttachment);
+    if (!currentAttachmentsBuilt)
+    {
+        bfvr::ClearWeaponViewOffset();
+        InterlockedIncrement(&g_overlay.rejectedTrackingSamples);
+        return false;
+    }
+    bfvr::PublishWeaponViewOffset(*currentViewOffset, generation);
+    worldSpaceAttachment = currentWorldAttachment;
+    replayWorldSpaceAttachment = currentReplayWorldAttachment;
+    if (calibrationAction)
+    {
+        // Preserve the current visible weapon placement while raw controller
+        // tracking is paused. The player can now move the physical controller
+        // to that fixed target instead of chasing a controller-driven gun.
+        g_overlay.frozenWeaponViewOffset = *currentViewOffset;
+        g_overlay.calibrationState = CalibrationState::FrozenTarget;
+        InterlockedIncrement(&g_overlay.calibrationBegins);
+        AppendLog(
+            L"Weapon calibration started: the rendered weapon is frozen at its current pose while the raw right controller is free. Move the controller to the fixed weapon, then press left Menu again to commit the shared offset.");
+    }
+    return !IsNearlyIdentity(worldSpaceAttachment);
+}
+
+bool IsSharedWeaponCandidate(
+    const bfvr::D3D8WeaponMotionD3D8Api& api,
+    void* device,
+    const void* const* returnAddressSlot,
+    bfvr::D3D8WeaponMotionMatrix& world,
+    bfvr::D3D8WeaponMotionMatrix& view,
+    bfvr::D3D8WeaponMotionMatrix& projection) noexcept
+{
+    if (!StackSlotsContainAddress(returnAddressSlot, kGenericMeshDrawReturn) ||
+        api.getTransform == nullptr || api.getRenderState == nullptr ||
+        api.getVertexShader == nullptr ||
+        FAILED(api.getTransform(device, kTransformWorld, &world)) ||
+        FAILED(api.getTransform(device, kTransformView, &view)))
+    {
+        return false;
+    }
+
+    DWORD zEnable = 0;
+    DWORD alphaBlendEnable = 0;
+    DWORD vertexShaderOrFvf = 0;
+    if (FAILED(api.getTransform(device, kTransformProjection, &projection)) ||
+        FAILED(api.getRenderState(device, kRenderStateZEnable, &zEnable)) ||
+        FAILED(api.getRenderState(
+            device,
+            kRenderStateAlphaBlendEnable,
+            &alphaBlendEnable)) ||
+        FAILED(api.getVertexShader(device, &vertexShaderOrFvf)))
+    {
+        InterlockedIncrement(&g_overlay.sourceStateReadFailures);
+        return false;
+    }
+
+    bfvr::stereo::WeaponDrawPolicyInput input = {};
+    input.indexedDraw = true;
+    input.rendererRoute = bfvr::stereo::WeaponRendererRoute::GenericMesh;
+    input.vertexShaderOrFvf = vertexShaderOrFvf;
+    input.alphaBlendEnabled = alphaBlendEnable != 0;
+    input.zEnabled = zEnable != 0;
+    input.firstPersonProjection = IsFirstPersonProjection(projection);
+    input.worldKnown = true;
+    input.viewKnown = true;
+    input.world = ToStereoMatrix(world);
+    input.view = ToStereoMatrix(view);
+    return bfvr::stereo::ClassifyWeaponDraw(input, 1.25F) ==
+        bfvr::stereo::WeaponDrawDisposition::SharedFixedFunctionWeaponCandidate;
+}
+
+} // namespace
+
+namespace bfvr
+{
+
+bool BuildD3D8WeaponMotionReplayWorld(
+    const D3D8WeaponMotionMatrix& sourceWorld,
+    const D3D8WeaponMotionMatrix& worldSpaceAttachment,
+    D3D8WeaponMotionMatrix& adjustedWorld) noexcept
+{
+    const auto adjusted = bfvr::stereo::ApplyWorldSpaceWeaponDeltaToD3D8World(
+        ToStereoMatrix(sourceWorld),
+        ToStereoMatrix(worldSpaceAttachment));
+    if (!adjusted.has_value())
+    {
+        return false;
+    }
+    adjustedWorld = ToD3D8Matrix(*adjusted);
+    return true;
+}
+
+void StartD3D8WeaponMotionOverlay(
+    void (*appendLog)(const wchar_t* message))
+{
+    g_overlay = {};
+    bfvr::ClearWeaponViewOffset();
+    g_overlay.appendLog = appendLog;
+    wchar_t enabled[2] = {};
+    if (GetEnvironmentVariableW(
+            kEnableWeaponMotionEnvironment,
+            enabled,
+            static_cast<DWORD>(std::size(enabled))) != 1 ||
+        enabled[0] != L'1')
+    {
+        return;
+    }
+    const auto provisionalAttachment =
+        ProvisionalDefaultControllerToWeaponAttachment();
+    if (provisionalAttachment.has_value())
+    {
+        g_overlay.controllerToWeaponAttachment = *provisionalAttachment;
+        g_overlay.hasControllerToWeaponAttachment = true;
+    }
+    g_overlay.frozenWeaponViewOffset = IdentityMatrix();
+    InterlockedExchange(&g_overlay.enabled, 1);
+    AppendLog(
+        L"Weapon motion overlay armed: it reconstructs the temporary development grip-to-weapon attachment from the absolute right grip in a fixed HMD basis, removes only physical head pose from the current game View, and follows BF1942 player locomotion. The accepted PID 6632 calibration seeds this development build. Left Menu can temporarily recapture the attachment. Controller reach is not clamped and no viewmodel scale/perspective morph is applied. Native camera/fire state is unchanged, and invalid tracking leaves the game draw untouched.");
+}
+
+void StopD3D8WeaponMotionOverlay()
+{
+    if (!IsEnabled())
+    {
+        bfvr::ClearWeaponViewOffset();
+        g_overlay = {};
+        return;
+    }
+    InterlockedExchange(&g_overlay.enabled, 0);
+    bfvr::ClearWeaponViewOffset();
+    AppendLog(
+        L"Weapon motion overlay stopped: candidates=%ld calibrated=%ld applied=%ld sourceReadFailures=%ld stale=%ld rejectedTracking=%ld adjustedSetFailures=%ld restoreFailures=%ld calibrationBegins=%ld calibrationCommits=%ld.",
+        InterlockedCompareExchange(&g_overlay.classifiedCandidates, 0, 0),
+        InterlockedCompareExchange(&g_overlay.calibratedFrames, 0, 0),
+        InterlockedCompareExchange(&g_overlay.appliedDraws, 0, 0),
+        InterlockedCompareExchange(&g_overlay.sourceStateReadFailures, 0, 0),
+        InterlockedCompareExchange(&g_overlay.staleTrackingSamples, 0, 0),
+        InterlockedCompareExchange(&g_overlay.rejectedTrackingSamples, 0, 0),
+        InterlockedCompareExchange(&g_overlay.adjustedSetFailures, 0, 0),
+        InterlockedCompareExchange(&g_overlay.restoreFailures, 0, 0),
+        InterlockedCompareExchange(&g_overlay.calibrationBegins, 0, 0),
+        InterlockedCompareExchange(&g_overlay.calibrationCommits, 0, 0));
+    g_overlay.tracker.Reset();
+}
+
+bool BeginD3D8WeaponMotionOverlayDraw(
+    void* device,
+    const D3D8WeaponMotionD3D8Api& api,
+    const void* const* returnAddressSlot,
+    D3D8WeaponMotionRestore& restore) noexcept
+{
+    restore = {};
+    if (!IsEnabled() || device == nullptr || api.setTransform == nullptr)
+    {
+        return false;
+    }
+
+    D3D8WeaponMotionMatrix world = {};
+    D3D8WeaponMotionMatrix view = {};
+    D3D8WeaponMotionMatrix projection = {};
+    if (!IsSharedWeaponCandidate(
+            api,
+            device,
+            returnAddressSlot,
+            world,
+            view,
+            projection))
+    {
+        return false;
+    }
+    InterlockedIncrement(&g_overlay.classifiedCandidates);
+
+    bfvr::stereo::Matrix4 worldSpaceAttachment = {};
+    bfvr::stereo::Matrix4 replayWorldSpaceAttachment = {};
+    if (!ReadGripDelta(
+            ToStereoMatrix(view),
+            worldSpaceAttachment,
+            replayWorldSpaceAttachment))
+    {
+        return false;
+    }
+    const auto adjusted = bfvr::stereo::ApplyWorldSpaceWeaponDeltaToD3D8World(
+        ToStereoMatrix(world),
+        worldSpaceAttachment);
+    if (!adjusted.has_value())
+    {
+        InterlockedIncrement(&g_overlay.rejectedTrackingSamples);
+        return false;
+    }
+    const D3D8WeaponMotionMatrix adjustedWorld = ToD3D8Matrix(*adjusted);
+    if (FAILED(api.setTransform(device, kTransformWorld, &adjustedWorld)))
+    {
+        InterlockedIncrement(&g_overlay.adjustedSetFailures);
+        return false;
+    }
+    restore.changedWorld = true;
+    restore.sourceWorld = world;
+    restore.worldSpaceAttachment =
+        ToD3D8Matrix(replayWorldSpaceAttachment);
+    InterlockedIncrement(&g_overlay.appliedDraws);
+    return true;
+}
+
+void EndD3D8WeaponMotionOverlayDraw(
+    void* device,
+    const D3D8WeaponMotionD3D8Api& api,
+    D3D8WeaponMotionRestore& restore) noexcept
+{
+    if (!restore.changedWorld)
+    {
+        return;
+    }
+    restore.changedWorld = false;
+    if (api.setTransform == nullptr ||
+        FAILED(api.setTransform(device, kTransformWorld, &restore.sourceWorld)))
+    {
+        InterlockedIncrement(&g_overlay.restoreFailures);
+        InterlockedExchange(&g_overlay.enabled, 0);
+        g_overlay.tracker.Reset();
+        AppendLog(
+            L"Weapon motion overlay disabled after a World-transform restore failure; later draws are left untouched.");
+    }
+}
+
+} // namespace bfvr

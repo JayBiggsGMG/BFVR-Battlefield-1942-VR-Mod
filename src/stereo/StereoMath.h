@@ -80,6 +80,15 @@ struct D3D8StereoTransformPair
 // quaternion, or a negative IPD.
 [[nodiscard]] std::optional<EyePoses> ComputeEyePoses(const Pose& headPose, float ipdMeters) noexcept;
 
+// Reconstructs a defensive centre-view pose from two OpenXR eye poses. The
+// position is their midpoint and the orientation is their shortest-path
+// normalized midpoint, including q/-q equivalence. Runtime code should prefer
+// locating XR_REFERENCE_SPACE_TYPE_VIEW directly; this exists for fallback
+// compatibility and deterministic testing.
+[[nodiscard]] std::optional<Pose> ComputeCentreViewPose(
+    const Pose& leftEye,
+    const Pose& rightEye) noexcept;
+
 // Builds the D3D8 fixed-function View transform for a pose expressed in the
 // OpenXR convention. It applies C = diag(1, 1, -1) before taking the rigid
 // inverse, then packs the result for D3D8 row-vector multiplication.

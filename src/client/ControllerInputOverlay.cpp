@@ -53,12 +53,6 @@ constexpr float kThumbstickDirectionThreshold = 0.72F;
 constexpr float kWalkStickMagnitudeThreshold = 0.60F;
 constexpr float kStickTurnInputPerFrame = 0.70F;
 constexpr float kTurnStickResponseExponent = 1.65F;
-// First live aim validation found the native mouse-look sign opposite to the
-// controller orientation convention and the initial gain too weak for normal
-// right-hand aiming. These remain local temporary PlayerInput calibration.
-constexpr float kMaximumAxisDelta = 1.0F;
-constexpr float kAxisRadiansToInput = 10.67F;
-constexpr float kAxisDeadzoneRadians = 0.0015F;
 
 constexpr BYTE kFrameBuilderPrefix[] = {
     0x81, 0xEC, 0x34, 0x01, 0x00, 0x00, 0x53, 0x55,
@@ -84,64 +78,6 @@ bool HasExpectedPrefix(
     {
         return false;
     }
-}
-
-struct Quaternion
-{
-    float x = 0.0F;
-    float y = 0.0F;
-    float z = 0.0F;
-    float w = 1.0F;
-};
-
-bool NormalizeQuaternion(Quaternion& value) noexcept
-{
-    const float lengthSquared =
-        value.x * value.x + value.y * value.y +
-        value.z * value.z + value.w * value.w;
-    if (!std::isfinite(lengthSquared) || lengthSquared < 0.25F ||
-        lengthSquared > 2.25F)
-    {
-        return false;
-    }
-    const float reciprocalLength = 1.0F / std::sqrt(lengthSquared);
-    value.x *= reciprocalLength;
-    value.y *= reciprocalLength;
-    value.z *= reciprocalLength;
-    value.w *= reciprocalLength;
-    return true;
-}
-
-Quaternion Conjugate(const Quaternion& value) noexcept
-{
-    return {-value.x, -value.y, -value.z, value.w};
-}
-
-Quaternion Multiply(const Quaternion& first, const Quaternion& second) noexcept
-{
-    return {
-        first.w * second.x + first.x * second.w +
-            first.y * second.z - first.z * second.y,
-        first.w * second.y - first.x * second.z +
-            first.y * second.w + first.z * second.x,
-        first.w * second.z + first.x * second.y -
-            first.y * second.x + first.z * second.w,
-        first.w * second.w - first.x * second.x -
-            first.y * second.y - first.z * second.z};
-}
-
-float ClampAxis(float value) noexcept
-{
-    if (!std::isfinite(value))
-    {
-        return 0.0F;
-    }
-    return std::clamp(value, -kMaximumAxisDelta, kMaximumAxisDelta);
-}
-
-float ApplyDeadzone(float value) noexcept
-{
-    return std::fabs(value) < kAxisDeadzoneRadians ? 0.0F : value;
 }
 
 float ApplyThumbstickDeadzone(float value) noexcept
@@ -459,70 +395,10 @@ private:
         SetHeldInput(destination, input, pressed);
     }
 
-    bool GetRightAimDelta(
-        const bfvr::D3D8RuntimeControllerHand& right,
-        LONG generation,
-        float& yawInput,
-        float& pitchInput) noexcept
-    {
-        yawInput = 0.0F;
-        pitchInput = 0.0F;
-        const DWORD requiredAimFlags =
-            bfvr::shared::kControllerHandFlagAimActive |
-            bfvr::shared::kControllerHandFlagAimOrientationValid;
-        if ((right.flags & requiredAimFlags) != requiredAimFlags)
-        {
-            InterlockedIncrement(&rightAimUnavailableFrames);
-            ResetAimState();
-            return false;
-        }
-
-        Quaternion orientation = {
-            right.aimPose.orientationX,
-            right.aimPose.orientationY,
-            right.aimPose.orientationZ,
-            right.aimPose.orientationW};
-        if (!NormalizeQuaternion(orientation))
-        {
-            InterlockedIncrement(&invalidOrientationFrames);
-            ResetAimState();
-            return false;
-        }
-
-        if (lastControllerGeneration != generation || !hasLastOrientation)
-        {
-            if (hasLastOrientation && lastControllerGeneration != generation)
-            {
-                Quaternion delta = Multiply(orientation, Conjugate(lastOrientation));
-                if (NormalizeQuaternion(delta))
-                {
-                    const float yawRadians = std::atan2(
-                        2.0F * (delta.w * delta.y + delta.x * delta.z),
-                        1.0F - 2.0F * (delta.y * delta.y + delta.z * delta.z));
-                    const float pitchRadians = std::asin(std::clamp(
-                        2.0F * (delta.w * delta.x - delta.y * delta.z),
-                        -1.0F,
-                        1.0F));
-                    yawInput = -ClampAxis(
-                        ApplyDeadzone(yawRadians) * kAxisRadiansToInput);
-                    pitchInput = -ClampAxis(
-                        ApplyDeadzone(pitchRadians) * kAxisRadiansToInput);
-                }
-            }
-            lastOrientation = orientation;
-            lastControllerGeneration = generation;
-            hasLastOrientation = true;
-        }
-        return true;
-    }
-
     void ApplyInfantryControls(
         float* destination,
         const bfvr::D3D8RuntimeControllerHand& left,
-        const bfvr::D3D8RuntimeControllerHand& right,
-        bool rightAimAvailable,
-        float yawInput,
-        float pitchInput) noexcept
+        const bfvr::D3D8RuntimeControllerHand& right) noexcept
     {
         if ((left.flags & bfvr::shared::kControllerHandFlagThumbstickActive) != 0)
         {
@@ -559,12 +435,6 @@ private:
         }
 
         bool mouseLookEnabled = false;
-        if (rightAimAvailable)
-        {
-            AddAxisInput(destination, kLogicalInputMouseLookX, yawInput);
-            AddAxisInput(destination, kLogicalInputMouseLookY, pitchInput);
-            mouseLookEnabled = true;
-        }
         if ((right.flags & bfvr::shared::kControllerHandFlagThumbstickActive) != 0)
         {
             const float turnInput =
@@ -672,8 +542,8 @@ private:
         if (!IsCurrentLocalAlivePlayer())
         {
             // The native loop also builds remote-player frames between local
-            // frames. They must not clear the local hand orientation baseline,
-            // or every local frame becomes a zero-delta first sample.
+            // frames. They must not reset the local controller button/axis
+            // state while the local player remains active.
             ReportGateDiagnostics();
             return;
         }
@@ -694,23 +564,12 @@ private:
             sample.hands[kControllerHandLeft];
         const bfvr::D3D8RuntimeControllerHand& right =
             sample.hands[kControllerHandRight];
-        float yawInput = 0.0F;
-        float pitchInput = 0.0F;
-        const bool rightAimAvailable = GetRightAimDelta(
-            right,
-            generation,
-            yawInput,
-            pitchInput);
-
         __try
         {
             ApplyInfantryControls(
                 destination,
                 left,
-                right,
-                rightAimAvailable,
-                yawInput,
-                pitchInput);
+                right);
         }
         __except (EXCEPTION_EXECUTE_HANDLER)
         {
@@ -725,7 +584,7 @@ private:
         if (InterlockedCompareExchange(&firstEligibleFrameLogged, 1, 0) == 0)
         {
             WriteLog(
-                L"Controller input overlay accepted its first fresh focused local frame. Layout: left stick move; right stick smooth-turn with up jump/action and down prone; right trigger fire; right grip alt-fire; A jump/action; B reload; X use; Y crouch; left grip press prone. All values remain temporary native PlayerInput fields.");
+                L"Controller input overlay accepted its first fresh focused local frame. Layout: left stick move; right stick smooth-turn with up jump/action and down prone; right trigger fire; right grip alt-fire; A jump/action; B reload; X use; Y crouch; left grip press prone. Controller poses do not write native camera-look input. All values remain temporary native PlayerInput fields.");
         }
     }
 
@@ -753,7 +612,7 @@ private:
             return;
         }
         WriteLog(
-            L"Controller input overlay gate report (one second): frameBuilders=%ld normalizers=%ld localPlayer=%ld missingScope=%ld missingManager=%ld otherPlayer=%ld dead=%ld unreadable=%ld noDestination=%ld controllerUnavailable=%ld freshController=%ld rightAimUnavailable=%ld invalidOrientation=%ld writeFault=%ld applied=%ld.",
+            L"Controller input overlay gate report (one second): frameBuilders=%ld normalizers=%ld localPlayer=%ld missingScope=%ld missingManager=%ld otherPlayer=%ld dead=%ld unreadable=%ld noDestination=%ld controllerUnavailable=%ld freshController=%ld writeFault=%ld applied=%ld.",
             InterlockedExchange(&frameBuilderCalls, 0),
             normalizers,
             InterlockedExchange(&eligibleLocalPlayerFrames, 0),
@@ -765,21 +624,12 @@ private:
             InterlockedExchange(&missingDestinationFrames, 0),
             InterlockedExchange(&staleOrMissingControllerFrames, 0),
             InterlockedExchange(&freshControllerFrames, 0),
-            InterlockedExchange(&rightAimUnavailableFrames, 0),
-            InterlockedExchange(&invalidOrientationFrames, 0),
             InterlockedExchange(&unwritableDestinationFrames, 0),
             InterlockedExchange(&appliedFrames, 0));
     }
 
-    void ResetAimState() noexcept
-    {
-        hasLastOrientation = false;
-        lastControllerGeneration = 0;
-    }
-
     void ResetControllerState() noexcept
     {
-        ResetAimState();
         triggerHeld = false;
         leftSqueezeHeld = false;
         rightSqueezeHeld = false;
@@ -852,8 +702,6 @@ private:
     void* normalizerTarget = nullptr;
     FrameBuilderFn originalFrameBuilder = nullptr;
     NormalizeFn originalNormalize = nullptr;
-    Quaternion lastOrientation = {};
-    LONG lastControllerGeneration = 0;
     volatile LONG started = 0;
     volatile LONG firstEligibleFrameLogged = 0;
     volatile LONG lastGateDiagnosticsAt = 0;
@@ -868,11 +716,8 @@ private:
     volatile LONG missingDestinationFrames = 0;
     volatile LONG staleOrMissingControllerFrames = 0;
     volatile LONG freshControllerFrames = 0;
-    volatile LONG rightAimUnavailableFrames = 0;
-    volatile LONG invalidOrientationFrames = 0;
     volatile LONG unwritableDestinationFrames = 0;
     volatile LONG appliedFrames = 0;
-    bool hasLastOrientation = false;
     bool triggerHeld = false;
     bool leftSqueezeHeld = false;
     bool rightSqueezeHeld = false;

@@ -30,7 +30,8 @@ bool FinalizeFrameTargets(void* device)
                 kMenuLayerClearColor,
                 g_presentationBridge,
                 g_runtimeRenderRequest,
-                analyzePixels);
+                analyzePixels,
+                g_frameUiHeadLocked);
     }
     else
     {
@@ -101,16 +102,19 @@ bool FinalizeFrameTargets(void* device)
             g_frame.menuReadback.nonZeroAlphaPixels != 0) &&
         (gpuSharedTargets ||
             readbackComplete(g_frame.menuReadback));
-    g_frame.completedWithDifferingColor =
-        mirroredDraws != 0 &&
+    const bfvr::stereo::D3D8FrameCompletionFacts completionFacts = {
+        mirroredDraws != 0,
         InterlockedCompareExchange(&g_frame.restoreFailures, 0, 0) == 0 &&
-        InterlockedCompareExchange(&g_frame.sourceReleaseFailures, 0, 0) == 0 &&
-        g_frame.allRestorationsExact &&
-        bothEyesHaveColor &&
-        hashesDiffer &&
-        layerPartitionExact &&
-        menuLayerHasContent &&
-        (!IsPresentationMode() || g_presentationFramePublished);
+            InterlockedCompareExchange(&g_frame.sourceReleaseFailures, 0, 0) == 0 &&
+            g_frame.allRestorationsExact,
+        bothEyesHaveColor,
+        hashesDiffer,
+        layerPartitionExact,
+        menuLayerHasContent,
+        !IsPresentationMode() || g_presentationFramePublished,
+        IsPresentationMode()};
+    g_frame.completedWithDifferingColor =
+        bfvr::stereo::IsD3D8FrameCompositionComplete(completionFacts);
     if (IsPresentationMode())
     {
         InterlockedExchange(&g_frame.resourcesReady, 0);

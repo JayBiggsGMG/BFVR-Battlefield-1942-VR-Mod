@@ -65,6 +65,16 @@ player. The cache expires quickly; death/spawn states do not receive controller
 input. Keyboard and mouse remain live throughout. Do not test vehicle behavior
 yet: BFVR has not recovered a safe WinPC on-foot/vehicle classifier.
 
+OpenXR now starts before BF1942 creates its delayed gameplay D3D8 device. A
+temporary CPU startup bridge captures the native game window onto a
+world-locked menu panel, then hands off to the GPU-resident stereo path when
+CreateDevice/Present become available. Native main/deployment/pause/death
+menus stay fixed in OpenXR `LOCAL`; only the gameplay HUD follows the head in
+`VIEW`, at the unchanged 1.5 m distance and size. In native mouse-enabled
+menus, point the right controller at the panel and use right trigger as the
+normal BF1942 select/click action; mouse and keyboard remain available. This
+interaction is currently quad-only.
+
 The first live controller runs proved the OpenXR transport, local-frame gate,
 right-trigger fire, and controller look route. The current build packages the
 following one-pass infantry layout for a normal local/offline play test:
@@ -83,12 +93,51 @@ are deliberately not claimed in this build. The current local player-frame
 route cannot dispatch those high/global actions; BFVR is recovering their
 separate native GameInput boundary rather than faking them with Windows input.
 
-The right controller's aim orientation remains ordinary game mouse-look; it
-does not use controller or headset translation to move the player. Keyboard
-and mouse remain live. Use a local/offline infantry map and simply play for a
-few minutes. Report any wrong direction, missing action, stuck input, menu or
-focus-loss issue, or discomfort. Do not test vehicle behavior yet: BFVR has
-not recovered a safe WinPC on-foot/vehicle classifier.
+Controller pose no longer writes BF1942 mouse-look; deliberate right-stick
+turn and ordinary keyboard/mouse look remain live. The opt-in weapon path uses
+the tracked right grip for the classified first-person viewmodel and feeds the
+same fresh grip-driven rendered orientation into ordinary alive-local-infantry
+fire. This follows the virtual weapon geometry instead of maintaining a
+parallel controller `aim` ray. The firing transform preserves BF1942's native
+position,
+per-weapon/per-barrel muzzle offsets, spread, cadence, projectile creation,
+and networking; any unsupported caller, owner, matrix, focus, or tracking
+state forwards the original shot unchanged. This first firing slice changes
+direction only; it does not yet move projectile origin to the rendered muzzle.
+The BAR and Colt have now produced live adjusted shots that the owner judged to
+follow their rendered barrels; a fixed-range muzzle/impact measurement remains
+pending.
+
+The VR replay applies only a rigid controller attachment to the classified
+weapon family: no viewmodel scale or perspective morph and no artificial
+controller-reach clamp. The exact first-person animated-arm family is omitted
+from the VR replay globally across assets/factions, while remote soldiers
+retain their corrected stereo draw and BF1942's original flat render remains
+untouched. The exact native CrossHair visibility setter is forced off without
+disabling the rest of the HUD. A truthful world-space infantry/vehicle reticle
+still requires the native aim/ray result and an isolated hit-feedback boundary.
+
+Left Touch Menu remains a temporary two-stage development calibration: press
+once to freeze the weapon, move the independent right controller to it, and
+press again to commit. The provisional PID 6632 attachment is global, not
+BAR-specific, but installed BF1942 items have different authored camera
+positions, skeleton parts, and mesh pivots. Automatic native-metadata
+normalization is still in development; users will not be expected to calibrate
+every weapon. Use only a local/offline infantry map and report wrong shot
+direction, stuck input, focus-loss behavior, or discomfort. Vehicle behavior
+is not yet supported by this gate.
+
+## Latest headset acceptance
+
+The current regression-correction build has passed an owner headset check for
+the main infantry/UI path: VR enters from the launcher before spawn, controller
+translation has no artificial reach limit, weapon scale is correct, the native
+crosshair is hidden, and the menus/HUD are acceptable for the current stage.
+The startup panel is world-static and the gameplay HUD remains head-following.
+
+This is not yet vehicle or full-reset certification. The ADS/Willys case,
+device-reset recovery, full weapon/item grip normalization, and fixed-range
+muzzle/impact alignment remain deliberate follow-up tests.
 
 ## OpenXR presentation smoke test
 
@@ -103,7 +152,7 @@ Configure the companion build separately:
 ```powershell
 cmake -S .\BFVR\src -B .\build\bfvr-presenter-x64 `
   -G "Visual Studio 17 2022" -A x64 -DBFVR_PRESENTER_ONLY=ON
-cmake --build .\build\bfvr-presenter-x64 --config RelWithDebInfo
+cmake --build .\build\bfvr-presenter-x64 --config Release
 ```
 
 The x86 producer and x64 consumer probes first validate transport without a
@@ -112,7 +161,7 @@ presenter-selected adapter and verify exact copied pixels:
 
 ```powershell
 .\build\bfvr-cmake-validate\BFVRSharedTextureProducerProbe.exe `
-  --presenter .\build\bfvr-presenter-x64\RelWithDebInfo\BFVRSharedTextureConsumerProbe.exe `
+  --presenter .\build\bfvr-presenter-x64\Release\BFVRSharedTextureConsumerProbe.exe `
   --presenter-log .\build\diagnostics\bfvr-x64-transport.log `
   --duration-ms 5000 --transport-only
 ```
@@ -163,10 +212,12 @@ an explicit diagnostic override.
 For an owner-observed session without a fixed duration, omit
 `--diagnostic-timeout-ms` and add `--run-until-stopped` to the combined
 `--d3d8to9-observer-probe --d3d8-openxr-presentation-probe` command. It runs
-until BF1942 exits or `Local\BFVRPresentationStop-<game-pid>` is signaled,
-then stops at a frame boundary and shuts down the x64 presenter. Bounded mode
-remains the default. A renderer/probe completion is retained as diagnostic
-information only in this mode; it never closes the directly launched BF1942
+until the directly launched BF1942 process actually exits. There is no
+independent named renderer-stop event: the earlier event route could cleanly
+tear down only the injected VR renderer while the game remained alive.
+The x64 presenter separately monitors producer-process lifetime so it cannot
+be orphaned. Bounded mode remains the default. A renderer/probe completion is
+diagnostic information only and never closes the directly launched BF1942
 process. If OpenXR temporarily has no renderable frame, BFVR retains one
 pending request and keeps the game/presenter alive until the runtime resumes
 or the owner exits, rather than converting the short bounded diagnostic wait

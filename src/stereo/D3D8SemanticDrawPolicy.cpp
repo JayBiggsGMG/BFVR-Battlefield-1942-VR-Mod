@@ -1,5 +1,7 @@
 #include "stereo/D3D8SemanticDrawPolicy.h"
 
+#include <cmath>
+
 namespace
 {
 
@@ -223,6 +225,21 @@ D3D8SemanticDrawClass ClassifyBF1942Win32SemanticDraw(
     return immediateRef2MenuQuad || cachedRef2MenuQuad
         ? D3D8SemanticDrawClass::Ref2MenuQuad
         : D3D8SemanticDrawClass::Unclassified;
+}
+
+bool IsBF1942FirstPersonArmDraw(
+    D3D8SemanticDrawClass semanticClass,
+    bool perspective,
+    float projectionM00,
+    float projectionM11) noexcept
+{
+    return
+        semanticClass == D3D8SemanticDrawClass::AnimatedMeshSkinning &&
+        perspective &&
+        std::isfinite(projectionM00) &&
+        std::isfinite(projectionM11) &&
+        projectionM00 >= 2.0F &&
+        projectionM11 >= 3.5F;
 }
 
 } // namespace bfvr::stereo

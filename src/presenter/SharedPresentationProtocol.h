@@ -11,7 +11,7 @@ namespace bfvr::shared
 using SharedTextureLogCallback = void (*)(void* context, const wchar_t* message);
 
 constexpr DWORD kProtocolMagic = 0x52564642; // "BFVR"
-constexpr DWORD kProtocolVersion = 4;
+constexpr DWORD kProtocolVersion = 6;
 constexpr std::size_t kTextureCount = 3;
 constexpr std::size_t kSharedNameCapacity = 128;
 constexpr DWORD kProducerFlagRuntimeTimedRender = 0x1;
@@ -26,6 +26,10 @@ constexpr DWORD kControllerHandFlagGripOrientationValid = 0x20;
 constexpr DWORD kControllerHandFlagTriggerActive = 0x40;
 constexpr DWORD kControllerHandFlagSqueezeActive = 0x80;
 constexpr DWORD kControllerHandFlagThumbstickActive = 0x100;
+constexpr DWORD kControllerHandFlagAimPositionTracked = 0x200;
+constexpr DWORD kControllerHandFlagAimOrientationTracked = 0x400;
+constexpr DWORD kControllerHandFlagGripPositionTracked = 0x800;
+constexpr DWORD kControllerHandFlagGripOrientationTracked = 0x1000;
 constexpr DWORD kControllerHandButtonPrimary = 0x1;
 constexpr DWORD kControllerHandButtonSecondary = 0x2;
 constexpr DWORD kControllerHandButtonMenu = 0x4;
@@ -53,6 +57,12 @@ enum class SharedTextureTransport : DWORD
 {
     NamedNtHandle = 1,
     D3D9LegacyHandle = 2
+};
+
+enum class UiReferenceMode : LONG
+{
+    WorldLocked = 0,
+    HeadLocked = 1
 };
 
 struct SharedTextureDescription
@@ -130,6 +140,9 @@ struct SharedRenderRequest
     alignas(8) LONGLONG predictedDisplayTime = 0;
     LONG shouldRender = 0;
     LONG viewsValid = 0;
+    LONG headPoseValid = 0;
+    LONG headPoseTracked = 0;
+    SharedPresentationPose headPose = {};
     SharedPresentationView views[2] = {};
 };
 
@@ -182,6 +195,10 @@ struct ControlBlock
     volatile LONG renderRequestSequence = 0;
     volatile LONG renderedFrameSequence = 0;
     volatile LONG controllerSampleSequence = 0;
+    // Published by the x86 producer before frameSequence. Gameplay HUD uses
+    // VIEW; native menus use a latched LOCAL pose.
+    volatile LONG frameUiReferenceMode =
+        static_cast<LONG>(UiReferenceMode::WorldLocked);
     PresentationRequirements requirements = {};
     SharedRenderRequest renderRequest = {};
     SharedControllerSample controllerSample = {};

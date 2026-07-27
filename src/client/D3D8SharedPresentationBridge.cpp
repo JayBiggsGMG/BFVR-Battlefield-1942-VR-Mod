@@ -172,7 +172,8 @@ public:
         UINT logicalUiHeight,
         float worldRenderScale,
         D3D8PresentationCompanion requestedCompanion,
-        D3D8SharedPresentationLogCallback callback)
+        D3D8SharedPresentationLogCallback callback,
+        bool forceCpuTransport)
     {
         Shutdown();
         ClearAcceptedControllerInput();
@@ -305,6 +306,8 @@ public:
             return false;
         }
 
+        runtimeUiWidth = block->requirements.uiWidth;
+        runtimeUiHeight = block->requirements.uiHeight;
         destinationRequirements =
             ReadRequirements(*block, logicalUiWidth, logicalUiHeight);
         if (destinationRequirements.format != DXGI_FORMAT_B8G8R8A8_UNORM &&
@@ -319,7 +322,8 @@ public:
         }
         requirements =
             MakeProducerRequirements(destinationRequirements, worldRenderScale);
-        gpuSharedTargets = gpuProducer.Resolve();
+        gpuSharedTargets =
+            !forceCpuTransport && gpuProducer.Resolve();
         if (companion == D3D8PresentationCompanion::OfflineTransport &&
             !gpuSharedTargets)
         {
@@ -546,27 +550,36 @@ public:
         const D3D8RuntimeControllerHand& right = sample.hands[1];
         const DWORD flags = left.flags ^ (right.flags << 16);
         const DWORD buttons = left.buttons ^ (right.buttons << 16);
+        const DWORD analogPresses =
+            (left.triggerValue >= 0.55F ? 0x1U : 0U) |
+            (left.squeezeValue >= 0.55F ? 0x2U : 0U) |
+            (right.triggerValue >= 0.55F ? 0x4U : 0U) |
+            (right.squeezeValue >= 0.55F ? 0x8U : 0U);
         const DWORD now = GetTickCount();
         if (flags == lastControllerFlags &&
             buttons == lastControllerButtons &&
+            analogPresses == lastControllerAnalogPresses &&
             now - lastControllerLogAt < 1000)
         {
             return;
         }
         lastControllerFlags = flags;
         lastControllerButtons = buttons;
+        lastControllerAnalogPresses = analogPresses;
         lastControllerLogAt = now;
         WriteLog(
-            L"OpenXR controller sample %ld accepted for the local-frame overlay: left flags=0x%03lX buttons=0x%02lX trigger=%.3f stick=(%.3f,%.3f); right flags=0x%03lX buttons=0x%02lX trigger=%.3f stick=(%.3f,%.3f).",
+            L"OpenXR controller sample %ld accepted for the local-frame overlay: left flags=0x%03lX buttons=0x%02lX trigger=%.3f squeeze=%.3f stick=(%.3f,%.3f); right flags=0x%03lX buttons=0x%02lX trigger=%.3f squeeze=%.3f stick=(%.3f,%.3f).",
             sequence,
             static_cast<unsigned long>(left.flags),
             static_cast<unsigned long>(left.buttons),
             left.triggerValue,
+            left.squeezeValue,
             left.thumbstickX,
             left.thumbstickY,
             static_cast<unsigned long>(right.flags),
             static_cast<unsigned long>(right.buttons),
             right.triggerValue,
+            right.squeezeValue,
             right.thumbstickX,
             right.thumbstickY);
     }
@@ -617,6 +630,26 @@ public:
                 }
                 request.sequence = sequence;
                 request.predictedDisplayTime = source.predictedDisplayTime;
+                request.headPoseValid =
+                    source.headPoseValid != 0 &&
+                    IsFinitePose(source.headPose) &&
+                    IsFiniteUnitQuaternion(source.headPose);
+                request.headPoseTracked =
+                    request.headPoseValid && source.headPoseTracked != 0;
+                if (request.headPoseValid)
+                {
+                    request.headPose.orientationX =
+                        source.headPose.orientationX;
+                    request.headPose.orientationY =
+                        source.headPose.orientationY;
+                    request.headPose.orientationZ =
+                        source.headPose.orientationZ;
+                    request.headPose.orientationW =
+                        source.headPose.orientationW;
+                    request.headPose.positionX = source.headPose.positionX;
+                    request.headPose.positionY = source.headPose.positionY;
+                    request.headPose.positionZ = source.headPose.positionZ;
+                }
                 for (std::size_t eye = 0; eye < request.views.size(); ++eye)
                 {
                     const shared::SharedPresentationView& sourceView =
@@ -642,7 +675,10 @@ public:
                         request.predictedDisplayTime,
                         request.controllerInput))
                 {
-                    PublishAcceptedControllerInput(request.controllerInput);
+                    PublishAcceptedControllerInput(
+                        request.controllerInput,
+                        MakeD3D8RuntimeHeadReference(request),
+                        request.headPoseTracked);
                 }
                 else
                 {
@@ -710,7 +746,8 @@ public:
 
     bool PublishFrame(
         const D3D8RuntimeRenderRequest& request,
-        const std::array<D3D8SharedFramePixels, 3>& frame)
+        const std::array<D3D8SharedFramePixels, 3>& frame,
+        bool uiHeadLocked)
     {
         if (!initialized || block == nullptr || request.sequence <= 0)
         {
@@ -729,6 +766,12 @@ public:
         {
             return false;
         }
+        InterlockedExchange(
+            &block->frameUiReferenceMode,
+            static_cast<LONG>(
+                uiHeadLocked
+                    ? shared::UiReferenceMode::HeadLocked
+                    : shared::UiReferenceMode::WorldLocked));
         InterlockedIncrement(&block->producedFrameCount);
         MemoryBarrier();
         InterlockedExchange(&block->frameSequence, request.sequence);
@@ -738,7 +781,8 @@ public:
     bool PublishGpuFrame(
         void* d3d8Device,
         const D3D8RuntimeRenderRequest& request,
-        DWORD timeoutMs)
+        DWORD timeoutMs,
+        bool uiHeadLocked)
     {
         if (!initialized ||
             block == nullptr ||
@@ -755,6 +799,12 @@ public:
                 request.sequence);
             return false;
         }
+        InterlockedExchange(
+            &block->frameUiReferenceMode,
+            static_cast<LONG>(
+                uiHeadLocked
+                    ? shared::UiReferenceMode::HeadLocked
+                    : shared::UiReferenceMode::WorldLocked));
         InterlockedIncrement(&block->producedFrameCount);
         MemoryBarrier();
         InterlockedExchange(&block->frameSequence, request.sequence);
@@ -842,6 +892,8 @@ public:
         block = nullptr;
         requirements = {};
         destinationRequirements = {};
+        runtimeUiWidth = 0;
+        runtimeUiHeight = 0;
         presenterProcess = {};
         channelName.clear();
         presenterPath.clear();
@@ -853,6 +905,7 @@ public:
         pendingRenderRequest = 0;
         lastControllerFlags = 0;
         lastControllerButtons = 0;
+        lastControllerAnalogPresses = 0;
         lastControllerLogAt = 0;
         initialized = false;
     }
@@ -941,7 +994,10 @@ public:
     LONG pendingRenderRequest = 0;
     DWORD lastControllerFlags = 0;
     DWORD lastControllerButtons = 0;
+    DWORD lastControllerAnalogPresses = 0;
     DWORD lastControllerLogAt = 0;
+    UINT runtimeUiWidth = 0;
+    UINT runtimeUiHeight = 0;
     bool initialized = false;
 };
 
@@ -957,7 +1013,8 @@ bool D3D8SharedPresentationBridge::Initialize(
     UINT logicalUiHeight,
     float worldRenderScale,
     D3D8PresentationCompanion companion,
-    D3D8SharedPresentationLogCallback logCallback)
+    D3D8SharedPresentationLogCallback logCallback,
+    bool forceCpuTransport)
 {
     return impl_ != nullptr &&
         impl_->Initialize(
@@ -965,7 +1022,8 @@ bool D3D8SharedPresentationBridge::Initialize(
             logicalUiHeight,
             worldRenderScale,
             companion,
-            logCallback);
+            logCallback,
+            forceCpuTransport);
 }
 
 bool D3D8SharedPresentationBridge::EnsureGpuFrameTargets(
@@ -985,18 +1043,25 @@ bool D3D8SharedPresentationBridge::RequestRender(
 
 bool D3D8SharedPresentationBridge::PublishFrame(
     const D3D8RuntimeRenderRequest& request,
-    const std::array<D3D8SharedFramePixels, 3>& frame)
+    const std::array<D3D8SharedFramePixels, 3>& frame,
+    bool uiHeadLocked)
 {
-    return impl_ != nullptr && impl_->PublishFrame(request, frame);
+    return impl_ != nullptr &&
+        impl_->PublishFrame(request, frame, uiHeadLocked);
 }
 
 bool D3D8SharedPresentationBridge::PublishGpuFrame(
     void* d3d8Device,
     const D3D8RuntimeRenderRequest& request,
-    DWORD timeoutMs)
+    DWORD timeoutMs,
+    bool uiHeadLocked)
 {
     return impl_ != nullptr &&
-        impl_->PublishGpuFrame(d3d8Device, request, timeoutMs);
+        impl_->PublishGpuFrame(
+            d3d8Device,
+            request,
+            timeoutMs,
+            uiHeadLocked);
 }
 
 bool D3D8SharedPresentationBridge::WaitForPresentation(
@@ -1056,6 +1121,16 @@ UINT D3D8SharedPresentationBridge::UiWidth() const noexcept
 UINT D3D8SharedPresentationBridge::UiHeight() const noexcept
 {
     return impl_ == nullptr ? 0 : impl_->requirements.uiHeight;
+}
+
+UINT D3D8SharedPresentationBridge::RuntimeUiWidth() const noexcept
+{
+    return impl_ == nullptr ? 0 : impl_->runtimeUiWidth;
+}
+
+UINT D3D8SharedPresentationBridge::RuntimeUiHeight() const noexcept
+{
+    return impl_ == nullptr ? 0 : impl_->runtimeUiHeight;
 }
 
 DWORD D3D8SharedPresentationBridge::WorldD3DFormat() const noexcept
@@ -1165,13 +1240,34 @@ bool BuildD3D8DiagnosticStereoTransforms(
 D3D8RuntimeView MakeD3D8RuntimeHeadReference(
     const D3D8RuntimeRenderRequest& request) noexcept
 {
+    if (request.headPoseValid)
+    {
+        return request.headPose;
+    }
+
     D3D8RuntimeView reference = request.views[0];
-    reference.positionX =
-        (request.views[0].positionX + request.views[1].positionX) * 0.5F;
-    reference.positionY =
-        (request.views[0].positionY + request.views[1].positionY) * 0.5F;
-    reference.positionZ =
-        (request.views[0].positionZ + request.views[1].positionZ) * 0.5F;
+    const auto toPose = [](const D3D8RuntimeView& view)
+    {
+        return stereo::Pose{
+            {view.positionX, view.positionY, view.positionZ},
+            {
+                view.orientationX,
+                view.orientationY,
+                view.orientationZ,
+                view.orientationW}};
+    };
+    const auto centre =
+        stereo::ComputeCentreViewPose(toPose(request.views[0]), toPose(request.views[1]));
+    if (centre.has_value())
+    {
+        reference.orientationX = centre->orientation.x;
+        reference.orientationY = centre->orientation.y;
+        reference.orientationZ = centre->orientation.z;
+        reference.orientationW = centre->orientation.w;
+        reference.positionX = centre->position.x;
+        reference.positionY = centre->position.y;
+        reference.positionZ = centre->position.z;
+    }
     return reference;
 }
 
