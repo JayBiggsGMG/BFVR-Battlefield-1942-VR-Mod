@@ -26,10 +26,10 @@ public:
     void UpdatePose(
         const D3D8RuntimeView& referenceHead,
         const D3D8RuntimeRenderRequest& request);
+    // Clears only transient per-request hook state. This is used after a D3D8
+    // Reset so no pre-reset HMD pose can be replayed before the next request.
+    void ClearPose() noexcept;
     [[nodiscard]] bool WasApplied(LONG sequence) const noexcept;
-    [[nodiscard]] D3D8RuntimeView EyeReference(
-        LONG sequence,
-        const D3D8RuntimeView& fallback) const noexcept;
     void DisableAndRemove();
     void LogSummary() const;
 

@@ -77,6 +77,25 @@ bool IsFiniteInRange(float value, float minimum, float maximum)
     return std::isfinite(value) && value >= minimum && value <= maximum;
 }
 
+bool IsFiniteUnitPose(const bfvr::OpenXRPresentationPose& pose)
+{
+    const float quaternionLengthSquared =
+        pose.orientationX * pose.orientationX +
+        pose.orientationY * pose.orientationY +
+        pose.orientationZ * pose.orientationZ +
+        pose.orientationW * pose.orientationW;
+    return
+        std::isfinite(pose.orientationX) &&
+        std::isfinite(pose.orientationY) &&
+        std::isfinite(pose.orientationZ) &&
+        std::isfinite(pose.orientationW) &&
+        std::isfinite(pose.positionX) &&
+        std::isfinite(pose.positionY) &&
+        std::isfinite(pose.positionZ) &&
+        quaternionLengthSquared >= 0.25F &&
+        quaternionLengthSquared <= 2.25F;
+}
+
 XrQuaternionf Multiply(
     const XrQuaternionf& left,
     const XrQuaternionf& right)
@@ -1784,7 +1803,8 @@ public:
 
     bool EndFrame(
         const OpenXRPresentationTextures& textures,
-        OpenXRUiReferenceMode uiReferenceMode)
+        OpenXRUiReferenceMode uiReferenceMode,
+        const OpenXRPresentationPose* worldUiAnchor)
     {
         if (!frameInProgress)
         {
@@ -1833,7 +1853,27 @@ public:
                 if (uiReferenceMode ==
                     OpenXRUiReferenceMode::WorldLocked)
                 {
-                    if (pendingHeadPoseValid &&
+                    if (worldUiAnchor != nullptr &&
+                        IsFiniteUnitPose(*worldUiAnchor))
+                    {
+                        XrPosef anchor = {};
+                        anchor.orientation = {
+                            worldUiAnchor->orientationX,
+                            worldUiAnchor->orientationY,
+                            worldUiAnchor->orientationZ,
+                            worldUiAnchor->orientationW};
+                        anchor.position = {
+                            worldUiAnchor->positionX,
+                            worldUiAnchor->positionY,
+                            worldUiAnchor->positionZ};
+                        XrPosef anchorOffset = {};
+                        anchorOffset.orientation.w = 1.0F;
+                        anchorOffset.position.z =
+                            -configuration.uiDistanceMeters;
+                        worldLockedUiPose = ComposePose(anchor, anchorOffset);
+                        worldLockedUiPoseValid = true;
+                    }
+                    else if (pendingHeadPoseValid &&
                         (!worldLockedUiPoseValid ||
                          !uiReferenceModeInitialized ||
                          lastUiReferenceMode !=
@@ -1926,11 +1966,12 @@ public:
 
     bool SubmitFrame(
         const OpenXRPresentationTextures& textures,
-        OpenXRUiReferenceMode uiReferenceMode)
+        OpenXRUiReferenceMode uiReferenceMode,
+        const OpenXRPresentationPose* worldUiAnchor)
     {
         OpenXRPresentationFrameState frameState = {};
         return BeginFrame(frameState) &&
-            EndFrame(textures, uiReferenceMode);
+            EndFrame(textures, uiReferenceMode, worldUiAnchor);
     }
 
     void DestroySwapchain(Swapchain& swapchain)
@@ -2326,10 +2367,11 @@ bool OpenXRPresentation::PollEvents()
 
 bool OpenXRPresentation::SubmitFrame(
     const OpenXRPresentationTextures& textures,
-    OpenXRUiReferenceMode uiReferenceMode)
+    OpenXRUiReferenceMode uiReferenceMode,
+    const OpenXRPresentationPose* worldUiAnchor)
 {
     return impl_ != nullptr &&
-        impl_->SubmitFrame(textures, uiReferenceMode);
+        impl_->SubmitFrame(textures, uiReferenceMode, worldUiAnchor);
 }
 
 bool OpenXRPresentation::BeginFrame(OpenXRPresentationFrameState& frameState)
@@ -2339,10 +2381,11 @@ bool OpenXRPresentation::BeginFrame(OpenXRPresentationFrameState& frameState)
 
 bool OpenXRPresentation::EndFrame(
     const OpenXRPresentationTextures& textures,
-    OpenXRUiReferenceMode uiReferenceMode)
+    OpenXRUiReferenceMode uiReferenceMode,
+    const OpenXRPresentationPose* worldUiAnchor)
 {
     return impl_ != nullptr &&
-        impl_->EndFrame(textures, uiReferenceMode);
+        impl_->EndFrame(textures, uiReferenceMode, worldUiAnchor);
 }
 
 bool OpenXRPresentation::IsInitialized() const noexcept

@@ -35,9 +35,9 @@ void ApplyFrameSemanticPolicy(
             const bool rotationBuilt =
                 bfvr::BuildD3D8RuntimeRotationOnlyTransforms(
                 g_runtimeRenderRequest,
-                g_renderViewPoseHook.EyeReference(
-                    g_runtimeRenderRequest.sequence,
-                    g_runtimeHeadReference),
+                g_runtimeFramePosePolicy.EyeReference(
+                    g_renderViewPoseHook.WasApplied(
+                        g_runtimeRenderRequest.sequence)),
                 snapshot.view,
                 snapshot.projection,
                 snapshot.leftView,

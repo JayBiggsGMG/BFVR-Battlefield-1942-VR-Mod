@@ -413,7 +413,7 @@ std::optional<Matrix4> MakeD3D8ControllerToWeaponAttachment(
 
 std::optional<Matrix4> MakeD3D8AttachedWeaponViewDelta(
     const Matrix4& controllerToWeaponAttachment,
-    const Pose& calibrationHead,
+    const Pose& currentHead,
     const Pose& currentGrip,
     float worldUnitsPerMeter) noexcept
 {
@@ -422,7 +422,7 @@ std::optional<Matrix4> MakeD3D8AttachedWeaponViewDelta(
         return std::nullopt;
     }
     const auto relativeGrip =
-        MakeHeadRelativePose(calibrationHead, currentGrip);
+        MakeHeadRelativePose(currentHead, currentGrip);
     if (!relativeGrip.has_value())
     {
         return std::nullopt;
@@ -439,32 +439,66 @@ std::optional<Matrix4> MakeD3D8AttachedWeaponViewDelta(
     return IsFinite(result) ? std::optional<Matrix4>(result) : std::nullopt;
 }
 
-std::optional<Matrix4> MakeD3D8PlayerBodyWeaponView(
-    const Matrix4& currentSourceView,
-    const Pose& calibrationHead,
+std::optional<Matrix4> MakeD3D8CurrentBodyView(
+    const Matrix4& sourceView,
     const Pose& currentHead,
     float worldUnitsPerMeter) noexcept
 {
-    if (!IsFinite(currentSourceView))
+    if (!IsFinite(sourceView) || !IsFinite(currentHead.position) ||
+        !IsFinite(currentHead.orientation) || !std::isfinite(worldUnitsPerMeter) ||
+        worldUnitsPerMeter <= 0.0F)
     {
         return std::nullopt;
     }
-    Matrix4 identity = {};
-    for (std::size_t index = 0; index < 4; ++index)
-    {
-        identity.values[index][index] = 1.0F;
-    }
-    const auto relativeHeadCamera = ComposeRuntimeHeadWithD3D8Camera(
-        identity,
-        calibrationHead,
-        currentHead,
-        worldUnitsPerMeter);
-    if (!relativeHeadCamera.has_value())
+    const auto headView = MakeD3D8ViewFromOpenXRPose(currentHead);
+    const auto headPose = headView.has_value() ? InvertMatrix(*headView) : std::nullopt;
+    if (!headPose.has_value())
     {
         return std::nullopt;
     }
-    const Matrix4 result =
-        MultiplyMatrices(currentSourceView, *relativeHeadCamera);
+    const Matrix4 result = MultiplyMatrices(sourceView, *headPose);
+    return IsFinite(result) ? std::optional<Matrix4>(result) : std::nullopt;
+}
+
+std::optional<Matrix4> MakeD3D8AbsoluteGripToWeaponAttachment(
+    const Pose& gripAtCommit,
+    const Matrix4& targetBodyViewDelta,
+    float worldUnitsPerMeter) noexcept
+{
+    if (!IsFinite(targetBodyViewDelta))
+    {
+        return std::nullopt;
+    }
+    const auto gripTransform =
+        MakeD3D8RigidTransform(gripAtCommit, worldUnitsPerMeter);
+    const auto inverseGrip =
+        gripTransform.has_value() ? InvertMatrix(*gripTransform) : std::nullopt;
+    if (!inverseGrip.has_value())
+    {
+        return std::nullopt;
+    }
+    const Matrix4 result = MultiplyMatrices(targetBodyViewDelta, *inverseGrip);
+    return IsFinite(result) ? std::optional<Matrix4>(result) : std::nullopt;
+}
+
+std::optional<Matrix4> MakeD3D8AbsoluteGripWeaponDelta(
+    const Matrix4& absoluteGripToWeaponAttachment,
+    const Pose& currentGrip,
+    float worldUnitsPerMeter) noexcept
+{
+    if (!IsFinite(absoluteGripToWeaponAttachment))
+    {
+        return std::nullopt;
+    }
+    const auto gripTransform =
+        MakeD3D8RigidTransform(currentGrip, worldUnitsPerMeter);
+    if (!gripTransform.has_value())
+    {
+        return std::nullopt;
+    }
+    const Matrix4 result = MultiplyMatrices(
+        absoluteGripToWeaponAttachment,
+        *gripTransform);
     return IsFinite(result) ? std::optional<Matrix4>(result) : std::nullopt;
 }
 

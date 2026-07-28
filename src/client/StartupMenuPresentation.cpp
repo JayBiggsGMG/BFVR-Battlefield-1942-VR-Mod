@@ -13,6 +13,8 @@ namespace
 constexpr DWORD kStartupFrameIntervalMs = 66;
 constexpr DWORD kOpaqueBlack = 0xFF000000U;
 constexpr DWORD kOpaqueFallback = 0xFF101418U;
+constexpr float kMenuFollowStartRadians = 0.610865238F;
+constexpr float kMenuFollowRadiansPerSecond = 1.570796327F;
 
 bool MakePixelBuffer(
     UINT width,
@@ -131,7 +133,53 @@ void StartupMenuPresentation::Pump()
             bridge_.UiWidth() * sizeof(DWORD),
             bridge_.UiWidth(),
             bridge_.UiHeight()}}};
-    if (bridge_.PublishFrame(request_, frame, false))
+    D3D8RuntimeUiPlacement uiPlacement = {};
+    // Preserve the historical world-static startup panel until BF1942 reports
+    // a real native menu, then replace its fallback latch with the same
+    // yaw-only edge anchor used after the D3D8 handoff.
+    uiPlacement.headLocked = false;
+    const bool nativeMenuActive = IsMenuPointerOverlayActive();
+    if (nativeMenuActive)
+    {
+        const D3D8RuntimeView currentHead =
+            MakeD3D8RuntimeHeadReference(request_);
+        const stereo::Pose currentHeadPose = {
+            {currentHead.positionX, currentHead.positionY, currentHead.positionZ},
+            {
+                currentHead.orientationX,
+                currentHead.orientationY,
+                currentHead.orientationZ,
+                currentHead.orientationW}};
+        if (stereo::UpdateUiMenuAnchor(
+                menuAnchorTracker_,
+                currentHeadPose,
+                request_.predictedDisplayTime,
+                kMenuFollowStartRadians,
+                kMenuFollowRadiansPerSecond))
+        {
+            const stereo::Pose& anchor = menuAnchorTracker_.anchor;
+            uiPlacement.worldAnchorValid = true;
+            uiPlacement.worldAnchor.orientationX = anchor.orientation.x;
+            uiPlacement.worldAnchor.orientationY = anchor.orientation.y;
+            uiPlacement.worldAnchor.orientationZ = anchor.orientation.z;
+            uiPlacement.worldAnchor.orientationW = anchor.orientation.w;
+            uiPlacement.worldAnchor.positionX = anchor.position.x;
+            uiPlacement.worldAnchor.positionY = anchor.position.y;
+            uiPlacement.worldAnchor.positionZ = anchor.position.z;
+            PublishActiveMenuWorldAnchor(anchor);
+        }
+        else
+        {
+            uiPlacement.headLocked = true;
+            ClearActiveMenuWorldAnchor();
+        }
+    }
+    else
+    {
+        stereo::ResetUiMenuAnchor(menuAnchorTracker_);
+        ClearActiveMenuWorldAnchor();
+    }
+    if (bridge_.PublishFrame(request_, frame, uiPlacement))
     {
         bridge_.WaitForPresentation(request_.sequence, 1000);
     }
@@ -144,6 +192,8 @@ void StartupMenuPresentation::Stop()
         StopMenuPointerOverlay();
     }
     active_ = false;
+    stereo::ResetUiMenuAnchor(menuAnchorTracker_);
+    ClearActiveMenuWorldAnchor();
     bridge_.Shutdown();
     ReleaseCaptureResources();
     leftPixels_.clear();

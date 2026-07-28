@@ -44,6 +44,9 @@ constexpr BYTE kBfMenuSetGameInputPrefix[] = {
     0x83, 0xEC, 0x20, 0x53, 0x8B, 0xD9, 0x83, 0xBB,
     0xFC, 0x00, 0x00, 0x00, 0xFF, 0x0F, 0x84, 0xDC};
 volatile LONG g_nativeMenuActiveState = 0;
+SRWLOCK g_menuAnchorLock = SRWLOCK_INIT;
+bfvr::stereo::Pose g_menuWorldAnchor = {};
+bool g_menuWorldAnchorValid = false;
 
 bool HasExpectedPrefix(
     const void* target,
@@ -190,7 +193,7 @@ public:
         }
         hookEnabled = true;
         WriteLog(
-            L"Controller menu pointer armed at 0x0045DE60 for world-locked native menus: runtime=%ux%u source=%ux%u logical=800x600. The first tracked head pose of each menu opening anchors the LOCAL-space panel; a fresh tracked right aim ray supplies native c_GIMouseLookX/Y, and right trigger supplies native c_GIOk with hysteresis.",
+            L"Controller menu pointer armed at 0x0045DE60 for world-locked native menus: runtime=%ux%u source=%ux%u logical=800x600. The presentation path supplies the yaw-only LOCAL anchor shared by this mapper; a fresh tracked right aim ray supplies native c_GIMouseLookX/Y, and right trigger supplies native c_GIOk with hysteresis.",
             runtimeUiWidth,
             runtimeUiHeight,
             sourceUiWidth,
@@ -326,15 +329,28 @@ private:
         bool rayHit = false;
         if (trackedAim)
         {
-            if (!menuAnchorValid)
+            bfvr::stereo::Pose publishedAnchor = {};
+            if (bfvr::TryGetActiveMenuWorldAnchor(publishedAnchor))
             {
-                menuAnchorHead = ToPose(matchingHead);
+                menuAnchorHead = publishedAnchor;
                 menuAnchorValid = true;
             }
-            const auto relativeAim =
-                bfvr::stereo::MakePoseRelativeToReference(
+            else if (!menuAnchorValid)
+            {
+                const auto yawOnlyAnchor =
+                    bfvr::stereo::MakeYawOnlyUiAnchor(
+                        ToPose(matchingHead));
+                if (yawOnlyAnchor.has_value())
+                {
+                    menuAnchorHead = *yawOnlyAnchor;
+                    menuAnchorValid = true;
+                }
+            }
+            const auto relativeAim = menuAnchorValid
+                ? bfvr::stereo::MakePoseRelativeToReference(
                     menuAnchorHead,
-                    ToPose(right->aimPose));
+                    ToPose(right->aimPose))
+                : std::nullopt;
             const float quadHeight =
                 kUiWidthMeters *
                 static_cast<float>(runtimeUiHeight) /
@@ -436,6 +452,7 @@ private:
         else
         {
             menuAnchorValid = false;
+            bfvr::ClearActiveMenuWorldAnchor();
         }
         InterlockedExchange(
             &g_nativeMenuActiveState,
@@ -566,6 +583,34 @@ bool IsMenuPointerOverlayActive() noexcept
         &g_nativeMenuActiveState,
         0,
         0) != 0;
+}
+
+void PublishActiveMenuWorldAnchor(const stereo::Pose& anchor) noexcept
+{
+    AcquireSRWLockExclusive(&g_menuAnchorLock);
+    g_menuWorldAnchor = anchor;
+    g_menuWorldAnchorValid = true;
+    ReleaseSRWLockExclusive(&g_menuAnchorLock);
+}
+
+void ClearActiveMenuWorldAnchor() noexcept
+{
+    AcquireSRWLockExclusive(&g_menuAnchorLock);
+    g_menuWorldAnchor = {};
+    g_menuWorldAnchorValid = false;
+    ReleaseSRWLockExclusive(&g_menuAnchorLock);
+}
+
+bool TryGetActiveMenuWorldAnchor(stereo::Pose& anchor) noexcept
+{
+    AcquireSRWLockShared(&g_menuAnchorLock);
+    const bool valid = g_menuWorldAnchorValid;
+    if (valid)
+    {
+        anchor = g_menuWorldAnchor;
+    }
+    ReleaseSRWLockShared(&g_menuAnchorLock);
+    return valid;
 }
 
 } // namespace bfvr

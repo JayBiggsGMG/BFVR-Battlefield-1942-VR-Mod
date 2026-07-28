@@ -68,12 +68,15 @@ yet: BFVR has not recovered a safe WinPC on-foot/vehicle classifier.
 OpenXR now starts before BF1942 creates its delayed gameplay D3D8 device. A
 temporary CPU startup bridge captures the native game window onto a
 world-locked menu panel, then hands off to the GPU-resident stereo path when
-CreateDevice/Present become available. Native main/deployment/pause/death
-menus stay fixed in OpenXR `LOCAL`; only the gameplay HUD follows the head in
-`VIEW`, at the unchanged 1.5 m distance and size. In native mouse-enabled
-menus, point the right controller at the panel and use right trigger as the
-normal BF1942 select/click action; mouse and keyboard remain available. This
-interaction is currently quad-only.
+CreateDevice/Present become available. Native interactive menus open from the
+actual native-menu edge at a yaw-only OpenXR `LOCAL` pose in front of the user.
+They remain world-stable while within 35 degrees of view, then gently yaw-follow
+at up to 90 degrees per second when looked well away; the controller ray uses
+the same anchor. Only the gameplay HUD follows the head in `VIEW`, at the
+unchanged 1.5 m distance and size. In native mouse-enabled menus, point the
+right controller at the panel and use right trigger as the normal BF1942
+select/click action; mouse and keyboard remain available. This interaction is
+currently quad-only.
 
 The first live controller runs proved the OpenXR transport, local-frame gate,
 right-trigger fire, and controller look route. The current build packages the
@@ -208,6 +211,14 @@ These are opt-in diagnostics; ordinary BF1942 launches remain unchanged.
 GPU-resident requests default world eyes to 100% of the runtime-recommended
 dimensions; set `BFVR_OPENXR_WORLD_RENDER_SCALE=0.50..1.25` before launch for
 an explicit diagnostic override.
+
+The x64 presenter covers the translated BF1942 client with a BFVR-owned
+desktop preview: one aspect-fit left-eye image plus BFVR's UI texture, rather
+than the underlying flat game HUD/arms. It presents each accepted BFVR source
+frame with a non-blocking desktop present; it is not a runtime mirror or an
+extra headset pass. Set `BFVR_DESKTOP_MIRROR=0` before launch to opt out.
+World FXAA remains enabled by default, as in the owner-accepted visual path;
+set `BFVR_OPENXR_FXAA=0` only for a deliberate measured A/B.
 
 For an owner-observed session without a fixed duration, omit
 `--diagnostic-timeout-ms` and add `--run-until-stopped` to the combined

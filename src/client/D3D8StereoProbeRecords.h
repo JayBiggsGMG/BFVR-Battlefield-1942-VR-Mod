@@ -243,7 +243,7 @@ struct PresentationRunRecord
     std::int64_t totalReplayQpcTicks = 0;
     std::int64_t totalReadbackQpcTicks = 0;
     std::int64_t totalUploadQpcTicks = 0;
-    std::int64_t totalPresentationWaitQpcTicks = 0;
+    std::int64_t totalConsumptionWaitQpcTicks = 0;
     std::int64_t totalRequestWaitQpcTicks = 0;
     LONG firstSequence = 0;
     LONG lastSequence = 0;

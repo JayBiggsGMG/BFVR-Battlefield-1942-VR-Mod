@@ -1,6 +1,7 @@
 #pragma once
 
 #include "client/D3D8SharedPresentationBridge.h"
+#include "stereo/UiPointerMath.h"
 
 #include <windows.h>
 
@@ -32,6 +33,7 @@ private:
     D3D8SharedPresentationBridge bridge_;
     D3D8SharedPresentationLogCallback appendLog_ = nullptr;
     D3D8RuntimeRenderRequest request_ = {};
+    stereo::UiMenuAnchorTracker menuAnchorTracker_ = {};
     std::vector<DWORD> leftPixels_;
     std::vector<DWORD> rightPixels_;
     std::vector<DWORD> uiPixels_;

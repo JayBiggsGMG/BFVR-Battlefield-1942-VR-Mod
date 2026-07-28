@@ -86,6 +86,13 @@ struct D3D8SharedFramePixels
     UINT height = 0;
 };
 
+struct D3D8RuntimeUiPlacement
+{
+    bool headLocked = true;
+    bool worldAnchorValid = false;
+    D3D8RuntimeView worldAnchor = {};
+};
+
 class D3D8SharedPresentationBridge
 {
 public:
@@ -111,12 +118,13 @@ public:
     bool PublishFrame(
         const D3D8RuntimeRenderRequest& request,
         const std::array<D3D8SharedFramePixels, 3>& frame,
-        bool uiHeadLocked);
+        const D3D8RuntimeUiPlacement& uiPlacement);
     bool PublishGpuFrame(
         void* d3d8Device,
         const D3D8RuntimeRenderRequest& request,
         DWORD timeoutMs,
-        bool uiHeadLocked);
+        const D3D8RuntimeUiPlacement& uiPlacement);
+    bool WaitForConsumption(LONG sequence, DWORD timeoutMs);
     bool WaitForPresentation(LONG sequence, DWORD timeoutMs);
     void PrepareForResourceRelease();
     void Shutdown();

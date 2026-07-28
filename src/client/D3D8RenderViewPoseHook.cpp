@@ -197,6 +197,18 @@ public:
         InterlockedExchange(&requestedSequence, request.sequence);
     }
 
+    void ClearPose() noexcept
+    {
+        referenceHead = {};
+        currentHead = {};
+        lastSource = {};
+        lastSourceValid = false;
+        MemoryBarrier();
+        InterlockedExchange(&requestedSequence, 0);
+        InterlockedExchange(&appliedSequence, 0);
+        InterlockedExchange(&appliedFrustumSequence, 0);
+    }
+
     bool WasApplied(LONG sequence) const noexcept
     {
         return sequence > 0 &&
@@ -204,13 +216,6 @@ public:
                 const_cast<volatile LONG*>(&appliedSequence),
                 0,
                 0) == sequence;
-    }
-
-    D3D8RuntimeView EyeReference(
-        LONG sequence,
-        const D3D8RuntimeView& fallback) const noexcept
-    {
-        return WasApplied(sequence) ? currentHead : fallback;
     }
 
     void DisableAndRemove()
@@ -493,18 +498,17 @@ void D3D8RenderViewPoseHook::UpdatePose(
     }
 }
 
+void D3D8RenderViewPoseHook::ClearPose() noexcept
+{
+    if (impl_ != nullptr)
+    {
+        impl_->ClearPose();
+    }
+}
+
 bool D3D8RenderViewPoseHook::WasApplied(LONG sequence) const noexcept
 {
     return impl_ != nullptr && impl_->WasApplied(sequence);
-}
-
-D3D8RuntimeView D3D8RenderViewPoseHook::EyeReference(
-    LONG sequence,
-    const D3D8RuntimeView& fallback) const noexcept
-{
-    return impl_ == nullptr
-        ? fallback
-        : impl_->EyeReference(sequence, fallback);
 }
 
 void D3D8RenderViewPoseHook::DisableAndRemove()

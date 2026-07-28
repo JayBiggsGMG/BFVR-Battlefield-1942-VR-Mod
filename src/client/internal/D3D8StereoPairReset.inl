@@ -48,10 +48,15 @@ HRESULT WINAPI HookReset(void* device, void* presentationParameters)
         g_frame.resetResult = result;
         InterlockedExchange(&g_frame.resetAborted, 1);
         g_runtimeRenderRequest = {};
-        g_runtimeHeadReference = {};
-        g_runtimeHeadReferenceReady = false;
-        g_gameplayActive = false;
-        g_frameUiHeadLocked = false;
+        g_runtimeFramePosePolicy = {};
+        g_renderViewPoseHook.ClearPose();
+        // The process-lifetime OpenXR LOCAL origin is constant. Reset replaces
+        // D3D8 resources only; it must never rearm a HMD-derived camera or
+        // weapon basis while the user is alive, dead, or choosing a spawn.
+        g_frameUiPlacement = {};
+        bfvr::stereo::ResetUiMenuAnchor(g_menuAnchorTracker);
+        g_nativeMenuActive = false;
+        bfvr::ClearActiveMenuWorldAnchor();
         g_presentationFramePublished = false;
         InterlockedExchange(&g_record.state, restarted ? 1 : 5);
         AppendLog(

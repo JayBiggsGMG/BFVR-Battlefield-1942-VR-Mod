@@ -8,6 +8,7 @@
 #include "stereo/UiPointerMath.h"
 #include "stereo/WeaponMotionPolicy.h"
 #include "stereo/WeaponPoseMath.h"
+#include "client/D3D8RuntimePosePolicy.h"
 #include "client/D3D8StereoProbeRecords.h"
 #include "client/D3D8SpriteShaderTransform.h"
 #include "client/D3D8StereoShaderTransform.h"
@@ -122,25 +123,6 @@ void ExpectNear(std::string_view test, float actual, float expected, float toler
         std::cerr << "FAIL " << test << ": expected " << expected << ", got " << actual << '\n';
         ++g_failures;
     }
-}
-
-bfvr::stereo::Matrix4 MultiplyTestMatrices(
-    const bfvr::stereo::Matrix4& lhs,
-    const bfvr::stereo::Matrix4& rhs)
-{
-    bfvr::stereo::Matrix4 result = {};
-    for (std::size_t row = 0; row < 4; ++row)
-    {
-        for (std::size_t column = 0; column < 4; ++column)
-        {
-            for (std::size_t inner = 0; inner < 4; ++inner)
-            {
-                result.values[row][column] +=
-                    lhs.values[row][inner] * rhs.values[inner][column];
-            }
-        }
-    }
-    return result;
 }
 
 void TestIdentityEyeOffsets()
@@ -588,6 +570,241 @@ void TestRuntimeHeadCameraComposition()
     ExpectNear(test, cameraForward.z, 30.25F);
 }
 
+bfvr::stereo::Matrix4 MultiplyTestMatrices(
+    const bfvr::stereo::Matrix4& lhs,
+    const bfvr::stereo::Matrix4& rhs)
+{
+    bfvr::stereo::Matrix4 result = {};
+    for (std::size_t row = 0; row < 4; ++row)
+    {
+        for (std::size_t column = 0; column < 4; ++column)
+        {
+            for (std::size_t inner = 0; inner < 4; ++inner)
+            {
+                result.values[row][column] +=
+                    lhs.values[row][inner] * rhs.values[inner][column];
+            }
+        }
+    }
+    return result;
+}
+
+void TestCurrentBodyFrameAndAbsoluteGripWeaponDelta()
+{
+    constexpr std::string_view test =
+        "current body frame and absolute grip weapon delta";
+    constexpr float rootHalf = 0.70710678118F;
+    const bfvr::stereo::Pose currentHead = {
+        {0.25F, 0.20F, -0.40F},
+        {0.0F, rootHalf, 0.0F, rootHalf}};
+    const auto currentHeadView =
+        bfvr::stereo::MakeD3D8ViewFromOpenXRPose(currentHead);
+    if (!currentHeadView.has_value())
+    {
+        Fail(test, "current LOCAL head View was rejected");
+        return;
+    }
+    const bfvr::stereo::Matrix4 playerBodyView = {
+        {{{0.0F, 0.0F, -1.0F, 0.0F},
+          {0.0F, 1.0F, 0.0F, 0.0F},
+          {1.0F, 0.0F, 0.0F, 0.0F},
+          {8.0F, -1.0F, 4.0F, 1.0F}}}};
+    const auto recoveredBodyView = bfvr::stereo::MakeD3D8CurrentBodyView(
+        MultiplyTestMatrices(playerBodyView, *currentHeadView),
+        currentHead,
+        1.0F);
+    if (!recoveredBodyView.has_value())
+    {
+        Fail(test, "current body frame was rejected");
+        return;
+    }
+    for (std::size_t row = 0; row < 4; ++row)
+    {
+        for (std::size_t column = 0; column < 4; ++column)
+        {
+            ExpectNear(
+                test,
+                recoveredBodyView->values[row][column],
+                playerBodyView.values[row][column]);
+        }
+    }
+
+    const bfvr::stereo::Pose currentGrip = {
+        {0.41F, -0.18F, -0.57F},
+        {rootHalf, 0.0F, 0.0F, rootHalf}};
+    const bfvr::stereo::Matrix4 targetBodyDelta = {
+        {{{0.0F, 0.0F, -1.0F, 0.0F},
+          {0.0F, 1.0F, 0.0F, 0.0F},
+          {1.0F, 0.0F, 0.0F, 0.0F},
+          {0.13F, -0.08F, 0.24F, 1.0F}}}};
+    const auto attachment =
+        bfvr::stereo::MakeD3D8AbsoluteGripToWeaponAttachment(
+            currentGrip,
+            targetBodyDelta,
+            1.0F);
+    const auto reconstructed = attachment.has_value()
+        ? bfvr::stereo::MakeD3D8AbsoluteGripWeaponDelta(
+            *attachment,
+            currentGrip,
+            1.0F)
+        : std::nullopt;
+    if (!reconstructed.has_value())
+    {
+        Fail(test, "absolute grip attachment was rejected");
+        return;
+    }
+    for (std::size_t row = 0; row < 4; ++row)
+    {
+        for (std::size_t column = 0; column < 4; ++column)
+        {
+            ExpectNear(
+                test,
+                reconstructed->values[row][column],
+                targetBodyDelta.values[row][column]);
+        }
+    }
+}
+
+void TestD3D8RuntimeLocalOriginPosePolicy()
+{
+    constexpr std::string_view test = "runtime LOCAL pose policy";
+    const bfvr::D3D8RuntimeView origin =
+        bfvr::MakeD3D8OpenXRLocalOrigin();
+    ExpectNear(test, origin.positionX, 0.0F);
+    ExpectNear(test, origin.positionY, 0.0F);
+    ExpectNear(test, origin.positionZ, 0.0F);
+    ExpectNear(test, origin.orientationX, 0.0F);
+    ExpectNear(test, origin.orientationY, 0.0F);
+    ExpectNear(test, origin.orientationZ, 0.0F);
+    ExpectNear(test, origin.orientationW, 1.0F);
+
+    constexpr float rootHalf = 0.70710678118F;
+    bfvr::D3D8RuntimeView weirdSpawnHead = {};
+    weirdSpawnHead.positionX = -0.91F;
+    weirdSpawnHead.positionY = 0.23F;
+    weirdSpawnHead.positionZ = 1.47F;
+    weirdSpawnHead.orientationX = rootHalf;
+    weirdSpawnHead.orientationY = 0.0F;
+    weirdSpawnHead.orientationZ = 0.0F;
+    weirdSpawnHead.orientationW = rootHalf;
+    const bfvr::D3D8RuntimeFramePosePolicy weirdTracked =
+        bfvr::MakeD3D8RuntimeFramePosePolicy(weirdSpawnHead, true);
+
+    bfvr::D3D8RuntimeView normalHead = {};
+    normalHead.positionX = 0.06F;
+    normalHead.positionY = 0.02F;
+    normalHead.positionZ = -0.31F;
+    normalHead.orientationY = rootHalf;
+    normalHead.orientationW = rootHalf;
+    const bfvr::D3D8RuntimeFramePosePolicy normalTracked =
+        bfvr::MakeD3D8RuntimeFramePosePolicy(normalHead, true);
+
+    // The later tracked frame must never inherit the arbitrary first pose.
+    ExpectNear(test, weirdTracked.renderViewReference.positionX, 0.0F);
+    ExpectNear(test, weirdTracked.renderViewReference.orientationW, 1.0F);
+    ExpectNear(test, normalTracked.renderViewReference.positionX, 0.0F);
+    ExpectNear(test, normalTracked.renderViewReference.positionY, 0.0F);
+    ExpectNear(test, normalTracked.renderViewReference.positionZ, 0.0F);
+    ExpectNear(test, normalTracked.renderViewReference.orientationX, 0.0F);
+    ExpectNear(test, normalTracked.renderViewReference.orientationY, 0.0F);
+    ExpectNear(test, normalTracked.renderViewReference.orientationZ, 0.0F);
+    ExpectNear(test, normalTracked.renderViewReference.orientationW, 1.0F);
+    ExpectNear(test, normalTracked.EyeReference(false).positionZ, 0.0F);
+    ExpectNear(test, normalTracked.EyeReference(true).positionZ, normalHead.positionZ);
+    ExpectNear(
+        test,
+        normalTracked.EyeReference(true).orientationY,
+        normalHead.orientationY);
+
+    bfvr::stereo::Matrix4 sourceCamera = {};
+    for (std::size_t index = 0; index < 4; ++index)
+    {
+        sourceCamera.values[index][index] = 1.0F;
+    }
+    const auto trackedCamera =
+        bfvr::stereo::ComposeRuntimeHeadWithD3D8Camera(
+            sourceCamera,
+            {{
+                normalTracked.renderViewReference.positionX,
+                normalTracked.renderViewReference.positionY,
+                normalTracked.renderViewReference.positionZ},
+             {
+                normalTracked.renderViewReference.orientationX,
+                normalTracked.renderViewReference.orientationY,
+                normalTracked.renderViewReference.orientationZ,
+                normalTracked.renderViewReference.orientationW}},
+            {{normalHead.positionX, normalHead.positionY, normalHead.positionZ},
+             {
+                normalHead.orientationX,
+                normalHead.orientationY,
+                normalHead.orientationZ,
+                normalHead.orientationW}},
+            1.0F);
+    if (!trackedCamera.has_value())
+    {
+        Fail(test, "tracked LOCAL camera pose was rejected");
+        return;
+    }
+    const bfvr::stereo::Vec4 trackedOrigin =
+        bfvr::stereo::TransformRowVector(
+            {0.0F, 0.0F, 0.0F, 1.0F},
+            *trackedCamera);
+    if (std::fabs(trackedOrigin.x) < 0.00001F &&
+        std::fabs(trackedOrigin.y) < 0.00001F &&
+        std::fabs(trackedOrigin.z) < 0.00001F)
+    {
+        Fail(test, "tracked head translation produced no camera movement");
+    }
+
+    const bfvr::D3D8RuntimeFramePosePolicy untracked =
+        bfvr::MakeD3D8RuntimeFramePosePolicy(normalHead, false);
+    ExpectNear(test, untracked.renderViewReference.positionX, normalHead.positionX);
+    ExpectNear(test, untracked.renderViewReference.positionY, normalHead.positionY);
+    ExpectNear(test, untracked.renderViewReference.positionZ, normalHead.positionZ);
+    ExpectNear(
+        test,
+        untracked.renderViewReference.orientationY,
+        normalHead.orientationY);
+    ExpectNear(
+        test,
+        untracked.EyeReference(false).positionZ,
+        normalHead.positionZ);
+    const auto untrackedCamera =
+        bfvr::stereo::ComposeRuntimeHeadWithD3D8Camera(
+            sourceCamera,
+            {{
+                untracked.renderViewReference.positionX,
+                untracked.renderViewReference.positionY,
+                untracked.renderViewReference.positionZ},
+             {
+                untracked.renderViewReference.orientationX,
+                untracked.renderViewReference.orientationY,
+                untracked.renderViewReference.orientationZ,
+                untracked.renderViewReference.orientationW}},
+            {{normalHead.positionX, normalHead.positionY, normalHead.positionZ},
+             {
+                normalHead.orientationX,
+                normalHead.orientationY,
+                normalHead.orientationZ,
+                normalHead.orientationW}},
+            1.0F);
+    if (!untrackedCamera.has_value())
+    {
+        Fail(test, "untracked no-delta camera pose was rejected");
+        return;
+    }
+    for (std::size_t row = 0; row < 4; ++row)
+    {
+        for (std::size_t column = 0; column < 4; ++column)
+        {
+            ExpectNear(
+                test,
+                untrackedCamera->values[row][column],
+                sourceCamera.values[row][column]);
+        }
+    }
+}
+
 void TestViewSpaceWeaponPose()
 {
     constexpr std::string_view test = "view-space weapon pose";
@@ -871,73 +1088,6 @@ void TestViewSpaceWeaponPose()
         test,
         calibrationAnchoredActual.w,
         calibrationAnchoredExpected.w);
-
-    // The source View contains current physical head pose after the RenderView
-    // camera hook. Remove that pose but retain BF1942 player/body movement.
-    const bfvr::stereo::Pose neutralRoomHead = {
-        {0.0F, 0.0F, 0.0F},
-        {0.0F, 0.0F, 0.0F, 1.0F}};
-    const bfvr::stereo::Pose movedRoomHead = {
-        {0.25F, 0.20F, -0.40F},
-        {0.0F, rootHalf, 0.0F, rootHalf}};
-    const auto movedHeadView =
-        bfvr::stereo::MakeD3D8ViewFromOpenXRPose(movedRoomHead);
-    if (!movedHeadView.has_value())
-    {
-        Fail(test, "test moved-head View could not be built");
-        return;
-    }
-    const bfvr::stereo::Matrix4 movedPlayerBodyView = {
-        {{{0.0F, 0.0F, -1.0F, 0.0F},
-          {0.0F, 1.0F, 0.0F, 0.0F},
-          {1.0F, 0.0F, 0.0F, 0.0F},
-          {8.0F, -1.0F, 4.0F, 1.0F}}}};
-    const bfvr::stereo::Matrix4 movedSourceView = MultiplyTestMatrices(
-        movedPlayerBodyView,
-        *movedHeadView);
-    const auto recoveredPlayerBodyView =
-        bfvr::stereo::MakeD3D8PlayerBodyWeaponView(
-            movedSourceView,
-            neutralRoomHead,
-            movedRoomHead,
-            1.0F);
-    if (!recoveredPlayerBodyView.has_value())
-    {
-        Fail(test, "head-cancelled player/body View was rejected");
-        return;
-    }
-    for (std::size_t row = 0; row < 4; ++row)
-    {
-        for (std::size_t column = 0; column < 4; ++column)
-        {
-            ExpectNear(
-                test,
-                recoveredPlayerBodyView->values[row][column],
-                movedPlayerBodyView.values[row][column]);
-        }
-    }
-    const auto locomotedWorldAttachment =
-        bfvr::stereo::MakeD3D8WorldSpaceWeaponDelta(
-            *recoveredPlayerBodyView,
-            *rotationDelta);
-    if (!locomotedWorldAttachment.has_value())
-    {
-        Fail(test, "locomoted player/body attachment was rejected");
-        return;
-    }
-    const bfvr::stereo::Vec4 locomotedAttachmentPoint =
-        bfvr::stereo::TransformRowVector(vertex, *locomotedWorldAttachment);
-    const bfvr::stereo::Vec4 fixedCalibrationAttachmentPoint =
-        bfvr::stereo::TransformRowVector(vertex, *calibrationWorldAttachment);
-    if (std::fabs(
-            locomotedAttachmentPoint.x - fixedCalibrationAttachmentPoint.x) < 0.001F &&
-        std::fabs(
-            locomotedAttachmentPoint.y - fixedCalibrationAttachmentPoint.y) < 0.001F &&
-        std::fabs(
-            locomotedAttachmentPoint.z - fixedCalibrationAttachmentPoint.z) < 0.001F)
-    {
-        Fail(test, "player locomotion did not move the attachment frame");
-    }
 
     const bfvr::stereo::Vec4 stereoReplayActual =
         bfvr::stereo::TransformRowVector(
@@ -1438,6 +1588,86 @@ void TestUiPointerMapping()
         return Fail(test, "head-relative ray missed the VIEW-space UI");
     ExpectNear(test, movedCenter->pixelX, 400.0F);
     ExpectNear(test, movedCenter->pixelY, 300.0F);
+}
+
+void TestUiMenuYawAnchorFollow()
+{
+    constexpr std::string_view test = "yaw-only menu anchor follow";
+    constexpr float rootHalf = 0.70710678118F;
+    const bfvr::stereo::Pose openingHead = {
+        {1.0F, 1.60F, -2.0F},
+        {0.0F, rootHalf, 0.0F, rootHalf}};
+    const auto yawOnly = bfvr::stereo::MakeYawOnlyUiAnchor(openingHead);
+    if (!yawOnly.has_value())
+    {
+        Fail(test, "valid opening head pose was rejected");
+        return;
+    }
+    ExpectNear(test, yawOnly->position.x, 1.0F);
+    ExpectNear(test, yawOnly->position.y, 1.60F);
+    ExpectNear(test, yawOnly->position.z, -2.0F);
+    ExpectNear(test, yawOnly->orientation.x, 0.0F);
+    ExpectNear(test, yawOnly->orientation.y, rootHalf);
+    ExpectNear(test, yawOnly->orientation.z, 0.0F);
+    ExpectNear(test, yawOnly->orientation.w, rootHalf);
+
+    bfvr::stereo::UiMenuAnchorTracker tracker = {};
+    const bfvr::stereo::Pose forwardHead = {
+        {0.0F, 1.60F, 0.0F},
+        {0.0F, 0.0F, 0.0F, 1.0F}};
+    if (!bfvr::stereo::UpdateUiMenuAnchor(
+            tracker,
+            forwardHead,
+            1000000000,
+            0.50F,
+            1.0F))
+    {
+        Fail(test, "opening anchor was not accepted");
+        return;
+    }
+
+    const bfvr::stereo::Pose farRightHead = {
+        {3.0F, 1.60F, 4.0F},
+        {0.0F, rootHalf, 0.0F, rootHalf}};
+    if (!bfvr::stereo::UpdateUiMenuAnchor(
+            tracker,
+            farRightHead,
+            1100000000,
+            0.50F,
+            1.0F))
+    {
+        Fail(test, "follow update was rejected");
+        return;
+    }
+    // A 90-degree look-away over 0.1 seconds moves at the configured
+    // 1 radian/sec cap, not by the full yaw delta.
+    ExpectNear(test, tracker.anchor.orientation.y, std::sin(0.05F));
+    ExpectNear(test, tracker.anchor.orientation.w, std::cos(0.05F));
+    ExpectNear(test, tracker.anchor.position.x, 3.0F);
+    ExpectNear(test, tracker.anchor.position.z, 4.0F);
+
+    const bfvr::stereo::Pose nearHead = {
+        {8.0F, 1.60F, 9.0F},
+        {0.0F, std::sin(0.15F), 0.0F, std::cos(0.15F)}};
+    if (!bfvr::stereo::UpdateUiMenuAnchor(
+            tracker,
+            nearHead,
+            1200000000,
+            0.50F,
+            1.0F))
+    {
+        Fail(test, "in-view update was rejected");
+        return;
+    }
+    // Inside the dead zone, the panel remains genuinely world-locked.
+    ExpectNear(test, tracker.anchor.position.x, 3.0F);
+    ExpectNear(test, tracker.anchor.position.z, 4.0F);
+
+    bfvr::stereo::ResetUiMenuAnchor(tracker);
+    if (tracker.valid || tracker.lastPredictedDisplayTime != 0)
+    {
+        Fail(test, "menu close did not reset the anchor tracker");
+    }
 }
 void TestD3D8DrawPolicy()
 {
@@ -2472,11 +2702,14 @@ int main()
     TestRuntimeFovD3D8StereoPair();
     TestRuntimePoseD3D8StereoPair();
     TestRuntimeHeadCameraComposition();
+    TestCurrentBodyFrameAndAbsoluteGripWeaponDelta();
+    TestD3D8RuntimeLocalOriginPosePolicy();
     TestViewSpaceWeaponPose();
     TestViewModelPerspectiveCorrection();
     TestD3D8WeaponDrawPolicy();
     TestWeaponMotionTracker();
     TestUiPointerMapping();
+    TestUiMenuYawAnchorFollow();
     TestD3D8SkinningShaderConstants();
     TestD3D8SpriteShaderConstants();
     TestD3D8TreeSpriteShaderConstants();

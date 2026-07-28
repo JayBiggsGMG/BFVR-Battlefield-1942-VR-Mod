@@ -24,6 +24,10 @@ void ReportStereoFrameResult(
 
 [[nodiscard]] std::int64_t ReadPerformanceCounter() noexcept;
 
+[[nodiscard]] bool IsContinuousPresentationTimingReportDue(
+    DWORD now,
+    DWORD& lastReportAt) noexcept;
+
 void ReportContinuousPresentationResult(
     FormattedLogCallback appendLog,
     const PresentationRunRecord& run,

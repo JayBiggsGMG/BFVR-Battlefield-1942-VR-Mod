@@ -59,34 +59,49 @@ namespace bfvr::stereo
     float worldUnitsPerMeter) noexcept;
 
 // Reconstructs the current weapon view delta from a portable controller
-// attachment and the absolute current grip in the fixed calibration-HMD basis.
+// attachment and the current grip relative to the current HMD pose. No prior
+// spawn, menu, or controller sample participates in this reconstruction.
 [[nodiscard]] std::optional<Matrix4> MakeD3D8AttachedWeaponViewDelta(
     const Matrix4& controllerToWeaponAttachment,
-    const Pose& calibrationHead,
+    const Pose& currentHead,
     const Pose& currentGrip,
     float worldUnitsPerMeter) noexcept;
 
-// Removes only relative physical HMD pose from the current source View. The
-// result follows BF1942 player/body translation and rotation while remaining
-// unchanged for head-only motion. calibrationHead is the HMD basis used by the
-// controller attachment.
-[[nodiscard]] std::optional<Matrix4> MakeD3D8PlayerBodyWeaponView(
-    const Matrix4& currentSourceView,
-    const Pose& calibrationHead,
+// Removes only the current OpenXR LOCAL head View from a classified D3D8 View.
+// The result is the current player/body frame; it is never captured or reused
+// by a later frame.
+[[nodiscard]] std::optional<Matrix4> MakeD3D8CurrentBodyView(
+    const Matrix4& sourceView,
     const Pose& currentHead,
+    float worldUnitsPerMeter) noexcept;
+
+// Captures a portable absolute-LOCAL-grip-to-weapon attachment for a body-frame
+// target. Unlike the legacy calibration helper, this deliberately takes no HMD
+// pose: the current grip is already expressed in OpenXR LOCAL.
+[[nodiscard]] std::optional<Matrix4> MakeD3D8AbsoluteGripToWeaponAttachment(
+    const Pose& gripAtCommit,
+    const Matrix4& targetBodyViewDelta,
+    float worldUnitsPerMeter) noexcept;
+
+// Reconstructs a body-frame weapon delta from a fixed absolute-LOCAL-grip
+// attachment and the current grip. Headset motion cannot enter this delta.
+[[nodiscard]] std::optional<Matrix4> MakeD3D8AbsoluteGripWeaponDelta(
+    const Matrix4& absoluteGripToWeaponAttachment,
+    const Pose& currentGrip,
     float worldUnitsPerMeter) noexcept;
 
 // Converts a view-space delta through the supplied frame View into the exact
 // World-space attachment needed for that draw. For a held weapon the frame is
-// the current head-cancelled player/body View, not an immutable calibration
-// View and not the current head-bearing source View.
+// the body View derived from the exact current classified source View/current
+// head pair; it must not be a sampled body/head frame, immutable calibration
+// View, or eye View.
 [[nodiscard]] std::optional<Matrix4> MakeD3D8WorldSpaceWeaponDelta(
     const Matrix4& frameView,
     const Matrix4& frameViewDelta) noexcept;
 
-// Re-expresses a World-space attachment in a supplied frame View. Calibration
-// uses this inverse conversion when changing its HMD/controller basis so the
-// frozen target does not jump.
+// Re-expresses a World-space attachment in its supplied current frame View.
+// Development calibration uses this inverse conversion so the frozen target
+// does not jump.
 [[nodiscard]] std::optional<Matrix4> MakeD3D8CalibrationViewWeaponOffset(
     const Matrix4& frameView,
     const Matrix4& worldSpaceDelta) noexcept;

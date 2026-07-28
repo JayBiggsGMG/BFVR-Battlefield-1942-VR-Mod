@@ -33,6 +33,7 @@ if(BFVR_PRESENTER_ONLY)
 
   add_executable(BFVRPresenter
     presenter/BFVRPresenter.cpp
+    presenter/DesktopMirror.cpp
     presenter/D3D11TextureScaler.cpp
     presenter/SharedControlChannel.cpp
     presenter/SharedTextureConsumer.cpp
@@ -110,6 +111,7 @@ add_library(BFVRClient SHARED
   client/D3D8ImportRoute.cpp
   client/D3D8PresentationConfiguration.cpp
   client/D3D8RenderViewPoseHook.cpp
+  client/D3D8RuntimePosePolicy.cpp
   client/D3D8RuntimeRedirect.cpp
   client/PlayerInputProbe.cpp
   client/WeaponFireProbe.cpp
@@ -185,6 +187,7 @@ add_executable(BFVRD3D8To9SharedSurfaceProbe
 )
 
 add_executable(BFVRStereoMathTests
+  client/D3D8RuntimePosePolicy.cpp
   client/D3D8SpriteShaderTransform.cpp
   client/D3D8TreeSpriteShaderTransform.cpp
   client/D3D8StereoShaderTransform.cpp

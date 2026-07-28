@@ -76,6 +76,12 @@ cbuffer Configuration : register(b0)
     float2 configurationPadding1;
 };
 
+// NVIDIA FXAA quality controls, retained as compile-time constants because
+// BFVR has one owner-approved world-AA profile rather than a runtime slider.
+const float kFxaaQualitySubpixel = 0.75;
+const float kFxaaQualityEdgeThreshold = 0.166;
+const float kFxaaQualityEdgeThresholdMin = 0.0833;
+
 float Luma(float3 color)
 {
     return dot(color, float3(0.299, 0.587, 0.114));
@@ -124,7 +130,9 @@ float4 main(float4 position : SV_Position, float2 texcoord : TEXCOORD0) : SV_Tar
     const float lumaRange = lumaMaximum - lumaMinimum;
 
     float3 filtered = center.rgb;
-    if (lumaRange >= max(0.0312, lumaMaximum * 0.125))
+    if (lumaRange >= max(
+            kFxaaQualityEdgeThresholdMin,
+            lumaMaximum * kFxaaQualityEdgeThreshold))
     {
         float2 direction = float2(
             -((lumaNorthwest + lumaNortheast) -
@@ -166,6 +174,19 @@ float4 main(float4 position : SV_Position, float2 texcoord : TEXCOORD0) : SV_Tar
             ? rgbA
             : rgbB;
     }
+
+    // The compact BFVR variant already has a diagonal 2x2 luma neighbourhood.
+    // Use it for FXAA's subpixel blend without adding another texture fetch.
+    const float neighbourhoodLuma =
+        (lumaNorthwest + lumaNortheast + lumaSouthwest + lumaSoutheast) *
+        0.25;
+    const float subpixelContrast = saturate(
+        abs(lumaCenter - neighbourhoodLuma) / max(lumaRange, 0.0001));
+    const float subpixelBlend =
+        subpixelContrast * subpixelContrast * kFxaaQualitySubpixel;
+    const float3 neighbourhoodColor =
+        (center.rgb + northwest + northeast + southwest + southeast) * 0.2;
+    filtered = lerp(filtered, neighbourhoodColor, subpixelBlend);
 
     const float3 linearColor = sourceAlreadyLinear > 0.5
         ? filtered
@@ -519,8 +540,8 @@ bool D3D11TextureScaler::Initialize(
     context_->AddRef();
     WriteLog(
         enableBloom
-            ? L"D3D11 texture scaler initialized with aspect-fit sampling, legacy-sRGB transfer correction, world-only FXAA, and half-resolution bloom."
-            : L"D3D11 texture scaler initialized with aspect-fit sampling, legacy-sRGB transfer correction, and world-only FXAA; bloom shaders are not compiled.");
+            ? L"D3D11 texture scaler initialized with aspect-fit sampling, legacy-sRGB transfer correction, world-only FXAA (subpixel=0.75 edge=0.166 min=0.0833), and half-resolution bloom."
+            : L"D3D11 texture scaler initialized with aspect-fit sampling, legacy-sRGB transfer correction, and world-only FXAA (subpixel=0.75 edge=0.166 min=0.0833); bloom shaders are not compiled.");
     return true;
 }
 

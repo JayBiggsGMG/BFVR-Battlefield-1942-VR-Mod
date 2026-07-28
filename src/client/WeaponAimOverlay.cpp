@@ -159,7 +159,7 @@ public:
         }
         hookEnabled = true;
         WriteLog(
-            L"Controller-directed fire overlay armed at 0x0053CDB0. Only the five verified branches in WeaponFire_Ordinary (default, barrel zero, indexed loop, all barrels, or rotating barrel) can receive the fresh grip-driven orientation already used by the rendered weapon for the alive local infantry player. BF1942 retains the native fire-matrix position, weapon/barrel muzzle offsets, spread, cadence, projectile creation, and networking path; every failed gate forwards the original matrix.");
+            L"Controller-directed fire overlay armed at 0x0053CDB0. Only the five verified branches in WeaponFire_Ordinary (default, barrel zero, indexed loop, all barrels, or rotating barrel) can receive the exact fresh world attachment already used by the rendered weapon for the alive local infantry player. BF1942 retains the native fire-matrix position, weapon/barrel muzzle offsets, spread, cadence, projectile creation, and networking path; every failed gate forwards the original matrix.");
     }
 
     void Stop()
@@ -285,10 +285,10 @@ private:
             return;
         }
 
-        bfvr::stereo::Matrix4 visualWeaponViewOffset = {};
+        bfvr::stereo::Matrix4 visualWeaponWorldAttachment = {};
         LONG visualControllerGeneration = 0;
-        if (!bfvr::ReadFreshWeaponViewOffset(
-                visualWeaponViewOffset,
+        if (!bfvr::ReadFreshWeaponWorldAttachment(
+                visualWeaponWorldAttachment,
                 visualControllerGeneration,
                 kControllerSampleMaximumAgeMs))
         {
@@ -296,11 +296,17 @@ private:
             originalFire(weapon, actor, matrix, barrelIndex);
             return;
         }
+        if (visualControllerGeneration != controllerGeneration)
+        {
+            InterlockedIncrement(&visualGenerationMismatches);
+            originalFire(weapon, actor, matrix, barrelIndex);
+            return;
+        }
 
         const auto adjusted =
-            bfvr::stereo::MakeD3D8VisualWeaponFireMatrix(
+            bfvr::stereo::MakeD3D8WorldAttachedWeaponFireMatrix(
                 nativeMatrix,
-                visualWeaponViewOffset);
+                visualWeaponWorldAttachment);
         if (!adjusted.has_value())
         {
             InterlockedIncrement(&mathRejections);
@@ -392,13 +398,14 @@ private:
     void Report() const
     {
         WriteLog(
-            L"Controller-directed fire overlay stopped: observed=%ld adjusted=%ld wrongCaller=%ld nonLocalOrDead=%ld unreadable=%ld missingVisualWeaponPose=%ld staleTracking=%ld invalidGripTracking=%ld mathRejected=%ld.",
+            L"Controller-directed fire overlay stopped: observed=%ld adjusted=%ld wrongCaller=%ld nonLocalOrDead=%ld unreadable=%ld missingVisualWeaponPose=%ld visualGenerationMismatch=%ld staleTracking=%ld invalidGripTracking=%ld mathRejected=%ld.",
             observedCalls,
             adjustedCalls,
             wrongCallerCalls,
             nonLocalOrDeadCalls,
             unreadableMatrices,
             missingVisualWeaponPose,
+            visualGenerationMismatches,
             staleTracking,
             invalidGripTracking,
             mathRejections);
@@ -494,6 +501,7 @@ private:
     volatile LONG nonLocalOrDeadCalls = 0;
     volatile LONG unreadableMatrices = 0;
     volatile LONG missingVisualWeaponPose = 0;
+    volatile LONG visualGenerationMismatches = 0;
     volatile LONG staleTracking = 0;
     volatile LONG invalidGripTracking = 0;
     volatile LONG mathRejections = 0;

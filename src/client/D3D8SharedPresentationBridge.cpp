@@ -546,6 +546,7 @@ public:
         LONG sequence,
         const D3D8RuntimeControllerSample& sample)
     {
+        constexpr DWORD kControllerDiagnosticLogPeriodMs = 5000;
         const D3D8RuntimeControllerHand& left = sample.hands[0];
         const D3D8RuntimeControllerHand& right = sample.hands[1];
         const DWORD flags = left.flags ^ (right.flags << 16);
@@ -556,10 +557,10 @@ public:
             (right.triggerValue >= 0.55F ? 0x4U : 0U) |
             (right.squeezeValue >= 0.55F ? 0x8U : 0U);
         const DWORD now = GetTickCount();
-        if (flags == lastControllerFlags &&
-            buttons == lastControllerButtons &&
-            analogPresses == lastControllerAnalogPresses &&
-            now - lastControllerLogAt < 1000)
+        // This is diagnostic output only. Input samples continue to be
+        // copied every frame; keep controller movement from opening and
+        // closing observer.log at render cadence.
+        if (now - lastControllerLogAt < kControllerDiagnosticLogPeriodMs)
         {
             return;
         }
@@ -747,7 +748,7 @@ public:
     bool PublishFrame(
         const D3D8RuntimeRenderRequest& request,
         const std::array<D3D8SharedFramePixels, 3>& frame,
-        bool uiHeadLocked)
+        const D3D8RuntimeUiPlacement& uiPlacement)
     {
         if (!initialized || block == nullptr || request.sequence <= 0)
         {
@@ -766,12 +767,7 @@ public:
         {
             return false;
         }
-        InterlockedExchange(
-            &block->frameUiReferenceMode,
-            static_cast<LONG>(
-                uiHeadLocked
-                    ? shared::UiReferenceMode::HeadLocked
-                    : shared::UiReferenceMode::WorldLocked));
+        PublishUiPlacement(uiPlacement);
         InterlockedIncrement(&block->producedFrameCount);
         MemoryBarrier();
         InterlockedExchange(&block->frameSequence, request.sequence);
@@ -782,7 +778,7 @@ public:
         void* d3d8Device,
         const D3D8RuntimeRenderRequest& request,
         DWORD timeoutMs,
-        bool uiHeadLocked)
+        const D3D8RuntimeUiPlacement& uiPlacement)
     {
         if (!initialized ||
             block == nullptr ||
@@ -799,16 +795,76 @@ public:
                 request.sequence);
             return false;
         }
-        InterlockedExchange(
-            &block->frameUiReferenceMode,
-            static_cast<LONG>(
-                uiHeadLocked
-                    ? shared::UiReferenceMode::HeadLocked
-                    : shared::UiReferenceMode::WorldLocked));
+        PublishUiPlacement(uiPlacement);
         InterlockedIncrement(&block->producedFrameCount);
         MemoryBarrier();
         InterlockedExchange(&block->frameSequence, request.sequence);
         return true;
+    }
+
+    bool WaitForConsumption(LONG sequence, DWORD timeoutMs)
+    {
+        if (!initialized || block == nullptr || sequence <= 0)
+        {
+            return false;
+        }
+        const DWORD waitStarted = GetTickCount();
+        while (GetTickCount() - waitStarted < timeoutMs)
+        {
+            if (InterlockedCompareExchange(
+                    &block->consumedFrameSequence,
+                    0,
+                    0) == sequence)
+            {
+                return true;
+            }
+            if (!IsHealthy())
+            {
+                WriteLog(
+                    L"OpenXR game bridge became unhealthy while waiting for source consumption %ld: rendered=%ld consumed=%ld presenterState=%ld presenterError=%ld shutdown=%ld processRunning=%d.",
+                    sequence,
+                    InterlockedCompareExchange(
+                        &block->renderedFrameSequence,
+                        0,
+                        0),
+                    InterlockedCompareExchange(
+                        &block->consumedFrameSequence,
+                        0,
+                        0),
+                    static_cast<long>(
+                        shared::ReadState(&block->presenterState)),
+                    InterlockedCompareExchange(
+                        &block->presenterError,
+                        0,
+                        0),
+                    InterlockedCompareExchange(
+                        &block->shutdownRequested,
+                        0,
+                        0),
+                    IsProcessRunning(presenterProcess.hProcess) ? 1 : 0);
+                return false;
+            }
+            Sleep(2);
+        }
+        WriteLog(
+            L"OpenXR game bridge timed out waiting %lu ms for source consumption %ld: rendered=%ld consumed=%ld presenterState=%ld presenterError=%ld.",
+            static_cast<unsigned long>(timeoutMs),
+            sequence,
+            InterlockedCompareExchange(
+                &block->renderedFrameSequence,
+                0,
+                0),
+            InterlockedCompareExchange(
+                &block->consumedFrameSequence,
+                0,
+                0),
+            static_cast<long>(
+                shared::ReadState(&block->presenterState)),
+            InterlockedCompareExchange(
+                &block->presenterError,
+                0,
+                0));
+        return false;
     }
 
     bool WaitForPresentation(LONG sequence, DWORD timeoutMs)
@@ -867,12 +923,8 @@ public:
                 &block->consumedFrameSequence,
                 0,
                 0),
-            static_cast<long>(
-                shared::ReadState(&block->presenterState)),
-            InterlockedCompareExchange(
-                &block->presenterError,
-                0,
-                0));
+            static_cast<long>(shared::ReadState(&block->presenterState)),
+            InterlockedCompareExchange(&block->presenterError, 0, 0));
         return false;
     }
 
@@ -962,6 +1014,42 @@ public:
         static_cast<Impl*>(context)->WriteLog(L"%s", message);
     }
 
+    void PublishUiPlacement(const D3D8RuntimeUiPlacement& placement)
+    {
+        if (block == nullptr)
+        {
+            return;
+        }
+
+        shared::SharedPresentationPose anchor = {};
+        anchor.orientationX = placement.worldAnchor.orientationX;
+        anchor.orientationY = placement.worldAnchor.orientationY;
+        anchor.orientationZ = placement.worldAnchor.orientationZ;
+        anchor.orientationW = placement.worldAnchor.orientationW;
+        anchor.positionX = placement.worldAnchor.positionX;
+        anchor.positionY = placement.worldAnchor.positionY;
+        anchor.positionZ = placement.worldAnchor.positionZ;
+        const bool hasValidWorldAnchor =
+            !placement.headLocked &&
+            placement.worldAnchorValid &&
+            IsFinitePose(anchor) &&
+            IsFiniteUnitQuaternion(anchor);
+        if (hasValidWorldAnchor)
+        {
+            block->frameUiWorldAnchor = anchor;
+            MemoryBarrier();
+        }
+        InterlockedExchange(
+            &block->frameUiWorldAnchorValid,
+            hasValidWorldAnchor ? 1 : 0);
+        InterlockedExchange(
+            &block->frameUiReferenceMode,
+            static_cast<LONG>(
+                placement.headLocked
+                    ? shared::UiReferenceMode::HeadLocked
+                    : shared::UiReferenceMode::WorldLocked));
+    }
+
     void WriteLog(const wchar_t* format, ...) const
     {
         if (logCallback == nullptr)
@@ -1044,24 +1132,32 @@ bool D3D8SharedPresentationBridge::RequestRender(
 bool D3D8SharedPresentationBridge::PublishFrame(
     const D3D8RuntimeRenderRequest& request,
     const std::array<D3D8SharedFramePixels, 3>& frame,
-    bool uiHeadLocked)
+    const D3D8RuntimeUiPlacement& uiPlacement)
 {
     return impl_ != nullptr &&
-        impl_->PublishFrame(request, frame, uiHeadLocked);
+        impl_->PublishFrame(request, frame, uiPlacement);
 }
 
 bool D3D8SharedPresentationBridge::PublishGpuFrame(
     void* d3d8Device,
     const D3D8RuntimeRenderRequest& request,
     DWORD timeoutMs,
-    bool uiHeadLocked)
+    const D3D8RuntimeUiPlacement& uiPlacement)
 {
     return impl_ != nullptr &&
         impl_->PublishGpuFrame(
             d3d8Device,
             request,
             timeoutMs,
-            uiHeadLocked);
+            uiPlacement);
+}
+
+bool D3D8SharedPresentationBridge::WaitForConsumption(
+    LONG sequence,
+    DWORD timeoutMs)
+{
+    return impl_ != nullptr &&
+        impl_->WaitForConsumption(sequence, timeoutMs);
 }
 
 bool D3D8SharedPresentationBridge::WaitForPresentation(

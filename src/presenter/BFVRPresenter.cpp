@@ -1,4 +1,5 @@
 #include "openxr/OpenXRPresentation.h"
+#include "presenter/DesktopMirror.h"
 #include "presenter/SharedControlChannel.h"
 #include "presenter/SharedTextureConsumer.h"
 
@@ -13,6 +14,12 @@ namespace
 {
 FILE* g_output = stdout;
 constexpr DWORD kRuntimeTimedSourceGraceMs = 100;
+
+std::int64_t ReadPerformanceCounter() noexcept
+{
+    LARGE_INTEGER counter = {};
+    return QueryPerformanceCounter(&counter) ? counter.QuadPart : 0;
+}
 
 void WriteLog(void*, const wchar_t* message)
 {
@@ -373,6 +380,14 @@ int RunPresenter(
         return 7;
     }
 
+    bfvr::DesktopMirror desktopMirror;
+    desktopMirror.Initialize(
+        presentation.GetD3D11Device(),
+        presentation.GetD3D11Context(),
+        block->producerProcessId,
+        WriteLog,
+        nullptr);
+
     bfvr::shared::PublishState(
         &block->presenterState,
         bfvr::shared::ProcessState::Running);
@@ -382,19 +397,47 @@ int RunPresenter(
     bool healthy = true;
     bfvr::OpenXRUiReferenceMode acceptedUiReferenceMode =
         bfvr::OpenXRUiReferenceMode::WorldLocked;
+    bfvr::OpenXRPresentationPose acceptedUiWorldAnchor = {};
+    bool acceptedUiWorldAnchorValid = false;
     const bool runtimeTimedProducer =
         (block->producerFlags &
          bfvr::shared::kProducerFlagRuntimeTimedRender) != 0;
     LONG completedRenderRequest = 0;
     LONG pendingSourceSequence = 0;
     bool sourceGapReported = false;
+    std::int64_t totalSourceConsumeQpcTicks = 0;
+    std::int64_t totalDesktopMirrorQpcTicks = 0;
+    std::int64_t totalOpenXrBeginQpcTicks = 0;
+    std::int64_t totalOpenXrSubmitOrEndQpcTicks = 0;
+    LONG sourceConsumeCount = 0;
+    LONG desktopMirrorCount = 0;
+    LONG openXrBeginCount = 0;
+    LONG openXrSubmitOrEndCount = 0;
     auto consumeSequence = [&](LONG availableSequence)
     {
+        const std::int64_t consumeStarted = ReadPerformanceCounter();
         if (!consumer.ConsumeFrame())
         {
             return false;
         }
+        totalSourceConsumeQpcTicks +=
+            ReadPerformanceCounter() - consumeStarted;
+        ++sourceConsumeCount;
         consumedSequence = availableSequence;
+        // ConsumeFrame waits for the legacy D3D9 source reads to complete
+        // before it returns. The x86 producer may now reuse its shared frame
+        // targets; it does not need to wait for the later OpenXR copy/submit.
+        MemoryBarrier();
+        InterlockedExchange(&block->consumedFrameSequence, consumedSequence);
+        const std::int64_t mirrorStarted = ReadPerformanceCounter();
+        desktopMirror.Render(consumer.GetLocalTextures());
+        totalDesktopMirrorQpcTicks +=
+            ReadPerformanceCounter() - mirrorStarted;
+        ++desktopMirrorCount;
+        // The x86 producer publishes placement before frameSequence. Pair the
+        // payload with the just-consumed frame so the OpenXR panel and the
+        // client-side controller ray always use one menu anchor.
+        MemoryBarrier();
         acceptedUiReferenceMode =
             InterlockedCompareExchange(
                 &block->frameUiReferenceMode,
@@ -404,7 +447,25 @@ int RunPresenter(
                     bfvr::shared::UiReferenceMode::HeadLocked)
             ? bfvr::OpenXRUiReferenceMode::HeadLocked
             : bfvr::OpenXRUiReferenceMode::WorldLocked;
-        InterlockedExchange(&block->consumedFrameSequence, consumedSequence);
+        acceptedUiWorldAnchorValid =
+            acceptedUiReferenceMode ==
+                bfvr::OpenXRUiReferenceMode::WorldLocked &&
+            InterlockedCompareExchange(
+                &block->frameUiWorldAnchorValid,
+                0,
+                0) != 0;
+        if (acceptedUiWorldAnchorValid)
+        {
+            const bfvr::shared::SharedPresentationPose& source =
+                block->frameUiWorldAnchor;
+            acceptedUiWorldAnchor.orientationX = source.orientationX;
+            acceptedUiWorldAnchor.orientationY = source.orientationY;
+            acceptedUiWorldAnchor.orientationZ = source.orientationZ;
+            acceptedUiWorldAnchor.orientationW = source.orientationW;
+            acceptedUiWorldAnchor.positionX = source.positionX;
+            acceptedUiWorldAnchor.positionY = source.positionY;
+            acceptedUiWorldAnchor.positionZ = source.positionZ;
+        }
         InterlockedIncrement(&block->transportedFrameCount);
         haveFrame = true;
         if (!sampledPixels)
@@ -428,6 +489,46 @@ int RunPresenter(
         }
         return true;
     };
+    const auto currentUiWorldAnchor = [&]()
+        -> const bfvr::OpenXRPresentationPose*
+    {
+        return acceptedUiWorldAnchorValid
+            ? &acceptedUiWorldAnchor
+            : nullptr;
+    };
+    const auto submitFrame = [&]()
+    {
+        const std::int64_t submitStarted = ReadPerformanceCounter();
+        const bool submitted = presentation.SubmitFrame(
+            consumer.GetLocalTextures(),
+            acceptedUiReferenceMode,
+            currentUiWorldAnchor());
+        totalOpenXrSubmitOrEndQpcTicks +=
+            ReadPerformanceCounter() - submitStarted;
+        ++openXrSubmitOrEndCount;
+        return submitted;
+    };
+    const auto endFrame = [&](const bfvr::OpenXRPresentationTextures& textures)
+    {
+        const std::int64_t endStarted = ReadPerformanceCounter();
+        const bool ended = presentation.EndFrame(
+            textures,
+            acceptedUiReferenceMode,
+            currentUiWorldAnchor());
+        totalOpenXrSubmitOrEndQpcTicks +=
+            ReadPerformanceCounter() - endStarted;
+        ++openXrSubmitOrEndCount;
+        return ended;
+    };
+    const auto beginFrame = [&](bfvr::OpenXRPresentationFrameState& frame)
+    {
+        const std::int64_t beginStarted = ReadPerformanceCounter();
+        const bool began = presentation.BeginFrame(frame);
+        totalOpenXrBeginQpcTicks +=
+            ReadPerformanceCounter() - beginStarted;
+        ++openXrBeginCount;
+        return began;
+    };
     const DWORD startedAt = GetTickCount();
     while ((runUntilStopped ||
             GetTickCount() - startedAt < durationMs) &&
@@ -437,6 +538,7 @@ int RunPresenter(
             0) == 0 &&
         producerIsAlive())
     {
+        desktopMirror.PumpMessages();
         if (!presentation.PollEvents())
         {
             healthy = false;
@@ -452,9 +554,7 @@ int RunPresenter(
                 if (availableSequence == pendingSourceSequence)
                 {
                     if (!consumeSequence(availableSequence) ||
-                        !presentation.SubmitFrame(
-                            consumer.GetLocalTextures(),
-                            acceptedUiReferenceMode))
+                        !submitFrame())
                     {
                         healthy = false;
                         break;
@@ -483,9 +583,7 @@ int RunPresenter(
                 // outstanding source sequence for a later acknowledgement.
                 if (haveFrame)
                 {
-                    if (!presentation.SubmitFrame(
-                            consumer.GetLocalTextures(),
-                            acceptedUiReferenceMode))
+                    if (!submitFrame())
                     {
                         healthy = false;
                         break;
@@ -509,14 +607,14 @@ int RunPresenter(
             }
 
             bfvr::OpenXRPresentationFrameState frame = {};
-            if (!presentation.BeginFrame(frame))
+            if (!beginFrame(frame))
             {
                 healthy = false;
                 break;
             }
             if (!frame.shouldRender || !frame.viewsValid)
             {
-                presentation.EndFrame({}, acceptedUiReferenceMode);
+                endFrame({});
                 continue;
             }
             PublishRenderRequest(*block, readySequence, frame);
@@ -550,12 +648,8 @@ int RunPresenter(
                 // of holding xrBeginFrame open. The matching source remains
                 // outstanding and is acknowledged when BF1942 renders again.
                 const bool submittedFallback = haveFrame
-                    ? presentation.EndFrame(
-                        consumer.GetLocalTextures(),
-                        acceptedUiReferenceMode)
-                    : presentation.EndFrame(
-                        {},
-                        acceptedUiReferenceMode);
+                    ? endFrame(consumer.GetLocalTextures())
+                    : endFrame({});
                 if (haveFrame && !submittedFallback)
                 {
                     healthy = false;
@@ -579,9 +673,7 @@ int RunPresenter(
                 continue;
             }
             if (!consumeSequence(availableSequence) ||
-                !presentation.EndFrame(
-                    consumer.GetLocalTextures(),
-                    acceptedUiReferenceMode))
+                !endFrame(consumer.GetLocalTextures()))
             {
                 healthy = false;
                 break;
@@ -602,9 +694,7 @@ int RunPresenter(
         }
         if (presentation.IsSessionRunning() && haveFrame)
         {
-            if (!presentation.SubmitFrame(
-                    consumer.GetLocalTextures(),
-                    acceptedUiReferenceMode))
+            if (!submitFrame())
             {
                 healthy = false;
                 break;
@@ -620,10 +710,40 @@ int RunPresenter(
     bfvr::shared::PublishState(
         &block->presenterState,
         bfvr::shared::ProcessState::Stopping);
+    desktopMirror.Shutdown();
     consumer.Shutdown();
     presentation.Shutdown();
     const LONG presentedFrames =
         InterlockedCompareExchange(&block->presentedFrameCount, 0, 0);
+    LARGE_INTEGER frequency = {};
+    if (QueryPerformanceFrequency(&frequency) && frequency.QuadPart > 0)
+    {
+        const double millisecondsPerTick =
+            1000.0 / static_cast<double>(frequency.QuadPart);
+        const auto averageMilliseconds = [millisecondsPerTick](
+            std::int64_t ticks,
+            LONG count)
+        {
+            return count > 0
+                ? static_cast<double>(ticks) * millisecondsPerTick /
+                    static_cast<double>(count)
+                : 0.0;
+        };
+        fwprintf(
+            g_output,
+            L"[PRESENTER] Stage timing: sourceConsume=%.3f ms/source (n=%ld) desktopMirror=%.3f ms/source (n=%ld) xrBegin=%.3f ms/call (n=%ld) xrSubmitOrEnd=%.3f ms/call (n=%ld).\n",
+            averageMilliseconds(totalSourceConsumeQpcTicks, sourceConsumeCount),
+            sourceConsumeCount,
+            averageMilliseconds(totalDesktopMirrorQpcTicks, desktopMirrorCount),
+            desktopMirrorCount,
+            averageMilliseconds(totalOpenXrBeginQpcTicks, openXrBeginCount),
+            openXrBeginCount,
+            averageMilliseconds(
+                totalOpenXrSubmitOrEndQpcTicks,
+                openXrSubmitOrEndCount),
+            openXrSubmitOrEndCount);
+        fflush(g_output);
+    }
     const bool succeeded = healthy && consumedSequence > 0 && presentedFrames > 0;
     if (!succeeded)
     {

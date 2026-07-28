@@ -1,5 +1,7 @@
 #pragma once
 
+#include "stereo/StereoMath.h"
+
 #include <windows.h>
 
 namespace bfvr
@@ -17,5 +19,13 @@ void StartMenuPointerOverlay(
     void (*appendLog)(const wchar_t* message));
 void StopMenuPointerOverlay();
 [[nodiscard]] bool IsMenuPointerOverlayActive() noexcept;
+
+// The D3D8 presentation thread owns the yaw-only LOCAL anchor for a visible
+// native menu. The input hook consumes the same pose so controller rays and
+// the OpenXR panel cannot diverge when comfort follow moves it.
+void PublishActiveMenuWorldAnchor(const stereo::Pose& anchor) noexcept;
+void ClearActiveMenuWorldAnchor() noexcept;
+[[nodiscard]] bool TryGetActiveMenuWorldAnchor(
+    stereo::Pose& anchor) noexcept;
 
 } // namespace bfvr

@@ -166,7 +166,8 @@ public:
     bool SubmitFrame(
         const OpenXRPresentationTextures& textures,
         OpenXRUiReferenceMode uiReferenceMode =
-            OpenXRUiReferenceMode::HeadLocked);
+            OpenXRUiReferenceMode::HeadLocked,
+        const OpenXRPresentationPose* worldUiAnchor = nullptr);
 
     // Two-phase form used by the cross-process presenter. BeginFrame waits for
     // runtime timing and locates both predicted eye views before the x86 game
@@ -176,7 +177,8 @@ public:
     bool EndFrame(
         const OpenXRPresentationTextures& textures,
         OpenXRUiReferenceMode uiReferenceMode =
-            OpenXRUiReferenceMode::HeadLocked);
+            OpenXRUiReferenceMode::HeadLocked,
+        const OpenXRPresentationPose* worldUiAnchor = nullptr);
 
     [[nodiscard]] bool IsInitialized() const noexcept;
     [[nodiscard]] bool IsSessionRunning() const noexcept;

@@ -19,6 +19,32 @@ struct UiCanvasPoint
     float pixelY = 0.0F;
 };
 
+// A gravity-aligned LOCAL-space anchor for a large menu panel. Position is
+// preserved, but pitch and roll are removed so a tilted head cannot cant the
+// panel or its controller-ray coordinate frame.
+[[nodiscard]] std::optional<Pose> MakeYawOnlyUiAnchor(
+    const Pose& headPose) noexcept;
+
+struct UiMenuAnchorTracker
+{
+    Pose anchor = {};
+    std::int64_t lastPredictedDisplayTime = 0;
+    bool valid = false;
+};
+
+// Starts a world-locked menu anchor in front of the opening head pose, then
+// moves it only when it has become substantially off-centre. The target is
+// yaw-only; the caller uses the same anchor for panel presentation and ray
+// mapping. predictedDisplayTime is OpenXR nanoseconds.
+[[nodiscard]] bool UpdateUiMenuAnchor(
+    UiMenuAnchorTracker& tracker,
+    const Pose& headPose,
+    std::int64_t predictedDisplayTime,
+    float followStartRadians,
+    float followRadiansPerSecond) noexcept;
+
+void ResetUiMenuAnchor(UiMenuAnchorTracker& tracker) noexcept;
+
 // Expresses current in reference-local coordinates. This is the pose-space
 // conversion needed when a controller aim pose and centre-head pose were both
 // sampled in LOCAL space, while the UI itself is submitted in VIEW space.

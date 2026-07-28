@@ -16,6 +16,6 @@ bool TransferStereoFrameToSharedPresentation(
     D3D8SharedPresentationBridge& presentationBridge,
     const D3D8RuntimeRenderRequest& renderRequest,
     bool analyzePixels,
-    bool uiHeadLocked);
+    const D3D8RuntimeUiPlacement& uiPlacement);
 
 } // namespace bfvr::d3d8probe

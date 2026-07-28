@@ -345,6 +345,24 @@ std::int64_t ReadPerformanceCounter() noexcept
         : 0;
 }
 
+bool IsContinuousPresentationTimingReportDue(
+    DWORD now,
+    DWORD& lastReportAt) noexcept
+{
+    constexpr DWORD kTimingReportPeriodMs = 30000;
+    if (lastReportAt == 0)
+    {
+        lastReportAt = now;
+        return false;
+    }
+    if (now - lastReportAt < kTimingReportPeriodMs)
+    {
+        return false;
+    }
+    lastReportAt = now;
+    return true;
+}
+
 void ReportContinuousPresentationResult(
     FormattedLogCallback appendLog,
     const PresentationRunRecord& run,
@@ -386,15 +404,15 @@ void ReportContinuousPresentationResult(
     const double frameCount = static_cast<double>(run.presentedFrames);
     appendLog(
         run.gpuResidentTransport
-            ? L"D3D8 OpenXR GPU-resident stage timing: replay=%.3f ms/frame readback=%.3f ms/frame gpuSyncPublish=%.3f ms/frame presentWait=%.3f ms/frame nextRequestWait=%.3f ms/frame."
-            : L"D3D8 OpenXR stage timing: replay=%.3f ms/frame readback=%.3f ms/frame upload=%.3f ms/frame presentWait=%.3f ms/frame nextRequestWait=%.3f ms/frame.",
+            ? L"D3D8 OpenXR GPU-resident stage timing: replay=%.3f ms/frame readback=%.3f ms/frame gpuSyncPublish=%.3f ms/frame consumeWait=%.3f ms/frame nextRequestWait=%.3f ms/frame."
+            : L"D3D8 OpenXR stage timing: replay=%.3f ms/frame readback=%.3f ms/frame upload=%.3f ms/frame consumeWait=%.3f ms/frame nextRequestWait=%.3f ms/frame.",
         static_cast<double>(run.totalReplayQpcTicks) *
             millisecondsPerTick / frameCount,
         static_cast<double>(run.totalReadbackQpcTicks) *
             millisecondsPerTick / frameCount,
         static_cast<double>(run.totalUploadQpcTicks) *
             millisecondsPerTick / frameCount,
-        static_cast<double>(run.totalPresentationWaitQpcTicks) *
+        static_cast<double>(run.totalConsumptionWaitQpcTicks) *
             millisecondsPerTick / frameCount,
         static_cast<double>(run.totalRequestWaitQpcTicks) *
             millisecondsPerTick / frameCount);

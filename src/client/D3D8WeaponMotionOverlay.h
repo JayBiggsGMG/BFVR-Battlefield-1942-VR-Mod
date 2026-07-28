@@ -33,7 +33,7 @@ struct D3D8WeaponMotionRestore
 };
 
 // Produces the World transform for stereo replay. The attachment is converted
-// through the current head-cancelled player/body View, then post-multiplied
+// through the current body frame, then post-multiplied
 // directly after the source World and shared unchanged by both eyes.
 [[nodiscard]] bool BuildD3D8WeaponMotionReplayWorld(
     const D3D8WeaponMotionMatrix& sourceWorld,

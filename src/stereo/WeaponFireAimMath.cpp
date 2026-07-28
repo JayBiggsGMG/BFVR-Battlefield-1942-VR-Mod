@@ -106,21 +106,22 @@ void MultiplyRotation(
 namespace bfvr::stereo
 {
 
-std::optional<Matrix4> MakeD3D8VisualWeaponFireMatrix(
+std::optional<Matrix4> MakeD3D8WorldAttachedWeaponFireMatrix(
     const Matrix4& nativeFireMatrix,
-    const Matrix4& visualWeaponViewOffset) noexcept
+    const Matrix4& visualWeaponWorldAttachment) noexcept
 {
     if (!IsRigidTransform(nativeFireMatrix) ||
-        !IsRigidTransform(visualWeaponViewOffset))
+        !IsRigidTransform(visualWeaponWorldAttachment))
     {
         return std::nullopt;
     }
 
     Matrix4 result = nativeFireMatrix;
-    // The visual row-vector chain applies this view-space attachment before
-    // the native player/body orientation. Apply the identical rotation order
-    // to the native fire basis while deliberately retaining its origin.
-    MultiplyRotation(visualWeaponViewOffset, nativeFireMatrix, result);
+    // The visual row-vector chain is nativeWorld * worldAttachment. Apply the
+    // same orientation order while deliberately retaining BF1942's native
+    // muzzle origin: controller translation moves the rendered weapon only;
+    // WeaponFire_Core keeps its own barrel offsets and projectile origin.
+    MultiplyRotation(nativeFireMatrix, visualWeaponWorldAttachment, result);
     result.values[0][3] = 0.0F;
     result.values[1][3] = 0.0F;
     result.values[2][3] = 0.0F;

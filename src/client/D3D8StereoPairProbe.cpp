@@ -1,6 +1,7 @@
 #include "client/D3D8StereoPairProbe.h"
 #include "client/D3D8PresentationConfiguration.h"
 #include "client/D3D8RenderViewPoseHook.h"
+#include "client/D3D8RuntimePosePolicy.h"
 #include "client/ControllerInputOverlay.h"
 #include "client/CrosshairOverlay.h"
 #include "client/MenuPointerOverlay.h"
@@ -20,6 +21,7 @@
 #include "stereo/D3D8FrameCompositionPolicy.h"
 #include "stereo/D3D8SemanticDrawPolicy.h"
 #include "stereo/StereoMath.h"
+#include "stereo/UiPointerMath.h"
 
 #include <MinHook.h>
 
@@ -213,6 +215,14 @@ enum class ProbeMode
     FullFramePresentation
 };
 
+enum class FrameMirrorResult
+{
+    NotMirrored,
+    Mirrored,
+    IntentionallySuppressed,
+    Failed
+};
+
 struct FrameDrawInvocation
 {
     FrameDrawKind kind = FrameDrawKind::Primitive;
@@ -315,15 +325,19 @@ bfvr::D3D8PresentationConfiguration g_presentationConfiguration = {};
 bfvr::D3D8RenderViewPoseHook g_renderViewPoseHook;
 bfvr::d3d8probe::D3D8StereoReadbackApi g_readbackApi = {};
 bfvr::D3D8RuntimeRenderRequest g_runtimeRenderRequest = {};
-bfvr::D3D8RuntimeView g_runtimeHeadReference = {};
-bool g_runtimeHeadReferenceReady = false;
-bool g_gameplayActive = false;
-bool g_frameUiHeadLocked = false;
+bfvr::D3D8RuntimeFramePosePolicy g_runtimeFramePosePolicy = {};
+bool g_loggedImmutableLocalTrackingOrigin = false;
+bfvr::D3D8RuntimeUiPlacement g_frameUiPlacement = {};
+bfvr::stereo::UiMenuAnchorTracker g_menuAnchorTracker = {};
+bool g_nativeMenuActive = false;
 D3DViewport g_runtimeWorldViewport = {};
 bool g_presentationFramePublished = false;
 bool g_offlinePresentation = false;
 bool g_runUntilStopped = false;
+bool g_keepOriginalFlatBackbuffer = false;
 PresentationRunRecord g_presentationRun = {};
+DWORD g_lastPresentationTimingReportAt = 0;
+bool g_presentationTimingStarted = false;
 bool IsFullFrameMode()
 {
     return g_mode != ProbeMode::OneDraw;
@@ -336,42 +350,7 @@ bool IsPresentationMode()
 
 void AppendLog(const wchar_t* format, ...);
 
-bool IsGameplayActive()
-{
-    return g_callbacks.isCaptureEligible != nullptr &&
-        g_callbacks.isCaptureEligible();
-}
-
-void PrepareRuntimeRenderRequestPose()
-{
-    const bool gameplayActive = IsGameplayActive();
-    g_frameUiHeadLocked =
-        gameplayActive &&
-        !bfvr::IsMenuPointerOverlayActive();
-    if (!gameplayActive)
-    {
-        g_gameplayActive = false;
-    }
-
-    const bool gameplayStarted =
-        gameplayActive && !g_gameplayActive;
-    if (!g_runtimeHeadReferenceReady || gameplayStarted)
-    {
-        g_runtimeHeadReference =
-            bfvr::MakeD3D8RuntimeHeadReference(
-                g_runtimeRenderRequest);
-        g_runtimeHeadReferenceReady = true;
-        if (gameplayStarted)
-        {
-            AppendLog(
-                L"Rebased the stereo head reference on gameplay entry so startup/menu head motion cannot displace the first-person scene.");
-        }
-    }
-    g_gameplayActive = gameplayActive;
-    g_renderViewPoseHook.UpdatePose(
-        g_runtimeHeadReference,
-        g_runtimeRenderRequest);
-}
+#include "client/internal/D3D8StereoPairRequestPose.inl"
 
 void AppendLog(const wchar_t* format, ...)
 {
@@ -546,9 +525,9 @@ bool BuildFramePolicyTransforms(DrawStateSnapshot& snapshot)
         {
             return bfvr::BuildD3D8RuntimeStereoTransforms(
                 g_runtimeRenderRequest,
-                g_renderViewPoseHook.EyeReference(
-                    g_runtimeRenderRequest.sequence,
-                    g_runtimeHeadReference),
+                g_runtimeFramePosePolicy.EyeReference(
+                    g_renderViewPoseHook.WasApplied(
+                        g_runtimeRenderRequest.sequence)),
                 snapshot.view,
                 snapshot.projection,
                 snapshot.leftView,
@@ -1061,7 +1040,7 @@ HRESULT InvokeOriginalFrameDraw(
     }
 }
 
-bool MirrorDrawIntoFrame(
+FrameMirrorResult MirrorDrawIntoFrame(
     void* device,
     const FrameDrawInvocation& invocation)
 {
@@ -1069,7 +1048,7 @@ bool MirrorDrawIntoFrame(
         kMaximumFrameDraws)
     {
         InterlockedIncrement(&g_frame.boundedDrawSkips);
-        return true;
+        return FrameMirrorResult::NotMirrored;
     }
 
     DrawStateSnapshot snapshot = {};
@@ -1081,7 +1060,7 @@ bool MirrorDrawIntoFrame(
         InterlockedIncrement(
             &g_frame.excludedByKind[static_cast<std::size_t>(invocation.kind)]);
         ReleaseFrameSourceReferences(snapshot);
-        return true;
+        return FrameMirrorResult::NotMirrored;
     }
     ApplyFrameSemanticPolicy(invocation, snapshot);
     if (IsPresentationMode() &&
@@ -1094,20 +1073,20 @@ bool MirrorDrawIntoFrame(
     {
         InterlockedIncrement(&g_frame.suppressedFirstPersonArmDraws);
         ReleaseFrameSourceReferences(snapshot);
-        return true;
+        return FrameMirrorResult::IntentionallySuppressed;
     }
     if (!PrepareFrameSkinningShaderTransforms(device, snapshot) ||
         !PrepareFrameSpriteShaderTransforms(device, snapshot) ||
         !PrepareFrameTreeSpriteShaderTransforms(device, snapshot))
     {
         ReleaseFrameSourceReferences(snapshot);
-        return false;
+        return FrameMirrorResult::Failed;
     }
 
     if (!CreateAndClearFrameResources(device, snapshot))
     {
         ReleaseFrameSourceReferences(snapshot);
-        return false;
+        return FrameMirrorResult::Failed;
     }
 
     const D3DMatrix* const eyeViews[2] = {&snapshot.leftView, &snapshot.rightView};
@@ -1253,7 +1232,7 @@ bool MirrorDrawIntoFrame(
     if (!layerDrawn || !restored)
     {
         ReleaseFrameOwnedResources();
-        return false;
+        return FrameMirrorResult::Failed;
     }
 
     InterlockedIncrement(&g_frame.mirroredDraws);
@@ -1277,7 +1256,7 @@ bool MirrorDrawIntoFrame(
         static_cast<LONG>(std::min<UINT>(
             invocation.primitiveCount,
             static_cast<UINT>(LONG_MAX))));
-    return true;
+    return FrameMirrorResult::Mirrored;
 }
 
 #include "client/internal/D3D8StereoPairFinalization.inl"
@@ -1286,20 +1265,20 @@ bool CompletePresentationFrame(void* device)
 {
     const bool completed = FinalizeFrameTargets(device);
     const LONG sequence = g_runtimeRenderRequest.sequence;
-    const std::int64_t presentationWaitStarted =
+    const std::int64_t consumptionWaitStarted =
         bfvr::d3d8probe::ReadPerformanceCounter();
-    const bool presented =
+    const bool consumed =
         completed &&
-        g_presentationBridge.WaitForPresentation(sequence, 5000);
-    g_presentationRun.totalPresentationWaitQpcTicks +=
-        bfvr::d3d8probe::ReadPerformanceCounter() - presentationWaitStarted;
-    if (!completed || !presented)
+        g_presentationBridge.WaitForConsumption(sequence, 5000);
+    g_presentationRun.totalConsumptionWaitQpcTicks +=
+        bfvr::d3d8probe::ReadPerformanceCounter() - consumptionWaitStarted;
+    if (!completed || !consumed)
     {
         AppendLog(
-            L"D3D8 continuous presentation frame %ld failed: frameCompleted=%d presentationAcknowledged=%d mirroredDraws=%ld worldEyeDraws=%ld uiLayerDraws=%ld framePublished=%d.",
+            L"D3D8 continuous presentation frame %ld failed: frameCompleted=%d sourceConsumed=%d mirroredDraws=%ld worldEyeDraws=%ld uiLayerDraws=%ld framePublished=%d.",
             sequence,
             completed ? 1 : 0,
-            presented ? 1 : 0,
+            consumed ? 1 : 0,
             InterlockedCompareExchange(
                 &g_frame.mirroredDraws,
                 0,
@@ -1323,6 +1302,17 @@ bool CompletePresentationFrame(void* device)
         g_presentationRun,
         g_frame,
         sequence);
+    if (g_runUntilStopped &&
+        bfvr::d3d8probe::IsContinuousPresentationTimingReportDue(
+            GetTickCount(),
+            g_lastPresentationTimingReportAt))
+    {
+        bfvr::d3d8probe::ReportContinuousPresentationResult(
+            AppendLog,
+            g_presentationRun,
+            g_presentationBridge.LeftWorldWidth(),
+            g_presentationBridge.LeftWorldHeight());
+    }
 
     if (!g_runUntilStopped &&
         GetTickCount() - g_presentationRun.startedAt >=
@@ -1679,9 +1669,10 @@ HRESULT WINAPI HookPresent(
                     : kBoundedRenderRequestTimeoutMs));
         if (renderReady && IsPresentationMode())
         {
-            if (!g_runtimeHeadReferenceReady)
+            if (!g_presentationTimingStarted)
             {
                 g_presentationRun.startedAt = GetTickCount();
+                g_presentationTimingStarted = true;
             }
             // A continuous-mode request can become ready here after a prior
             // non-blocking poll left it pending.  Keep RenderView in lockstep
@@ -1708,27 +1699,37 @@ HRESULT WINAPI HookPresent(
     return result;
 }
 
-void TryMirrorFrameDrawAfterGame(
+FrameMirrorResult TryMirrorFrameDraw(
     void* device,
-    HRESULT originalResult,
     const FrameDrawInvocation& invocation)
 {
     if (!IsFullFrameMode() ||
-        FAILED(originalResult) ||
         device != g_record.device ||
         GetCurrentThreadId() != g_record.deviceThreadId ||
         InterlockedCompareExchange(&g_record.state, 3, 2) != 2)
     {
-        return;
+        return FrameMirrorResult::NotMirrored;
     }
 
     const std::int64_t replayStarted =
         bfvr::d3d8probe::ReadPerformanceCounter();
-    const bool mirrored = MirrorDrawIntoFrame(device, invocation);
+    const FrameMirrorResult result = MirrorDrawIntoFrame(device, invocation);
     g_frame.replayQpcTicks +=
         bfvr::d3d8probe::ReadPerformanceCounter() - replayStarted;
     MemoryBarrier();
-    InterlockedExchange(&g_record.state, mirrored ? 2 : 5);
+    InterlockedExchange(
+        &g_record.state,
+        result == FrameMirrorResult::Failed ? 5 : 2);
+    return result;
+}
+
+bool ShouldSkipOriginalFlatDraw(FrameMirrorResult result)
+{
+    return IsPresentationMode() &&
+        !g_offlinePresentation &&
+        !g_keepOriginalFlatBackbuffer &&
+        (result == FrameMirrorResult::Mirrored ||
+         result == FrameMirrorResult::IntentionallySuppressed);
 }
 
 HRESULT WINAPI HookDrawPrimitive(
@@ -1738,13 +1739,6 @@ HRESULT WINAPI HookDrawPrimitive(
     UINT primitiveCount)
 {
     InterlockedIncrement(&g_record.activeCallbacks);
-    const HRESULT originalResult = g_originalDrawPrimitive == nullptr
-        ? E_FAIL
-        : g_originalDrawPrimitive(
-            device,
-            primitiveType,
-            startVertex,
-            primitiveCount);
     FrameDrawInvocation invocation = {
         FrameDrawKind::Primitive,
         primitiveType,
@@ -1758,7 +1752,11 @@ HRESULT WINAPI HookDrawPrimitive(
         reinterpret_cast<void**>(_AddressOfReturnAddress()),
         kGameDrawPrimitiveReturn,
         9);
-    TryMirrorFrameDrawAfterGame(device, originalResult, invocation);
+    const FrameMirrorResult mirrorResult =
+        TryMirrorFrameDraw(device, invocation);
+    const HRESULT originalResult = ShouldSkipOriginalFlatDraw(mirrorResult)
+        ? S_OK
+        : InvokeOriginalFrameDraw(device, invocation);
     InterlockedDecrement(&g_record.activeCallbacks);
     return originalResult;
 }
@@ -1772,36 +1770,6 @@ HRESULT WINAPI HookDrawIndexedPrimitive(
     UINT primitiveCount)
 {
     InterlockedIncrement(&g_record.activeCallbacks);
-    const bfvr::D3D8WeaponMotionD3D8Api weaponMotionApi = {
-        g_methods.setTransform,
-        g_methods.getTransform,
-        g_methods.getRenderState,
-        g_methods.getVertexShader};
-    bfvr::D3D8WeaponMotionRestore weaponMotionRestore = {};
-    const bool weaponMotionApplied =
-        IsPresentationMode() && !g_offlinePresentation &&
-        bfvr::BeginD3D8WeaponMotionOverlayDraw(
-            device,
-            weaponMotionApi,
-            reinterpret_cast<void**>(_AddressOfReturnAddress()),
-            weaponMotionRestore);
-    const HRESULT originalResult = g_originalDrawIndexedPrimitive == nullptr
-        ? E_FAIL
-        : g_originalDrawIndexedPrimitive(
-            device,
-            primitiveType,
-            minimumVertexIndex,
-            vertexCount,
-            startIndex,
-            primitiveCount);
-    if (weaponMotionApplied)
-    {
-        bfvr::EndD3D8WeaponMotionOverlayDraw(
-            device,
-            weaponMotionApi,
-            weaponMotionRestore);
-    }
-
     if (IsFullFrameMode())
     {
         FrameDrawInvocation invocation = {
@@ -1817,17 +1785,73 @@ HRESULT WINAPI HookDrawIndexedPrimitive(
             reinterpret_cast<void**>(_AddressOfReturnAddress()),
             kGameDrawIndexedPrimitiveReturn,
             10);
+        const bfvr::D3D8WeaponMotionD3D8Api weaponMotionApi = {
+            g_methods.setTransform,
+            g_methods.getTransform,
+            g_methods.getRenderState,
+            g_methods.getVertexShader};
+        bfvr::D3D8WeaponMotionRestore weaponMotionRestore = {};
+        const bool weaponMotionApplied =
+            IsPresentationMode() && !g_offlinePresentation &&
+            bfvr::BeginD3D8WeaponMotionOverlayDraw(
+                device,
+                weaponMotionApi,
+                reinterpret_cast<void**>(_AddressOfReturnAddress()),
+                weaponMotionRestore);
         if (weaponMotionApplied)
         {
+            // Replay starts from the exact source World transform. Restore the
+            // temporary flat-draw attachment before taking its state snapshot;
+            // it is reapplied per eye from this captured rigid attachment.
+            bfvr::EndD3D8WeaponMotionOverlayDraw(
+                device,
+                weaponMotionApi,
+                weaponMotionRestore);
             invocation.replayWeaponMotion = true;
             std::memcpy(
                 &invocation.weaponMotionWorldAttachment,
                 &weaponMotionRestore.worldSpaceAttachment,
                 sizeof(invocation.weaponMotionWorldAttachment));
         }
-        TryMirrorFrameDrawAfterGame(device, originalResult, invocation);
+        const FrameMirrorResult mirrorResult =
+            TryMirrorFrameDraw(device, invocation);
+        HRESULT originalResult = S_OK;
+        if (!ShouldSkipOriginalFlatDraw(mirrorResult))
+        {
+            // The original flat draw remains the fail-safe fallback for an
+            // excluded target, a safety bound, or any BFVR replay failure.
+            // Reapply the same temporary attachment only around that fallback.
+            bfvr::D3D8WeaponMotionRestore fallbackWeaponMotionRestore = {};
+            const bool fallbackWeaponMotionApplied =
+                IsPresentationMode() && !g_offlinePresentation &&
+                bfvr::BeginD3D8WeaponMotionOverlayDraw(
+                    device,
+                    weaponMotionApi,
+                    reinterpret_cast<void**>(_AddressOfReturnAddress()),
+                    fallbackWeaponMotionRestore);
+            originalResult = InvokeOriginalFrameDraw(device, invocation);
+            if (fallbackWeaponMotionApplied)
+            {
+                bfvr::EndD3D8WeaponMotionOverlayDraw(
+                    device,
+                    weaponMotionApi,
+                    fallbackWeaponMotionRestore);
+            }
+        }
+        InterlockedDecrement(&g_record.activeCallbacks);
+        return originalResult;
     }
-    else if (g_mode == ProbeMode::OneDraw &&
+
+    const FrameDrawInvocation invocation = {
+        FrameDrawKind::IndexedPrimitive,
+        primitiveType,
+        0,
+        minimumVertexIndex,
+        vertexCount,
+        startIndex,
+        primitiveCount};
+    const HRESULT originalResult = InvokeOriginalFrameDraw(device, invocation);
+    if (g_mode == ProbeMode::OneDraw &&
         SUCCEEDED(originalResult) &&
         primitiveCount >= kMinimumCandidatePrimitiveCount &&
         device == g_record.device &&
@@ -1876,14 +1900,6 @@ HRESULT WINAPI HookDrawPrimitiveUP(
     UINT vertexStride)
 {
     InterlockedIncrement(&g_record.activeCallbacks);
-    const HRESULT originalResult = g_originalDrawPrimitiveUP == nullptr
-        ? E_FAIL
-        : g_originalDrawPrimitiveUP(
-            device,
-            primitiveType,
-            primitiveCount,
-            vertexData,
-            vertexStride);
     FrameDrawInvocation invocation = {
         FrameDrawKind::PrimitiveUP,
         primitiveType,
@@ -1902,7 +1918,11 @@ HRESULT WINAPI HookDrawPrimitiveUP(
         kGameDrawPrimitiveUPReturn,
         8,
         true);
-    TryMirrorFrameDrawAfterGame(device, originalResult, invocation);
+    const FrameMirrorResult mirrorResult =
+        TryMirrorFrameDraw(device, invocation);
+    const HRESULT originalResult = ShouldSkipOriginalFlatDraw(mirrorResult)
+        ? S_OK
+        : InvokeOriginalFrameDraw(device, invocation);
     InterlockedDecrement(&g_record.activeCallbacks);
     return originalResult;
 }
@@ -1919,18 +1939,6 @@ HRESULT WINAPI HookDrawIndexedPrimitiveUP(
     UINT vertexStride)
 {
     InterlockedIncrement(&g_record.activeCallbacks);
-    const HRESULT originalResult = g_originalDrawIndexedPrimitiveUP == nullptr
-        ? E_FAIL
-        : g_originalDrawIndexedPrimitiveUP(
-            device,
-            primitiveType,
-            minimumVertexIndex,
-            vertexCount,
-            primitiveCount,
-            indexData,
-            indexFormat,
-            vertexData,
-            vertexStride);
     FrameDrawInvocation invocation = {
         FrameDrawKind::IndexedPrimitiveUP,
         primitiveType,
@@ -1947,7 +1955,11 @@ HRESULT WINAPI HookDrawIndexedPrimitiveUP(
     {
         CaptureGameStack(invocation);
     }
-    TryMirrorFrameDrawAfterGame(device, originalResult, invocation);
+    const FrameMirrorResult mirrorResult =
+        TryMirrorFrameDraw(device, invocation);
+    const HRESULT originalResult = ShouldSkipOriginalFlatDraw(mirrorResult)
+        ? S_OK
+        : InvokeOriginalFrameDraw(device, invocation);
     InterlockedDecrement(&g_record.activeCallbacks);
     return originalResult;
 }
@@ -2460,6 +2472,12 @@ void StartD3D8StereoFramePresentationProbe(
             runUntilStopped,
             static_cast<DWORD>(std::size(runUntilStopped))) == 1 &&
         runUntilStopped[0] == L'1';
+    g_keepOriginalFlatBackbuffer = ReadKeepOriginalFlatBackbuffer();
+    if (g_keepOriginalFlatBackbuffer)
+    {
+        AppendLog(
+            L"Retaining the original flat backbuffer because BFVR_KEEP_FLAT_BACKBUFFER=1 or BFVR_DESKTOP_MIRROR=0; stereo replay remains active but the triple-render performance optimization is disabled.");
+    }
     StartStereoProbe(callbacks, ProbeMode::FullFramePresentation);
 }
 

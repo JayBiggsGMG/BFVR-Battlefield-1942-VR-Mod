@@ -31,7 +31,7 @@ bool FinalizeFrameTargets(void* device)
                 g_presentationBridge,
                 g_runtimeRenderRequest,
                 analyzePixels,
-                g_frameUiHeadLocked);
+                g_frameUiPlacement);
     }
     else
     {

@@ -99,6 +99,42 @@ Vec3 Rotate(const Quaternion& orientation, const Vec3& value) noexcept
         Add(Scale(doubledCross, orientation.w), Cross(axis, doubledCross)));
 }
 
+std::optional<float> ExtractYawRadians(const Quaternion& orientation) noexcept
+{
+    const auto normalized = Normalize(orientation);
+    if (!normalized.has_value())
+    {
+        return std::nullopt;
+    }
+    const float sinYaw = 2.0F *
+        (normalized->w * normalized->y + normalized->x * normalized->z);
+    const float cosYaw = 1.0F - 2.0F *
+        (normalized->y * normalized->y + normalized->z * normalized->z);
+    const float yaw = std::atan2(sinYaw, cosYaw);
+    return IsFinite(yaw) ? std::optional<float>(yaw) : std::nullopt;
+}
+
+Quaternion MakeYawQuaternion(float yaw) noexcept
+{
+    const float halfYaw = yaw * 0.5F;
+    return {0.0F, std::sin(halfYaw), 0.0F, std::cos(halfYaw)};
+}
+
+float WrapRadians(float angle) noexcept
+{
+    constexpr float kPi = 3.14159265358979323846F;
+    constexpr float kTwoPi = 2.0F * kPi;
+    while (angle > kPi)
+    {
+        angle -= kTwoPi;
+    }
+    while (angle < -kPi)
+    {
+        angle += kTwoPi;
+    }
+    return angle;
+}
+
 struct AspectFitRect
 {
     float left = 0.0F;
@@ -156,6 +192,87 @@ std::optional<AspectFitRect> MakeAspectFitRect(
 
 namespace bfvr::stereo
 {
+
+std::optional<Pose> MakeYawOnlyUiAnchor(
+    const Pose& headPose) noexcept
+{
+    if (!IsFinite(headPose.position))
+    {
+        return std::nullopt;
+    }
+    const auto yaw = ExtractYawRadians(headPose.orientation);
+    if (!yaw.has_value())
+    {
+        return std::nullopt;
+    }
+    return Pose{headPose.position, MakeYawQuaternion(*yaw)};
+}
+
+bool UpdateUiMenuAnchor(
+    UiMenuAnchorTracker& tracker,
+    const Pose& headPose,
+    std::int64_t predictedDisplayTime,
+    float followStartRadians,
+    float followRadiansPerSecond) noexcept
+{
+    if (predictedDisplayTime <= 0 ||
+        !IsFinite(followStartRadians) ||
+        !IsFinite(followRadiansPerSecond) ||
+        followStartRadians < 0.0F ||
+        followRadiansPerSecond <= 0.0F)
+    {
+        return false;
+    }
+    const auto headAnchor = MakeYawOnlyUiAnchor(headPose);
+    if (!headAnchor.has_value())
+    {
+        return false;
+    }
+    if (!tracker.valid)
+    {
+        tracker.anchor = *headAnchor;
+        tracker.lastPredictedDisplayTime = predictedDisplayTime;
+        tracker.valid = true;
+        return true;
+    }
+
+    const auto currentYaw = ExtractYawRadians(tracker.anchor.orientation);
+    const auto targetYaw = ExtractYawRadians(headAnchor->orientation);
+    if (!currentYaw.has_value() || !targetYaw.has_value())
+    {
+        return false;
+    }
+    const std::int64_t elapsedNanoseconds =
+        predictedDisplayTime - tracker.lastPredictedDisplayTime;
+    tracker.lastPredictedDisplayTime = predictedDisplayTime;
+    if (elapsedNanoseconds <= 0)
+    {
+        return true;
+    }
+    const float elapsedSeconds = std::clamp(
+        static_cast<float>(elapsedNanoseconds) * 0.000000001F,
+        0.0F,
+        0.100F);
+    const float yawDelta = WrapRadians(*targetYaw - *currentYaw);
+    if (std::fabs(yawDelta) <= followStartRadians || elapsedSeconds <= 0.0F)
+    {
+        return true;
+    }
+    const float maximumStep = followRadiansPerSecond * elapsedSeconds;
+    const float appliedStep = std::clamp(
+        yawDelta,
+        -maximumStep,
+        maximumStep);
+    const float newYaw = WrapRadians(*currentYaw + appliedStep);
+    tracker.anchor.position = headAnchor->position;
+    tracker.anchor.orientation = MakeYawQuaternion(newYaw);
+    return true;
+}
+
+void ResetUiMenuAnchor(UiMenuAnchorTracker& tracker) noexcept
+{
+    tracker = {};
+}
 
 std::optional<Pose> MakePoseRelativeToReference(
     const Pose& reference,

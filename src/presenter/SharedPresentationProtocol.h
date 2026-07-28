@@ -11,7 +11,7 @@ namespace bfvr::shared
 using SharedTextureLogCallback = void (*)(void* context, const wchar_t* message);
 
 constexpr DWORD kProtocolMagic = 0x52564642; // "BFVR"
-constexpr DWORD kProtocolVersion = 6;
+constexpr DWORD kProtocolVersion = 7;
 constexpr std::size_t kTextureCount = 3;
 constexpr std::size_t kSharedNameCapacity = 128;
 constexpr DWORD kProducerFlagRuntimeTimedRender = 0x1;
@@ -199,6 +199,10 @@ struct ControlBlock
     // VIEW; native menus use a latched LOCAL pose.
     volatile LONG frameUiReferenceMode =
         static_cast<LONG>(UiReferenceMode::WorldLocked);
+    // When non-zero, the x86 producer supplies the gravity-aligned LOCAL
+    // anchor shared by the world-locked menu panel and controller-ray mapper.
+    volatile LONG frameUiWorldAnchorValid = 0;
+    SharedPresentationPose frameUiWorldAnchor = {};
     PresentationRequirements requirements = {};
     SharedRenderRequest renderRequest = {};
     SharedControllerSample controllerSample = {};

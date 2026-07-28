@@ -24,6 +24,8 @@ bool ReadWorldFxaaEnabled()
         L"BFVR_OPENXR_FXAA",
         value,
         static_cast<DWORD>(std::size(value)));
+    // The owner has accepted this quality path. Disable it only for a
+    // deliberate measured A/B; it must not silently change visual quality.
     return !(length == 1 && value[0] == L'0');
 }
 

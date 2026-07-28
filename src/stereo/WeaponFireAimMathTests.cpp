@@ -46,6 +46,25 @@ bfvr::stereo::Matrix4 PitchUpRightAngle() noexcept
     return result;
 }
 
+bfvr::stereo::Matrix4 MultiplyMatrices(
+    const bfvr::stereo::Matrix4& lhs,
+    const bfvr::stereo::Matrix4& rhs) noexcept
+{
+    bfvr::stereo::Matrix4 result = {};
+    for (std::size_t row = 0; row < 4; ++row)
+    {
+        for (std::size_t column = 0; column < 4; ++column)
+        {
+            for (std::size_t inner = 0; inner < 4; ++inner)
+            {
+                result.values[row][column] +=
+                    lhs.values[row][inner] * rhs.values[inner][column];
+            }
+        }
+    }
+    return result;
+}
+
 bool Expect(
     bool condition,
     std::string_view test,
@@ -78,7 +97,7 @@ bool TestNeutralVisualWeaponPreservesNativeFireMatrix()
     native.values[3][2] = 1697.94F;
 
     const auto adjusted =
-        bfvr::stereo::MakeD3D8VisualWeaponFireMatrix(
+        bfvr::stereo::MakeD3D8WorldAttachedWeaponFireMatrix(
             native,
             IdentityMatrix());
     if (!Expect(adjusted.has_value(), test, "valid rigid input was rejected"))
@@ -108,7 +127,7 @@ bool TestRenderedWeaponForwardBecomesFireForward()
     constexpr std::string_view test = "rendered weapon direction";
     const auto native = IdentityMatrix();
     const auto yawed =
-        bfvr::stereo::MakeD3D8VisualWeaponFireMatrix(
+        bfvr::stereo::MakeD3D8WorldAttachedWeaponFireMatrix(
             native,
             YawRightAngle());
     if (!Expect(yawed.has_value(), test, "yawed weapon was rejected") ||
@@ -123,7 +142,7 @@ bool TestRenderedWeaponForwardBecomesFireForward()
     }
 
     const auto pitched =
-        bfvr::stereo::MakeD3D8VisualWeaponFireMatrix(
+        bfvr::stereo::MakeD3D8WorldAttachedWeaponFireMatrix(
             native,
             PitchUpRightAngle());
     return Expect(pitched.has_value(), test, "pitched weapon was rejected") &&
@@ -135,26 +154,41 @@ bool TestRenderedWeaponForwardBecomesFireForward()
             "rendered +Y barrel did not produce +Y fire forward");
 }
 
-bool TestNativePositionAndBodyFrameArePreserved()
+bool TestNativePositionAndWorldAttachmentArePreserved()
 {
-    constexpr std::string_view test = "native fire body frame";
-    auto native = IdentityMatrix();
-    native.values[0][0] = 0.0F;
-    native.values[0][2] = -1.0F;
-    native.values[2][0] = 1.0F;
-    native.values[2][2] = 0.0F;
+    constexpr std::string_view test = "native fire world attachment";
+    auto native = YawRightAngle();
     native.values[3][0] = -50.0F;
     native.values[3][1] = 7.0F;
     native.values[3][2] = 91.0F;
-    auto visual = YawRightAngle();
+    auto visual = PitchUpRightAngle();
     visual.values[3][0] = 8.0F;
     visual.values[3][1] = -3.0F;
     visual.values[3][2] = 12.0F;
 
     const auto adjusted =
-        bfvr::stereo::MakeD3D8VisualWeaponFireMatrix(
+        bfvr::stereo::MakeD3D8WorldAttachedWeaponFireMatrix(
             native,
             visual);
+    bool orientationMatches = adjusted.has_value();
+    if (orientationMatches)
+    {
+        const auto expected = MultiplyMatrices(native, visual);
+        for (std::size_t row = 0; row < 3 && orientationMatches; ++row)
+        {
+            for (std::size_t column = 0; column < 3; ++column)
+            {
+                if (!NearlyEqual(
+                        adjusted->values[row][column],
+                        expected.values[row][column]))
+                {
+                    orientationMatches = false;
+                    break;
+                }
+            }
+        }
+    }
+
     return Expect(adjusted.has_value(), test, "valid composition was rejected") &&
         Expect(
             NearlyEqual(adjusted->values[3][0], -50.0F) &&
@@ -163,50 +197,43 @@ bool TestNativePositionAndBodyFrameArePreserved()
             test,
             "visual weapon transform changed native fire position") &&
         Expect(
-            NearlyEqual(adjusted->values[2][0], 0.0F) &&
-                NearlyEqual(adjusted->values[2][1], 0.0F) &&
-                NearlyEqual(adjusted->values[2][2], 1.0F),
+            orientationMatches,
             test,
-            "visual orientation was not composed through native body orientation");
+            "visual orientation was not composed after the native world orientation");
 }
 
-bool TestFireOrientationMatchesVisualReplay()
+bool TestFireOrientationMatchesSourceViewConjugatedVisualReplay()
 {
-    constexpr std::string_view test = "visual/fire orientation invariant";
-    auto nativeBody = IdentityMatrix();
-    nativeBody.values[0][0] = 0.0F;
-    nativeBody.values[0][2] = -1.0F;
-    nativeBody.values[2][0] = 1.0F;
-    nativeBody.values[2][2] = 0.0F;
-    auto bodyView = IdentityMatrix();
-    for (std::size_t row = 0; row < 3; ++row)
-    {
-        for (std::size_t column = 0; column < 3; ++column)
-        {
-            bodyView.values[row][column] =
-                nativeBody.values[column][row];
-        }
-    }
-    auto visualViewOffset = PitchUpRightAngle();
+    constexpr std::string_view test =
+        "source-view-conjugated visual/fire orientation invariant";
+    auto nativeWorld = YawRightAngle();
+    nativeWorld.values[3][0] = 31.0F;
+    nativeWorld.values[3][1] = -7.0F;
+    nativeWorld.values[3][2] = 12.0F;
+    auto sourceView = PitchUpRightAngle();
+    sourceView.values[3][0] = 0.31F;
+    sourceView.values[3][1] = -0.47F;
+    sourceView.values[3][2] = 0.86F;
+    auto visualViewOffset = YawRightAngle();
     visualViewOffset.values[3][0] = 0.2F;
     visualViewOffset.values[3][1] = -0.1F;
     visualViewOffset.values[3][2] = 0.4F;
 
-    const auto worldOffset =
+    const auto worldAttachment =
         bfvr::stereo::MakeD3D8WorldSpaceWeaponDelta(
-            bodyView,
+            sourceView,
             visualViewOffset);
-    const auto renderedWorld = worldOffset.has_value()
+    const auto renderedWorld = worldAttachment.has_value()
         ? bfvr::stereo::ApplyWorldSpaceWeaponDeltaToD3D8World(
-            nativeBody,
-            *worldOffset)
+            nativeWorld,
+            *worldAttachment)
         : std::nullopt;
     const auto adjustedFire =
-        bfvr::stereo::MakeD3D8VisualWeaponFireMatrix(
-            nativeBody,
-            visualViewOffset);
+        bfvr::stereo::MakeD3D8WorldAttachedWeaponFireMatrix(
+            nativeWorld,
+            worldAttachment.value_or(IdentityMatrix()));
     if (!Expect(
-            worldOffset.has_value() &&
+            worldAttachment.has_value() &&
                 renderedWorld.has_value() &&
                 adjustedFire.has_value(),
             test,
@@ -229,7 +256,66 @@ bool TestFireOrientationMatchesVisualReplay()
             }
         }
     }
-    return true;
+    if (!Expect(
+            NearlyEqual(adjustedFire->values[3][0], nativeWorld.values[3][0]) &&
+                NearlyEqual(adjustedFire->values[3][1], nativeWorld.values[3][1]) &&
+                NearlyEqual(adjustedFire->values[3][2], nativeWorld.values[3][2]),
+            test,
+            "controller attachment moved the native muzzle origin"))
+    {
+        return false;
+    }
+
+    const auto actualVisual = MultiplyMatrices(
+        *renderedWorld,
+        sourceView);
+    const auto expectedVisual = MultiplyMatrices(
+        MultiplyMatrices(nativeWorld, sourceView),
+        visualViewOffset);
+    for (std::size_t row = 0; row < 4; ++row)
+    {
+        for (std::size_t column = 0; column < 4; ++column)
+        {
+            if (!Expect(
+                    NearlyEqual(
+                        actualVisual.values[row][column],
+                        expectedVisual.values[row][column]),
+                    test,
+                    "world attachment did not reproduce sourceView * viewOffset"))
+            {
+                return false;
+            }
+        }
+    }
+
+    const auto bodyFrameAttachment =
+        bfvr::stereo::MakeD3D8WorldSpaceWeaponDelta(
+            IdentityMatrix(),
+            visualViewOffset);
+    const auto bodyFrameWorld =
+        bodyFrameAttachment.has_value()
+        ? bfvr::stereo::ApplyWorldSpaceWeaponDeltaToD3D8World(
+            nativeWorld,
+            *bodyFrameAttachment)
+        : std::nullopt;
+    bool distinguishesSourceView = false;
+    if (bodyFrameWorld.has_value())
+    {
+        for (std::size_t row = 0; row < 3; ++row)
+        {
+            for (std::size_t column = 0; column < 3; ++column)
+            {
+                distinguishesSourceView = distinguishesSourceView ||
+                    !NearlyEqual(
+                        renderedWorld->values[row][column],
+                        bodyFrameWorld->values[row][column]);
+            }
+        }
+    }
+    return Expect(
+        distinguishesSourceView,
+        test,
+        "fixture did not distinguish the old body-frame attachment order");
 }
 
 bool TestInvalidInputsFailClosed()
@@ -238,7 +324,7 @@ bool TestInvalidInputsFailClosed()
     auto scaledNative = IdentityMatrix();
     scaledNative.values[0][0] = 2.0F;
     if (!Expect(
-            !bfvr::stereo::MakeD3D8VisualWeaponFireMatrix(
+            !bfvr::stereo::MakeD3D8WorldAttachedWeaponFireMatrix(
                  scaledNative,
                  IdentityMatrix()).has_value(),
             test,
@@ -250,7 +336,7 @@ bool TestInvalidInputsFailClosed()
     auto scaledVisual = IdentityMatrix();
     scaledVisual.values[1][1] = 0.5F;
     if (!Expect(
-            !bfvr::stereo::MakeD3D8VisualWeaponFireMatrix(
+            !bfvr::stereo::MakeD3D8WorldAttachedWeaponFireMatrix(
                  IdentityMatrix(),
                  scaledVisual).has_value(),
             test,
@@ -262,7 +348,7 @@ bool TestInvalidInputsFailClosed()
     auto reflected = IdentityMatrix();
     reflected.values[2][2] = -1.0F;
     if (!Expect(
-            !bfvr::stereo::MakeD3D8VisualWeaponFireMatrix(
+            !bfvr::stereo::MakeD3D8WorldAttachedWeaponFireMatrix(
                  IdentityMatrix(),
                  reflected).has_value(),
             test,
@@ -275,7 +361,7 @@ bool TestInvalidInputsFailClosed()
     nonFinite.values[0][0] =
         std::numeric_limits<float>::quiet_NaN();
     return Expect(
-        !bfvr::stereo::MakeD3D8VisualWeaponFireMatrix(
+        !bfvr::stereo::MakeD3D8WorldAttachedWeaponFireMatrix(
              IdentityMatrix(),
              nonFinite).has_value(),
         test,
@@ -289,8 +375,8 @@ int main()
     const bool passed =
         TestNeutralVisualWeaponPreservesNativeFireMatrix() &&
         TestRenderedWeaponForwardBecomesFireForward() &&
-        TestNativePositionAndBodyFrameArePreserved() &&
-        TestFireOrientationMatchesVisualReplay() &&
+        TestNativePositionAndWorldAttachmentArePreserved() &&
+        TestFireOrientationMatchesSourceViewConjugatedVisualReplay() &&
         TestInvalidInputsFailClosed();
     if (!passed)
     {
