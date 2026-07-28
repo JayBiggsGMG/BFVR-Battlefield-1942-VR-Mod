@@ -577,6 +577,30 @@ int RunPresenter(
                     continue;
                 }
 
+                // BF1942 can legitimately finish a Present without an
+                // eligible replay draw while it leaves a round, loads a
+                // server, or rebuilds the spawn UI.  The x86 producer will
+                // then request a newer runtime frame rather than publishing
+                // pixels for the old one.  Do not wait forever for that
+                // obsolete sequence: keep the OpenXR session alive, discard
+                // only the unanswered request, and service the latest one.
+                const LONG newestReadySequence = InterlockedCompareExchange(
+                    &block->renderReadySequence,
+                    0,
+                    0);
+                if (newestReadySequence > pendingSourceSequence)
+                {
+                    fwprintf(
+                        g_output,
+                        L"[PRESENTER] Superseding unanswered transition source frame %ld with newer render request %ld; OpenXR session remains active.\n",
+                        pendingSourceSequence,
+                        newestReadySequence);
+                    fflush(g_output);
+                    pendingSourceSequence = 0;
+                    sourceGapReported = false;
+                    continue;
+                }
+
                 // Do not leave an OpenXR frame open merely because BF1942 has
                 // no eligible world draw during death, spectator, or loading.
                 // Re-submit the last accepted textures while preserving the

@@ -1,8 +1,6 @@
 #include "client/WeaponAimOverlay.h"
 
-#include "client/ControllerInputCache.h"
 #include "client/WeaponPoseRuntimeCache.h"
-#include "presenter/SharedPresentationProtocol.h"
 #include "stereo/WeaponFireAimMath.h"
 
 #include <MinHook.h>
@@ -36,8 +34,7 @@ constexpr std::array<std::ptrdiff_t, 5> kExpectedCallerReturnRvas = {
 constexpr std::ptrdiff_t kPlayerManagerGlobalRva = 0x0057D76C;
 constexpr std::size_t kPlayerManagerLocalPlayerOffset = 0x54;
 constexpr std::size_t kBFPlayerIsAliveOffset = 0xA9;
-constexpr DWORD kControllerHandRight = 1;
-constexpr DWORD kControllerSampleMaximumAgeMs = 125;
+constexpr DWORD kVisualWeaponPoseMaximumAgeMs = 125;
 constexpr std::size_t kRecordCapacity = 16;
 constexpr BYTE kWeaponFireCorePrefix[] = {
     0x81, 0xEC, 0xB8, 0x01, 0x00, 0x00, 0x53, 0x55,
@@ -159,7 +156,7 @@ public:
         }
         hookEnabled = true;
         WriteLog(
-            L"Controller-directed fire overlay armed at 0x0053CDB0. Only the five verified branches in WeaponFire_Ordinary (default, barrel zero, indexed loop, all barrels, or rotating barrel) can receive the exact fresh world attachment already used by the rendered weapon for the alive local infantry player. BF1942 retains the native fire-matrix position, weapon/barrel muzzle offsets, spread, cadence, projectile creation, and networking path; every failed gate forwards the original matrix.");
+            L"Controller-directed fire overlay armed at 0x0053CDB0. Only the five verified branches in WeaponFire_Ordinary (default, barrel zero, indexed loop, all barrels, or rotating barrel) can receive the exact fresh world attachment already used by the rendered weapon for the alive local infantry player. It uses that displayed attachment directly rather than requiring a same-generation controller sample, preventing normal inter-frame timing from falling back to the native center matrix. BF1942 retains the native fire-matrix position, weapon/barrel muzzle offsets, spread, cadence, projectile creation, and networking path; unsupported calls still forward unchanged.");
     }
 
     void Stop()
@@ -242,6 +239,13 @@ private:
         if (!IsExpectedCaller(callerReturn))
         {
             InterlockedIncrement(&wrongCallerCalls);
+            if (IsLocalAliveActor(actor) &&
+                InterlockedIncrement(&loggedLocalFallbacks) <= 8)
+            {
+                WriteLog(
+                    L"Local WeaponFire_Core call forwarded unchanged because its return address %p is outside the five profiled ordinary-infantry branches.",
+                    callerReturn);
+            }
             originalFire(weapon, actor, matrix, barrelIndex);
             return;
         }
@@ -258,47 +262,19 @@ private:
             return;
         }
 
-        bfvr::D3D8RuntimeControllerSample sample = {};
-        bfvr::D3D8RuntimeView matchingHead = {};
-        LONG controllerGeneration = 0;
-        if (!bfvr::ReadFreshAcceptedWeaponTracking(
-                sample,
-                matchingHead,
-                controllerGeneration,
-                kControllerSampleMaximumAgeMs))
-        {
-            InterlockedIncrement(&staleTracking);
-            originalFire(weapon, actor, matrix, barrelIndex);
-            return;
-        }
-        const auto& right = sample.hands[kControllerHandRight];
-        constexpr DWORD kRequiredGripFlags =
-            bfvr::shared::kControllerHandFlagGripActive |
-            bfvr::shared::kControllerHandFlagGripPositionValid |
-            bfvr::shared::kControllerHandFlagGripOrientationValid |
-            bfvr::shared::kControllerHandFlagGripPositionTracked |
-            bfvr::shared::kControllerHandFlagGripOrientationTracked;
-        if ((right.flags & kRequiredGripFlags) != kRequiredGripFlags)
-        {
-            InterlockedIncrement(&invalidGripTracking);
-            originalFire(weapon, actor, matrix, barrelIndex);
-            return;
-        }
-
         bfvr::stereo::Matrix4 visualWeaponWorldAttachment = {};
         LONG visualControllerGeneration = 0;
         if (!bfvr::ReadFreshWeaponWorldAttachment(
                 visualWeaponWorldAttachment,
                 visualControllerGeneration,
-                kControllerSampleMaximumAgeMs))
+                kVisualWeaponPoseMaximumAgeMs))
         {
             InterlockedIncrement(&missingVisualWeaponPose);
-            originalFire(weapon, actor, matrix, barrelIndex);
-            return;
-        }
-        if (visualControllerGeneration != controllerGeneration)
-        {
-            InterlockedIncrement(&visualGenerationMismatches);
+            if (InterlockedIncrement(&loggedLocalFallbacks) <= 8)
+            {
+                WriteLog(
+                    L"Local WeaponFire_Core call forwarded unchanged because no fresh displayed-weapon attachment was available.");
+            }
             originalFire(weapon, actor, matrix, barrelIndex);
             return;
         }
@@ -310,6 +286,11 @@ private:
         if (!adjusted.has_value())
         {
             InterlockedIncrement(&mathRejections);
+            if (InterlockedIncrement(&loggedLocalFallbacks) <= 8)
+            {
+                WriteLog(
+                    L"Local WeaponFire_Core call forwarded unchanged because the displayed-weapon attachment could not be composed with the native fire matrix.");
+            }
             originalFire(weapon, actor, matrix, barrelIndex);
             return;
         }
@@ -318,7 +299,7 @@ private:
             nativeMatrix,
             *adjusted,
             barrelIndex,
-            controllerGeneration,
+            visualControllerGeneration,
             visualControllerGeneration);
         InterlockedIncrement(&adjustedCalls);
         originalFire(weapon, actor, &*adjusted, barrelIndex);
@@ -398,16 +379,13 @@ private:
     void Report() const
     {
         WriteLog(
-            L"Controller-directed fire overlay stopped: observed=%ld adjusted=%ld wrongCaller=%ld nonLocalOrDead=%ld unreadable=%ld missingVisualWeaponPose=%ld visualGenerationMismatch=%ld staleTracking=%ld invalidGripTracking=%ld mathRejected=%ld.",
+            L"Controller-directed fire overlay stopped: observed=%ld adjusted=%ld wrongCaller=%ld nonLocalOrDead=%ld unreadable=%ld missingVisualWeaponPose=%ld mathRejected=%ld.",
             observedCalls,
             adjustedCalls,
             wrongCallerCalls,
             nonLocalOrDeadCalls,
             unreadableMatrices,
             missingVisualWeaponPose,
-            visualGenerationMismatches,
-            staleTracking,
-            invalidGripTracking,
             mathRejections);
         const LONG maximum = std::min(
             InterlockedCompareExchange(
@@ -501,9 +479,7 @@ private:
     volatile LONG nonLocalOrDeadCalls = 0;
     volatile LONG unreadableMatrices = 0;
     volatile LONG missingVisualWeaponPose = 0;
-    volatile LONG visualGenerationMismatches = 0;
-    volatile LONG staleTracking = 0;
-    volatile LONG invalidGripTracking = 0;
+    volatile LONG loggedLocalFallbacks = 0;
     volatile LONG mathRejections = 0;
     volatile LONG nextRecordSequence = 0;
     bool ownsMinHook = false;

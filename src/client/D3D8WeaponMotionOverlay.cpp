@@ -1,5 +1,6 @@
 #include "client/D3D8WeaponMotionOverlay.h"
 
+#include "client/BFSoldierVrMotionFilter.h"
 #include "client/ControllerInputCache.h"
 #include "client/WeaponPoseRuntimeCache.h"
 #include "presenter/SharedPresentationProtocol.h"
@@ -28,6 +29,7 @@ constexpr DWORD kGenericMeshDrawReturn = 0x0062B83FU;
 constexpr DWORD kControllerHandLeft = 0;
 constexpr DWORD kControllerHandRight = 1;
 constexpr DWORD kControllerSampleMaximumAgeMs = 125;
+constexpr DWORD kLegacyRecoilMaximumAgeMs = 125;
 // The BF1942 Mod Development Toolkit defines map/object coordinates in metres.
 constexpr float kBf1942WorldUnitsPerMeter = 1.0F;
 constexpr wchar_t kEnableWeaponMotionEnvironment[] =
@@ -54,7 +56,12 @@ struct OverlayRecord
     volatile LONG restoreFailures = 0;
     volatile LONG calibrationBegins = 0;
     volatile LONG calibrationCommits = 0;
+    volatile LONG legacyRecoilSteps = 0;
+    volatile LONG loggedLegacyRecoilSteps = 0;
     LONG lastCalibrationGeneration = 0;
+    LONG lastLegacyRecoilSequence = 0;
+    const void* legacyRecoilSoldier = nullptr;
+    bfvr::stereo::WeaponRecoilAngles accumulatedLegacyRecoil = {};
     bool leftMenuWasDown = false;
     bool developmentCalibrationEnabled = false;
     CalibrationState calibrationState = CalibrationState::Tracking;
@@ -469,10 +476,70 @@ bool ReadGripDelta(
         InterlockedIncrement(&g_overlay.rejectedTrackingSamples);
         return false;
     }
+    bfvr::stereo::Matrix4 recoilAdjustedViewOffset = *currentViewOffset;
+    bfvr::BFSoldierVrLegacyRecoil legacyRecoil = {};
+    if (bfvr::ReadFreshBFSoldierVrLegacyRecoil(
+            legacyRecoil,
+            kLegacyRecoilMaximumAgeMs))
+    {
+        if (g_overlay.legacyRecoilSoldier != legacyRecoil.soldier)
+        {
+            // A new BFSoldier is a respawn/new local-player lifetime. The
+            // native flat camera receives a fresh recoil state too, so the
+            // controller-held weapon must not inherit the prior soldier's
+            // accumulated angle.
+            g_overlay.legacyRecoilSoldier = legacyRecoil.soldier;
+            g_overlay.lastLegacyRecoilSequence = 0;
+            g_overlay.accumulatedLegacyRecoil = {};
+        }
+        if (legacyRecoil.sequence != 0 &&
+            legacyRecoil.sequence != g_overlay.lastLegacyRecoilSequence)
+        {
+            const auto accumulated = bfvr::stereo::AccumulateD3D8WeaponRecoil(
+                g_overlay.accumulatedLegacyRecoil,
+                legacyRecoil.pitch,
+                legacyRecoil.yaw);
+            if (!accumulated.has_value())
+            {
+                bfvr::ClearWeaponViewOffset();
+                InterlockedIncrement(&g_overlay.rejectedTrackingSamples);
+                return false;
+            }
+            g_overlay.accumulatedLegacyRecoil = *accumulated;
+            g_overlay.lastLegacyRecoilSequence = legacyRecoil.sequence;
+            InterlockedIncrement(&g_overlay.legacyRecoilSteps);
+            if (InterlockedIncrement(&g_overlay.loggedLegacyRecoilSteps) <= 8)
+            {
+                AppendLog(
+                    L"Applied native weapon recoil step sequence=%ld impulse=(%.7f,%.7f) accumulated=(%.7f,%.7f) soldier=%p.",
+                    legacyRecoil.sequence,
+                    legacyRecoil.pitch,
+                    legacyRecoil.yaw,
+                    g_overlay.accumulatedLegacyRecoil.pitch,
+                    g_overlay.accumulatedLegacyRecoil.yaw,
+                    legacyRecoil.soldier);
+            }
+        }
+        const auto recoilAdjusted =
+            bfvr::stereo::MakeD3D8AbsoluteGripWeaponRecoilDelta(
+                g_overlay.controllerToWeaponAttachment,
+                currentGrip,
+                kBf1942WorldUnitsPerMeter,
+                g_overlay.accumulatedLegacyRecoil.pitch,
+                g_overlay.accumulatedLegacyRecoil.yaw);
+        if (!recoilAdjusted.has_value())
+        {
+            bfvr::ClearWeaponViewOffset();
+            InterlockedIncrement(&g_overlay.rejectedTrackingSamples);
+            return false;
+        }
+        recoilAdjustedViewOffset = *recoilAdjusted;
+    }
+
     bfvr::stereo::Matrix4 currentWorldAttachment = {};
     bfvr::stereo::Matrix4 currentReplayWorldAttachment = {};
     const bool currentAttachmentsBuilt = makeWorldAttachment(
-        *currentViewOffset,
+        recoilAdjustedViewOffset,
         currentWorldAttachment,
         currentReplayWorldAttachment);
     if (!currentAttachmentsBuilt)
@@ -482,7 +549,7 @@ bool ReadGripDelta(
         return false;
     }
     bfvr::PublishWeaponVisualPose(
-        *currentViewOffset,
+        recoilAdjustedViewOffset,
         currentWorldAttachment,
         generation);
     worldSpaceAttachment = currentWorldAttachment;
@@ -605,8 +672,8 @@ void StartD3D8WeaponMotionOverlay(
     InterlockedExchange(&g_overlay.enabled, 1);
     AppendLog(
         g_overlay.developmentCalibrationEnabled
-            ? L"Weapon motion overlay armed with explicit development calibration enabled. Visual and fire alignment use the current body frame and absolute LOCAL controller grip; Left Menu may only change the attachment when BFVR_ENABLE_WEAPON_CALIBRATION=1 was deliberately set."
-            : L"Weapon motion overlay armed with a fixed PID 6632 attachment converted to the current body frame. The controller delta uses absolute LOCAL grip with no headset input, so no spawn, head, controller, menu, or reset sample can create a weapon basis. Controller reach is not clamped and no viewmodel scale/perspective morph is applied. Invalid tracking leaves the game draw untouched.");
+            ? L"Weapon motion overlay armed with explicit development calibration enabled. Visual and fire alignment use the current body frame and absolute LOCAL controller grip; fresh legacy recoil rotates only the held weapon and matching fire direction, while Left Menu may only change the attachment when BFVR_ENABLE_WEAPON_CALIBRATION=1 was deliberately set."
+            : L"Weapon motion overlay armed with a fixed PID 6632 attachment converted to the current body frame. The controller delta uses absolute LOCAL grip with no headset input, so no spawn, head, controller, menu, or reset sample can create a weapon basis. Fresh legacy recoil rotates only the held weapon and matching fire direction; controller reach is not clamped and no viewmodel scale/perspective morph is applied. Invalid tracking leaves the game draw untouched.");
 }
 
 void StopD3D8WeaponMotionOverlay()
@@ -620,10 +687,13 @@ void StopD3D8WeaponMotionOverlay()
     InterlockedExchange(&g_overlay.enabled, 0);
     bfvr::ClearWeaponViewOffset();
     AppendLog(
-        L"Weapon motion overlay stopped: candidates=%ld calibrated=%ld applied=%ld sourceReadFailures=%ld stale=%ld rejectedTracking=%ld adjustedSetFailures=%ld restoreFailures=%ld calibrationBegins=%ld calibrationCommits=%ld.",
+        L"Weapon motion overlay stopped: candidates=%ld calibrated=%ld applied=%ld legacyRecoilSteps=%ld accumulatedRecoil=(%.6f,%.6f) sourceReadFailures=%ld stale=%ld rejectedTracking=%ld adjustedSetFailures=%ld restoreFailures=%ld calibrationBegins=%ld calibrationCommits=%ld.",
         InterlockedCompareExchange(&g_overlay.classifiedCandidates, 0, 0),
         InterlockedCompareExchange(&g_overlay.calibratedFrames, 0, 0),
         InterlockedCompareExchange(&g_overlay.appliedDraws, 0, 0),
+        InterlockedCompareExchange(&g_overlay.legacyRecoilSteps, 0, 0),
+        g_overlay.accumulatedLegacyRecoil.pitch,
+        g_overlay.accumulatedLegacyRecoil.yaw,
         InterlockedCompareExchange(&g_overlay.sourceStateReadFailures, 0, 0),
         InterlockedCompareExchange(&g_overlay.staleTrackingSamples, 0, 0),
         InterlockedCompareExchange(&g_overlay.rejectedTrackingSamples, 0, 0),

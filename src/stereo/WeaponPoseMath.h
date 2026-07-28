@@ -7,6 +7,12 @@
 namespace bfvr::stereo
 {
 
+struct WeaponRecoilAngles
+{
+    float pitch = 0.0F;
+    float yaw = 0.0F;
+};
+
 // Produces the post-multiplied rigid attachment transform from a calibrated
 // controller grip pose to the current controller grip pose, expressed in the
 // current HMD's view space. All poses are OpenXR local-space poses at their
@@ -89,6 +95,29 @@ namespace bfvr::stereo
     const Matrix4& absoluteGripToWeaponAttachment,
     const Pose& currentGrip,
     float worldUnitsPerMeter) noexcept;
+
+// Reconstructs the current weapon delta with native recoil rotated around the
+// tracked grip pivot. This composes attachment * recoil * grip, rather than
+// rotating attachment itself: the controller grip stays fixed while the gun
+// tilts around it. The direct BFSoldier degree-angle values are converted once
+// and inverted because a camera View and physical gun use opposite senses.
+[[nodiscard]] std::optional<Matrix4>
+MakeD3D8AbsoluteGripWeaponRecoilDelta(
+    const Matrix4& absoluteGripToWeaponAttachment,
+    const Pose& currentGrip,
+    float worldUnitsPerMeter,
+    float pitch,
+    float yaw) noexcept;
+
+// The flat camera consumes a time-ordered sequence of native recoil impulses.
+// BFVR accumulates those exact finite impulses into a weapon-relative angle so
+// the player counteracts the weapon with the controller rather than moving the
+// HMD. No generic recoil curve is introduced.
+[[nodiscard]] std::optional<WeaponRecoilAngles>
+AccumulateD3D8WeaponRecoil(
+    const WeaponRecoilAngles& current,
+    float pitchImpulse,
+    float yawImpulse) noexcept;
 
 // Converts a view-space delta through the supplied frame View into the exact
 // World-space attachment needed for that draw. For a held weapon the frame is

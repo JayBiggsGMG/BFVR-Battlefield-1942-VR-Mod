@@ -502,6 +502,88 @@ std::optional<Matrix4> MakeD3D8AbsoluteGripWeaponDelta(
     return IsFinite(result) ? std::optional<Matrix4>(result) : std::nullopt;
 }
 
+std::optional<Matrix4> MakeD3D8AbsoluteGripWeaponRecoilDelta(
+    const Matrix4& absoluteGripToWeaponAttachment,
+    const Pose& currentGrip,
+    float worldUnitsPerMeter,
+    float pitch,
+    float yaw) noexcept
+{
+    if (!IsFinite(absoluteGripToWeaponAttachment) || !std::isfinite(pitch) ||
+        !std::isfinite(yaw))
+    {
+        return std::nullopt;
+    }
+    const auto gripTransform =
+        MakeD3D8RigidTransform(currentGrip, worldUnitsPerMeter);
+    if (!gripTransform.has_value())
+    {
+        return std::nullopt;
+    }
+    // BFSoldier's recoil table/accessors are in the engine's degree-angle
+    // convention. D3D matrix trigonometry is radians. Accumulate the native
+    // values unchanged, then convert exactly once at this presentation edge.
+    constexpr float kDegreesToRadians = 0.01745329251994329577F;
+    // A camera View rotates the world in the inverse sense of a physical
+    // held-gun transform. Preserve the native per-weapon magnitude/timing but
+    // invert both axes while moving the effect from the legacy camera to the
+    // weapon.
+    const float pitchRadians = -pitch * kDegreesToRadians;
+    const float yawRadians = -yaw * kDegreesToRadians;
+    const float pitchCosine = std::cos(pitchRadians);
+    const float pitchSine = std::sin(pitchRadians);
+    const float yawCosine = std::cos(yawRadians);
+    const float yawSine = std::sin(yawRadians);
+    if (!IsFinite(pitchCosine) || !IsFinite(pitchSine) ||
+        !IsFinite(yawCosine) || !IsFinite(yawSine))
+    {
+        return std::nullopt;
+    }
+
+    Matrix4 pitchRotation = {};
+    pitchRotation.values[0][0] = 1.0F;
+    pitchRotation.values[1][1] = pitchCosine;
+    pitchRotation.values[1][2] = -pitchSine;
+    pitchRotation.values[2][1] = pitchSine;
+    pitchRotation.values[2][2] = pitchCosine;
+    pitchRotation.values[3][3] = 1.0F;
+
+    Matrix4 yawRotation = {};
+    yawRotation.values[0][0] = yawCosine;
+    yawRotation.values[0][2] = yawSine;
+    yawRotation.values[1][1] = 1.0F;
+    yawRotation.values[2][0] = -yawSine;
+    yawRotation.values[2][2] = yawCosine;
+    yawRotation.values[3][3] = 1.0F;
+
+    const Matrix4 recoilRotation = MultiplyMatrices(pitchRotation, yawRotation);
+    // A maps the weapon's authored local origin into grip local space. Put the
+    // recoil immediately after A, then apply the live grip, so the local point
+    // attached to the controller remains at the tracked grip translation.
+    const Matrix4 result = MultiplyMatrices(
+        MultiplyMatrices(absoluteGripToWeaponAttachment, recoilRotation),
+        *gripTransform);
+    return IsFinite(result) ? std::optional<Matrix4>(result) : std::nullopt;
+}
+
+std::optional<WeaponRecoilAngles> AccumulateD3D8WeaponRecoil(
+    const WeaponRecoilAngles& current,
+    float pitchImpulse,
+    float yawImpulse) noexcept
+{
+    if (!std::isfinite(current.pitch) || !std::isfinite(current.yaw) ||
+        !std::isfinite(pitchImpulse) || !std::isfinite(yawImpulse))
+    {
+        return std::nullopt;
+    }
+    const WeaponRecoilAngles result = {
+        current.pitch + pitchImpulse,
+        current.yaw + yawImpulse};
+    return std::isfinite(result.pitch) && std::isfinite(result.yaw)
+        ? std::optional<WeaponRecoilAngles>(result)
+        : std::nullopt;
+}
+
 std::optional<Matrix4> MakeD3D8WorldSpaceWeaponDelta(
     const Matrix4& frameView,
     const Matrix4& frameViewDelta) noexcept

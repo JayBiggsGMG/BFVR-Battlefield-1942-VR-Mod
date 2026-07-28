@@ -65,6 +65,22 @@ bfvr::stereo::Matrix4 MultiplyMatrices(
     return result;
 }
 
+bfvr::stereo::Vec4 TransformRowVector(
+    const bfvr::stereo::Vec4& vector,
+    const bfvr::stereo::Matrix4& matrix) noexcept
+{
+    const float source[4] = {vector.x, vector.y, vector.z, vector.w};
+    float result[4] = {};
+    for (std::size_t column = 0; column < 4; ++column)
+    {
+        for (std::size_t row = 0; row < 4; ++row)
+        {
+            result[column] += source[row] * matrix.values[row][column];
+        }
+    }
+    return {result[0], result[1], result[2], result[3]};
+}
+
 bool Expect(
     bool condition,
     std::string_view test,
@@ -152,6 +168,89 @@ bool TestRenderedWeaponForwardBecomesFireForward()
                 NearlyEqual(pitched->values[2][2], 0.0F),
             test,
             "rendered +Y barrel did not produce +Y fire forward");
+}
+
+bool TestLegacyCameraRecoilBecomesHeldWeaponRecoil()
+{
+    constexpr std::string_view test = "legacy recoil transferred to weapon";
+    auto weaponToGrip = IdentityMatrix();
+    weaponToGrip.values[3][0] = -0.24F;
+    weaponToGrip.values[3][1] = 0.08F;
+    weaponToGrip.values[3][2] = -0.51F;
+    const bfvr::stereo::Pose grip = {
+        {0.75F, 1.20F, -1.75F},
+        {0.0F, 0.0F, 0.0F, 1.0F}};
+    const auto accumulatedOnce = bfvr::stereo::AccumulateD3D8WeaponRecoil(
+        {},
+        0.20F,
+        -0.05F);
+    const auto accumulatedTwice = accumulatedOnce.has_value()
+        ? bfvr::stereo::AccumulateD3D8WeaponRecoil(
+            *accumulatedOnce,
+            0.10F,
+            0.02F)
+        : std::nullopt;
+    if (!Expect(
+            accumulatedTwice.has_value() &&
+                NearlyEqual(accumulatedTwice->pitch, 0.30F) &&
+                NearlyEqual(accumulatedTwice->yaw, -0.03F),
+            test,
+            "native recoil impulses were not accumulated exactly once"))
+    {
+        return false;
+    }
+
+    const auto recoiled =
+        bfvr::stereo::MakeD3D8AbsoluteGripWeaponRecoilDelta(
+            weaponToGrip,
+            grip,
+            1.0F,
+            90.0F,
+            0.0F);
+    if (!Expect(recoiled.has_value(), test, "valid recoil was rejected") ||
+        !Expect(
+            NearlyEqual(recoiled->values[2][0], 0.0F) &&
+                NearlyEqual(recoiled->values[2][1], -1.0F) &&
+                NearlyEqual(recoiled->values[2][2], 0.0F),
+            test,
+            "positive legacy pitch did not rotate the physical gun in the inverse camera sense") ||
+        !Expect(
+            [&]
+            {
+                // weaponToGrip maps this local anchor to the grip origin.
+                // It must remain at the live grip after the gun recoils.
+                const auto anchor = TransformRowVector(
+                    {0.24F, -0.08F, 0.51F, 1.0F},
+                    *recoiled);
+                return NearlyEqual(anchor.x, 0.75F) &&
+                    NearlyEqual(anchor.y, 1.20F) &&
+                    NearlyEqual(anchor.z, 1.75F) &&
+                    NearlyEqual(anchor.w, 1.0F);
+            }(),
+            test,
+            "recoil rotation moved the controller grip anchor"))
+    {
+        return false;
+    }
+
+    const auto invalid = bfvr::stereo::MakeD3D8AbsoluteGripWeaponRecoilDelta(
+        weaponToGrip,
+        grip,
+        1.0F,
+        std::numeric_limits<float>::quiet_NaN(),
+        0.0F);
+    const auto invalidAccumulation = bfvr::stereo::AccumulateD3D8WeaponRecoil(
+        {},
+        std::numeric_limits<float>::quiet_NaN(),
+        0.0F);
+    return Expect(
+        !invalid.has_value(),
+        test,
+        "non-finite engine recoil rotation was accepted") &&
+        Expect(
+            !invalidAccumulation.has_value(),
+            test,
+            "non-finite engine recoil impulse was accepted");
 }
 
 bool TestNativePositionAndWorldAttachmentArePreserved()
@@ -375,6 +474,7 @@ int main()
     const bool passed =
         TestNeutralVisualWeaponPreservesNativeFireMatrix() &&
         TestRenderedWeaponForwardBecomesFireForward() &&
+        TestLegacyCameraRecoilBecomesHeldWeaponRecoil() &&
         TestNativePositionAndWorldAttachmentArePreserved() &&
         TestFireOrientationMatchesSourceViewConjugatedVisualReplay() &&
         TestInvalidInputsFailClosed();

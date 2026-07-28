@@ -1,6 +1,7 @@
 #include "client/D3D8StereoPairProbe.h"
 #include "client/D3D8PresentationConfiguration.h"
 #include "client/D3D8RenderViewPoseHook.h"
+#include "client/BFSoldierVrMotionFilter.h"
 #include "client/D3D8RuntimePosePolicy.h"
 #include "client/ControllerInputOverlay.h"
 #include "client/CrosshairOverlay.h"
@@ -109,6 +110,7 @@ constexpr DWORD kCaptureTimeoutMs = 75000;
 constexpr DWORD kPresentationDurationMs = 60000;
 constexpr DWORD kBoundedRenderRequestTimeoutMs = 2000;
 constexpr DWORD kContinuousRenderRequestTimeoutMs = 0;
+constexpr DWORD kContinuousConsumptionTimeoutMs = 250;
 constexpr wchar_t kRunUntilStoppedEnvironment[] =
     L"BFVR_PRESENTATION_RUN_UNTIL_STOPPED";
 
@@ -323,6 +325,7 @@ std::uintptr_t g_gameImageEnd = 0;
 bfvr::D3D8SharedPresentationBridge g_presentationBridge;
 bfvr::D3D8PresentationConfiguration g_presentationConfiguration = {};
 bfvr::D3D8RenderViewPoseHook g_renderViewPoseHook;
+bfvr::BFSoldierVrMotionFilter g_playerVrMotionFilter;
 bfvr::d3d8probe::D3D8StereoReadbackApi g_readbackApi = {};
 bfvr::D3D8RuntimeRenderRequest g_runtimeRenderRequest = {};
 bfvr::D3D8RuntimeFramePosePolicy g_runtimeFramePosePolicy = {};
@@ -1269,7 +1272,11 @@ bool CompletePresentationFrame(void* device)
         bfvr::d3d8probe::ReadPerformanceCounter();
     const bool consumed =
         completed &&
-        g_presentationBridge.WaitForConsumption(sequence, 5000);
+        g_presentationBridge.WaitForConsumption(
+            sequence,
+            g_runUntilStopped
+                ? kContinuousConsumptionTimeoutMs
+                : 5000);
     g_presentationRun.totalConsumptionWaitQpcTicks +=
         bfvr::d3d8probe::ReadPerformanceCounter() - consumptionWaitStarted;
     if (!completed || !consumed)
@@ -1294,6 +1301,26 @@ bool CompletePresentationFrame(void* device)
             g_presentationFramePublished ? 1 : 0);
         InterlockedIncrement(&g_presentationRun.failedFrames);
         ReleaseFrameOwnedResources();
+        if (g_runUntilStopped)
+        {
+            // A match/server transition may invalidate a source frame after
+            // the runtime request has already been accepted.  That is not a
+            // process-lifetime presentation failure: release only the
+            // frame-owned D3D8 resources and let the next native Present
+            // request a fresh OpenXR frame.  The x64 presenter supersedes the
+            // unanswered sequence while continuing to submit its last valid
+            // image, so the headset session never needs to end.
+            bfvr::d3d8probe::ResetStereoFrameRecordForResourceReuse(g_frame);
+            g_presentationFramePublished = false;
+            g_runtimeRenderRequest = {};
+            g_runtimeFramePosePolicy = {};
+            g_renderViewPoseHook.ClearPose();
+            InterlockedExchange(&g_record.state, 1);
+            AppendLog(
+                L"D3D8 process-lifetime presentation recovered from transition frame %ld; retaining the OpenXR session and awaiting the next native Present.",
+                sequence);
+            return false;
+        }
         InterlockedExchange(&g_record.state, 5);
         return false;
     }
@@ -1695,6 +1722,25 @@ HRESULT WINAPI HookPresent(
                 1);
         }
     }
+    else if (IsPresentationMode() &&
+        g_runUntilStopped &&
+        SUCCEEDED(result) &&
+        device == g_record.device &&
+        GetCurrentThreadId() == g_record.deviceThreadId &&
+        stateAtEntry == 2)
+    {
+        // Leaving a match can produce a Present with no replayable world or
+        // Ref2 draw.  Returning to the idle state here permits the next
+        // native Present to obtain a new runtime request instead of pinning
+        // the game and presenter to the empty transition frame.
+        ReleaseFrameOwnedResources();
+        bfvr::d3d8probe::ResetStereoFrameRecordForResourceReuse(g_frame);
+        g_presentationFramePublished = false;
+        g_runtimeRenderRequest = {};
+        g_runtimeFramePosePolicy = {};
+        g_renderViewPoseHook.ClearPose();
+        InterlockedExchange(&g_record.state, 1);
+    }
     InterlockedDecrement(&g_record.activeCallbacks);
     return result;
 }
@@ -2055,6 +2101,7 @@ bool ResolveDeviceMethods()
 
 void RemoveHooks()
 {
+    g_playerVrMotionFilter.DisableAndRemove();
     g_renderViewPoseHook.DisableAndRemove();
     if (IsFullFrameMode())
     {
@@ -2160,6 +2207,12 @@ bool InstallHooks()
             reinterpret_cast<void*>(g_gameImageBegin),
             AppendPresentationLog);
     }
+    if (created && IsPresentationMode())
+    {
+        created = g_playerVrMotionFilter.Create(
+            reinterpret_cast<void*>(g_gameImageBegin),
+            AppendPresentationLog);
+    }
     if (!created)
     {
         RemoveHooks();
@@ -2175,7 +2228,8 @@ bool InstallHooks()
                 MH_EnableHook(g_record.drawPrimitiveTarget) == MH_OK &&
                 MH_EnableHook(g_record.drawPrimitiveUPTarget) == MH_OK &&
                 MH_EnableHook(g_record.drawIndexedPrimitiveUPTarget) == MH_OK)) &&
-        (!IsPresentationMode() || g_renderViewPoseHook.Enable());
+        (!IsPresentationMode() ||
+            (g_renderViewPoseHook.Enable() && g_playerVrMotionFilter.Enable()));
     if (!enabled)
     {
         RemoveHooks();
@@ -2355,6 +2409,7 @@ DWORD WINAPI RunProbe(void*)
         if (IsPresentationMode())
         {
             g_renderViewPoseHook.LogSummary();
+            g_playerVrMotionFilter.LogSummary();
             bfvr::d3d8probe::ReportContinuousPresentationResult(
                 AppendLog,
                 g_presentationRun,

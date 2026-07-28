@@ -111,6 +111,7 @@ add_library(BFVRClient SHARED
   client/D3D8ImportRoute.cpp
   client/D3D8PresentationConfiguration.cpp
   client/D3D8RenderViewPoseHook.cpp
+  client/BFSoldierVrMotionFilter.cpp
   client/D3D8RuntimePosePolicy.cpp
   client/D3D8RuntimeRedirect.cpp
   client/PlayerInputProbe.cpp

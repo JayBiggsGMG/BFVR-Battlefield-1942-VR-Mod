@@ -1,4 +1,5 @@
 #include <windows.h>
+#include <tlhelp32.h>
 
 #include <cstdio>
 #include <cwchar>
@@ -727,6 +728,122 @@ bool InitializeObserver(HANDLE process, DWORD primaryThreadId, const std::wstrin
     VirtualFreeEx(process, remoteParameter, 0, MEM_RELEASE);
     return initialized;
 }
+
+bool IsKnownProcessId(
+    const std::vector<DWORD>& processIds,
+    DWORD processId)
+{
+    for (const DWORD knownProcessId : processIds)
+    {
+        if (knownProcessId == processId)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+DWORD FindAnyThreadForProcess(DWORD processId)
+{
+    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+    if (snapshot == INVALID_HANDLE_VALUE)
+    {
+        return 0;
+    }
+
+    THREADENTRY32 entry = {};
+    entry.dwSize = sizeof(entry);
+    DWORD threadId = 0;
+    if (Thread32First(snapshot, &entry))
+    {
+        do
+        {
+            if (entry.th32OwnerProcessID == processId)
+            {
+                threadId = entry.th32ThreadID;
+                break;
+            }
+        } while (Thread32Next(snapshot, &entry));
+    }
+    CloseHandle(snapshot);
+    return threadId;
+}
+
+struct ReplacementProcess
+{
+    HANDLE handle = nullptr;
+    DWORD processId = 0;
+    DWORD threadId = 0;
+};
+
+ReplacementProcess FindBf1942Replacement(
+    const std::wstring& executablePath,
+    const std::vector<DWORD>& knownProcessIds)
+{
+    ReplacementProcess replacement = {};
+    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snapshot == INVALID_HANDLE_VALUE)
+    {
+        return replacement;
+    }
+
+    PROCESSENTRY32W entry = {};
+    entry.dwSize = sizeof(entry);
+    if (Process32FirstW(snapshot, &entry))
+    {
+        do
+        {
+            if (_wcsicmp(entry.szExeFile, L"BF1942.exe") != 0 ||
+                IsKnownProcessId(knownProcessIds, entry.th32ProcessID))
+            {
+                continue;
+            }
+
+            HANDLE process = OpenProcess(
+                PROCESS_CREATE_THREAD |
+                    PROCESS_QUERY_INFORMATION |
+                    PROCESS_VM_OPERATION |
+                    PROCESS_VM_READ |
+                    PROCESS_VM_WRITE |
+                    SYNCHRONIZE,
+                FALSE,
+                entry.th32ProcessID);
+            if (process == nullptr)
+            {
+                continue;
+            }
+
+            wchar_t imagePath[MAX_PATH] = {};
+            DWORD imagePathLength = static_cast<DWORD>(std::size(imagePath));
+            const bool isExpectedImage =
+                QueryFullProcessImageNameW(
+                    process,
+                    0,
+                    imagePath,
+                    &imagePathLength) != FALSE &&
+                _wcsicmp(imagePath, executablePath.c_str()) == 0;
+            if (!isExpectedImage)
+            {
+                CloseHandle(process);
+                continue;
+            }
+
+            const DWORD threadId = FindAnyThreadForProcess(entry.th32ProcessID);
+            if (threadId == 0)
+            {
+                CloseHandle(process);
+                continue;
+            }
+
+            replacement.handle = process;
+            replacement.processId = entry.th32ProcessID;
+            replacement.threadId = threadId;
+            break;
+        } while (Process32NextW(snapshot, &entry));
+    }
+    CloseHandle(snapshot);
+    return replacement;
+}
 } // namespace
 
 int wmain(int argc, wchar_t* argv[])
@@ -1372,59 +1489,130 @@ int wmain(int argc, wchar_t* argv[])
     else if (options.runUntilStopped)
     {
         wprintf(
-            L"[INFO] Presentation will run for BF1942's process lifetime.\n");
+            L"[INFO] Presentation will follow BF1942's process lifetime, including a direct BF1942 replacement process.\n");
         AppendLoaderLog(
-            L"Run-until-stopped OpenXR presentation is active and bound to the private BF1942 process-lifetime handle.");
+            L"Run-until-stopped OpenXR presentation is active and follows the launched BF1942 process plus any direct BF1942 replacement process.");
 
-        // A renderer/probe completion is diagnostic information, not an
-        // instruction to close a live game. BF1942's private process handle
-        // is the sole player-session lifetime authority.
+        // "End Current Game" exits the active BF1942.exe with code 1 and
+        // starts a same-install replacement that owns the 2D main menu.
+        // Follow that successor before treating the player session as finished.
+        std::vector<DWORD> attachedProcessIds = {processInfo.dwProcessId};
+        DWORD handoffSearchStartedAt = 0;
+        constexpr DWORD kSuccessorSearchTimeoutMs = 10000;
         for (;;)
         {
-            const DWORD wait =
-                WaitForSingleObject(processLifetimeHandle, INFINITE);
-            if (wait == WAIT_OBJECT_0)
+            const ReplacementProcess successor =
+                FindBf1942Replacement(
+                    executablePath,
+                    attachedProcessIds);
+            if (successor.handle != nullptr)
             {
-                DWORD childExitCode = STILL_ACTIVE;
-                const BOOL exitCodeRead = GetExitCodeProcess(
-                    processLifetimeHandle,
-                    &childExitCode);
-                if (exitCodeRead != FALSE &&
-                    childExitCode != STILL_ACTIVE)
+                DWORD successorModuleBase = 0;
+                const bool injectedSuccessor =
+                    InjectLibrary(
+                        successor.handle,
+                        activeClientPath,
+                        successorModuleBase) &&
+                    InitializeObserver(
+                        successor.handle,
+                        successor.threadId,
+                        activeClientPath,
+                        successorModuleBase,
+                        options.presentBridgeProbe,
+                        options.surfaceDescriptorProbe,
+                        options.surfaceCopyProbe,
+                        options.surfaceStreamProbe,
+                        options.surfaceResetProbe,
+                        options.surfaceReadbackProbe,
+                        options.surfaceSceneReadbackProbe,
+                        options.surfaceD3D11UploadProbe,
+                        options.renderViewTransformProbe,
+                        options.renderViewSetterBaselineProbe,
+                        options.renderViewSingleEyeProbe,
+                        options.configuredViewListProbe,
+                        options.configuredViewListWriterProbe,
+                        options.sceneBatchProbe,
+                        options.d3d8CallInventoryProbe,
+                        options.d3d8StateCensusProbe,
+                        options.d3d8StereoPairProbe,
+                        options.d3d8StereoFrameProbe,
+                        options.d3d8StereoFramePresentationProbe,
+                        options.d3d8To9FlatProbe,
+                        options.d3d8To9ObserverProbe,
+                        options.playerInputProbe,
+                        options.weaponViewModelProbe,
+                        options.weaponTransformOwnershipProbe,
+                        options.weaponFireProbe);
+                attachedProcessIds.push_back(successor.processId);
+                if (!injectedSuccessor)
                 {
-                    wchar_t message[256] = {};
-                    swprintf_s(
-                        message,
-                        std::size(message),
-                        L"Private BF1942 lifetime handle signaled with exit code %lu; ending run-until-stopped presentation.",
-                        childExitCode);
-                    AppendLoaderLog(message);
-                    wprintf(
-                        L"[INFO] BF1942 exited and ended the continuous presentation (code=%lu).\n",
-                        childExitCode);
-                    break;
+                    AppendLoaderLog(
+                        L"A same-install BF1942 replacement process was found, but BFVR injection/initialization failed; it will not be retried for this process id.");
+                    CloseHandle(successor.handle);
+                    continue;
                 }
 
-                const DWORD error =
-                    exitCodeRead != FALSE ? ERROR_SUCCESS : GetLastError();
+                CloseHandle(processLifetimeHandle);
+                processLifetimeHandle = successor.handle;
+                processInfo.dwProcessId = successor.processId;
+                handoffSearchStartedAt = 0;
                 wchar_t message[256] = {};
                 swprintf_s(
                     message,
                     std::size(message),
-                    L"Private BF1942 lifetime handle signaled but exit verification was inconsistent (code=%lu, error=%lu); continuing presentation.",
-                    childExitCode,
-                    error);
+                    L"Attached BFVR to replacement BF1942.exe pid=%lu; OpenXR presentation will re-enter through its startup menu bridge.",
+                    successor.processId);
                 AppendLoaderLog(message);
-                Sleep(100);
                 continue;
             }
 
-            fwprintf(
-                stderr,
-                L"[WARN] Continuous presentation wait failed: %lu\n",
-                GetLastError());
-            TerminateProcess(processLifetimeHandle, 1);
-            break;
+            const DWORD wait =
+                WaitForSingleObject(processLifetimeHandle, 20);
+            if (wait == WAIT_TIMEOUT)
+            {
+                handoffSearchStartedAt = 0;
+                continue;
+            }
+            if (wait != WAIT_OBJECT_0)
+            {
+                fwprintf(
+                    stderr,
+                    L"[WARN] Continuous presentation wait failed: %lu\n",
+                    GetLastError());
+                break;
+            }
+
+            DWORD childExitCode = STILL_ACTIVE;
+            const BOOL exitCodeRead = GetExitCodeProcess(
+                processLifetimeHandle,
+                &childExitCode);
+            if (exitCodeRead == FALSE || childExitCode == STILL_ACTIVE)
+            {
+                AppendLoaderLog(
+                    L"BF1942 lifetime handle signaled without a final exit code; continuing successor search.");
+            }
+            else if (handoffSearchStartedAt == 0)
+            {
+                handoffSearchStartedAt = GetTickCount();
+                wchar_t message[256] = {};
+                swprintf_s(
+                    message,
+                    std::size(message),
+                    L"BF1942.exe pid=%lu exited with code %lu; waiting up to %lu ms for a same-install replacement process before ending VR.",
+                    processInfo.dwProcessId,
+                    childExitCode,
+                    kSuccessorSearchTimeoutMs);
+                AppendLoaderLog(message);
+            }
+            if (handoffSearchStartedAt != 0 &&
+                GetTickCount() - handoffSearchStartedAt >=
+                    kSuccessorSearchTimeoutMs)
+            {
+                AppendLoaderLog(
+                    L"No same-install BF1942 replacement process appeared after the active game exited; ending run-until-stopped presentation.");
+                break;
+            }
+            Sleep(20);
         }
     }
 
