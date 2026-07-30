@@ -5,6 +5,7 @@
 #include "client/D3D8StateCensus.h"
 #include "client/D3D8WeaponTransformOwnershipProbe.h"
 #include "client/D3D8WeaponViewModelProbe.h"
+#include "client/BFSoldierFirstPersonArmProbe.h"
 #include "client/D3D8StereoPairProbe.h"
 #include "client/PlayerInputProbe.h"
 #include "client/WeaponFireProbe.h"
@@ -141,6 +142,7 @@ constexpr ULONG_PTR kObserverInitializationRequestWeaponViewModelProbe = 25;
 constexpr ULONG_PTR
     kObserverInitializationRequestWeaponTransformOwnershipProbe = 26;
 constexpr ULONG_PTR kObserverInitializationRequestWeaponFireProbe = 27;
+constexpr ULONG_PTR kObserverInitializationRequestFirstPersonArmProbe = 28;
 constexpr DWORD kObserverInitializationParametersMagic = 0x52564642;
 constexpr LONG kProjectionStreamCopyLimit = 60;
 constexpr DWORD_PTR kProjectionWrapperReturnAddress = 0x0045FE21;
@@ -1599,6 +1601,19 @@ extern "C" __declspec(dllexport) DWORD WINAPI BFVRInitializeObserver(LPVOID init
     __except (EXCEPTION_EXECUTE_HANDLER)
     {
         // Preserve the legacy small-integer request ABI for older loaders.
+    }
+
+    // This diagnostic hooks two game-owned soldier updates only.  Do not route
+    // Direct3DCreate8 or start any inherited graphics/OpenXR diagnostics: those
+    // paths are unrelated to native arm ownership and would make the result
+    // neither isolated nor useful.
+    if (initializationRequest == kObserverInitializationRequestFirstPersonArmProbe)
+    {
+        bfvr::StartBFSoldierFirstPersonArmProbe(
+            GetModuleHandleW(nullptr),
+            AppendD3D8ObserverLog,
+            SignalD3D8ObserverProbeCompletion);
+        return 1;
     }
 
     Direct3DCreate8Fn direct3DCreate8Override = nullptr;

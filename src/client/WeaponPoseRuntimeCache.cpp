@@ -7,10 +7,15 @@ struct WeaponViewOffsetState
 {
     bfvr::stereo::Matrix4 viewOffset = {};
     bfvr::stereo::Matrix4 worldAttachment = {};
+    bfvr::stereo::Matrix4 nativeHandWorld = {};
+    bfvr::stereo::Matrix4 targetHandWorld = {};
+    bfvr::stereo::Matrix4 controllerGunWorld = {};
+    const void* soldier = nullptr;
     LONG controllerGeneration = 0;
     DWORD publishedAt = 0;
     bool viewOffsetValid = false;
     bool worldAttachmentValid = false;
+    bool nativeArmPoseValid = false;
 };
 
 SRWLOCK g_lock = SRWLOCK_INIT;
@@ -21,15 +26,25 @@ void Publish(
     const bfvr::stereo::Matrix4& worldAttachment,
     LONG controllerGeneration,
     bool viewOffsetValid,
-    bool worldAttachmentValid) noexcept
+    bool worldAttachmentValid,
+    const bfvr::stereo::Matrix4& nativeHandWorld = {},
+    const bfvr::stereo::Matrix4& targetHandWorld = {},
+    const bfvr::stereo::Matrix4& controllerGunWorld = {},
+    const void* soldier = nullptr,
+    bool nativeArmPoseValid = false) noexcept
 {
     AcquireSRWLockExclusive(&g_lock);
     g_state.viewOffset = viewOffset;
     g_state.worldAttachment = worldAttachment;
+    g_state.nativeHandWorld = nativeHandWorld;
+    g_state.targetHandWorld = targetHandWorld;
+    g_state.controllerGunWorld = controllerGunWorld;
+    g_state.soldier = soldier;
     g_state.controllerGeneration = controllerGeneration;
     g_state.publishedAt = GetTickCount();
     g_state.viewOffsetValid = viewOffsetValid;
     g_state.worldAttachmentValid = worldAttachmentValid;
+    g_state.nativeArmPoseValid = nativeArmPoseValid;
     ReleaseSRWLockExclusive(&g_lock);
 }
 
@@ -49,6 +64,28 @@ void PublishWeaponVisualPose(
         controllerGeneration,
         true,
         true);
+}
+
+void PublishNativeArmWeaponVisualPose(
+    const stereo::Matrix4& viewOffset,
+    const stereo::Matrix4& worldAttachment,
+    const stereo::Matrix4& nativeHandWorld,
+    const stereo::Matrix4& targetHandWorld,
+    const stereo::Matrix4& controllerGunWorld,
+    const void* soldier,
+    LONG controllerGeneration) noexcept
+{
+    Publish(
+        viewOffset,
+        worldAttachment,
+        controllerGeneration,
+        true,
+        true,
+        nativeHandWorld,
+        targetHandWorld,
+        controllerGunWorld,
+        soldier,
+        soldier != nullptr);
 }
 
 void PublishWeaponViewOffset(
@@ -108,6 +145,30 @@ bool ReadFreshWeaponWorldAttachment(
     }
     worldAttachment = snapshot;
     controllerGeneration = snapshotGeneration;
+    return true;
+}
+
+bool ReadFreshNativeArmWeaponVisualPose(
+    NativeArmWeaponVisualPose& pose,
+    DWORD maximumAgeMs) noexcept
+{
+    pose = {};
+    AcquireSRWLockShared(&g_lock);
+    const NativeArmWeaponVisualPose snapshot = {
+        g_state.worldAttachment,
+        g_state.nativeHandWorld,
+        g_state.targetHandWorld,
+        g_state.controllerGunWorld,
+        g_state.soldier,
+        g_state.controllerGeneration};
+    const DWORD publishedAt = g_state.publishedAt;
+    const bool valid = g_state.nativeArmPoseValid;
+    ReleaseSRWLockShared(&g_lock);
+    if (!valid || GetTickCount() - publishedAt > maximumAgeMs)
+    {
+        return false;
+    }
+    pose = snapshot;
     return true;
 }
 

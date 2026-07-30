@@ -1,4 +1,5 @@
 #include "stereo/D3D8DrawPolicy.h"
+#include "stereo/D3D8FirstPersonArmPolicy.h"
 #include "stereo/D3D8FrameCompositionPolicy.h"
 #include "stereo/D3D8SemanticDrawPolicy.h"
 #include "stereo/D3D8ShaderTransform.h"
@@ -1898,6 +1899,38 @@ void TestBF1942SemanticDrawPolicy()
     {
         Fail(test, "translated skinning-shader byte count did not fail closed");
     }
+
+    signature = {
+        0x0066800A,
+        0x00654571,
+        true,
+        true,
+        4,
+        8704,
+        0x8B737890,
+        1,
+        0,
+        1,
+        1,
+        0};
+    if (bfvr::stereo::ClassifyBF1942Win32SemanticDraw(signature) !=
+        D3D8SemanticDrawClass::WaterSurface)
+    {
+        Fail(test, "observed water alpha pass was rejected");
+    }
+    signature.rendererReturnAddress = 0x00654572;
+    if (bfvr::stereo::ClassifyBF1942Win32SemanticDraw(signature) !=
+        D3D8SemanticDrawClass::Unclassified)
+    {
+        Fail(test, "different water return anchor did not fail closed");
+    }
+    signature.rendererReturnAddress = 0x00654571;
+    signature.lighting = 1;
+    if (bfvr::stereo::ClassifyBF1942Win32SemanticDraw(signature) !=
+        D3D8SemanticDrawClass::Unclassified)
+    {
+        Fail(test, "different water lighting state did not fail closed");
+    }
     const bool exactFirstPersonArm = bfvr::stereo::IsBF1942FirstPersonArmDraw(
         D3D8SemanticDrawClass::AnimatedMeshSkinning, true, 2.25F, 3.75F);
     const bool ordinarySoldier = bfvr::stereo::IsBF1942FirstPersonArmDraw(
@@ -1916,7 +1949,31 @@ void TestBF1942SemanticDrawPolicy()
     {
         Fail(test, "unclassified first-person draw was suppressible");
     }
-
+    if (!bfvr::stereo::ShouldSuppressBF1942FirstPersonArmDraw(
+            true,
+            exactFirstPersonArm,
+            false))
+    {
+        Fail(test, "default native-arm policy did not suppress the exact draw");
+    }
+    if (bfvr::stereo::ShouldSuppressBF1942FirstPersonArmDraw(
+            true,
+            exactFirstPersonArm,
+            true))
+    {
+        Fail(test, "enabled native-arm policy still suppressed the exact draw");
+    }
+    if (bfvr::stereo::ShouldSuppressBF1942FirstPersonArmDraw(
+            true,
+            ordinarySoldier,
+            true) ||
+        bfvr::stereo::ShouldSuppressBF1942FirstPersonArmDraw(
+            false,
+            exactFirstPersonArm,
+            false))
+    {
+        Fail(test, "native-arm policy broadened beyond presentation exact-arm draws");
+    }
     signature = {
         0x0066800A,
         0x0062E8BE,
@@ -2088,6 +2145,9 @@ void TestD3D8FrameCompositionPolicy()
             D3D8FrameCompositionLayer::WorldEyes ||
         bfvr::stereo::SelectD3D8FrameCompositionLayer(
             D3D8SemanticDrawClass::AnimatedMeshSkinning) !=
+            D3D8FrameCompositionLayer::WorldEyes ||
+        bfvr::stereo::SelectD3D8FrameCompositionLayer(
+            D3D8SemanticDrawClass::WaterSurface) !=
             D3D8FrameCompositionLayer::WorldEyes ||
         bfvr::stereo::SelectD3D8FrameCompositionLayer(
             D3D8SemanticDrawClass::TranslucentSprite) !=

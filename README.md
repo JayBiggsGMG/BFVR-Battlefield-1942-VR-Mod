@@ -1,5 +1,11 @@
 # BFVR distribution root
 
+> **KNOWN-BEST FIREARM BASELINE:** The commit/tag
+> `bfvr-known-best-firearm-alignment-2026-07-29` is the owner-validated best
+> rifle/pistol hand, gun, aim, firing, respawn, crouch, and prone alignment
+> system. Preserve it as the fallback for future IK/recoil work. See
+> [KNOWN_BEST_FIREARM_ALIGNMENT.md](KNOWN_BEST_FIREARM_ALIGNMENT.md).
+
 `BFVR` is the one and only parent folder required to distribute and remove the
 Battlefield 1942 VR mod.
 
@@ -101,34 +107,66 @@ turn and ordinary keyboard/mouse look remain live. The opt-in weapon path uses
 the tracked right grip for the classified first-person viewmodel and feeds the
 same fresh grip-driven rendered orientation into ordinary alive-local-infantry
 fire. This follows the virtual weapon geometry instead of maintaining a
-parallel controller `aim` ray. The firing transform preserves BF1942's native
-position,
+parallel controller `aim` ray. The firing transform preserves BF1942's
 per-weapon/per-barrel muzzle offsets, spread, cadence, projectile creation,
-and networking; any unsupported caller, owner, matrix, focus, or tracking
-state forwards the original shot unchanged. This first firing slice changes
-direction only; it does not yet move projectile origin to the rendered muzzle.
-The BAR and Colt have now produced live adjusted shots that the owner judged to
-follow their rendered barrels; a fixed-range muzzle/impact measurement remains
+and networking. Native-arm mode may move the native origin with the solved
+hand only when the fresh fire matrix belongs to the same soldier lifetime and
+is within 1.25 m of that hand; solved-hand displacement must also remain within
+1.5 m. A distant match-start/death/cinematic camera origin, unsupported
+caller, owner, matrix, focus, or tracking state forwards the original shot
+unchanged and records a bounded reason. The BAR and Colt have produced live
+adjusted directions; a fixed-range guarded muzzle/impact measurement remains
 pending.
 
 The VR replay applies only a rigid controller attachment to the classified
 weapon family: no viewmodel scale or perspective morph and no artificial
-controller-reach clamp. The exact first-person animated-arm family is omitted
-from the VR replay globally across assets/factions, while remote soldiers
-retain their corrected stereo draw and BF1942's original flat render remains
-untouched. The exact native CrossHair visibility setter is forced off without
-disabling the rest of the HUD. A truthful world-space infantry/vehicle reticle
-still requires the native aim/ray result and an isolated hit-feedback boundary.
+controller-reach clamp. The exact first-person animated-arm family is replayed
+in VR globally across assets/factions, while remote soldiers retain their
+corrected stereo draw and BF1942's original flat render remains untouched. It
+replays only the exact game-selected skinned first-person arms through the
+existing stereo shader path; no bespoke assets, controller IK, manual reloads,
+or gameplay-state changes are involved. Set `BFVR_NATIVE_1P_ARMS=0` before
+launch to opt out and restore the prior arm suppression.
+The exact native CrossHair visibility setter is forced off without disabling the
+rest of the HUD. A truthful world-space infantry/vehicle reticle still requires
+the native aim/ray result and an isolated hit-feedback boundary.
 
-Left Touch Menu remains a temporary two-stage development calibration: press
-once to freeze the weapon, move the independent right controller to it, and
-press again to commit. The provisional PID 6632 attachment is global, not
-BAR-specific, but installed BF1942 items have different authored camera
-positions, skeleton parts, and mesh pivots. Automatic native-metadata
-normalization is still in development; users will not be expected to calibrate
-every weapon. Use only a local/offline infantry map and report wrong shot
-direction, stuck input, focus-loss behavior, or discomfort. Vehicle behavior
-is not yet supported by this gate.
+### Native arm ownership trace
+
+Controller-driven native arms need one separate ownership trace; merely seeing
+the restored arms is not that evidence. Double-click
+[`Trace-BFVR-FirstPerson-Arms.bat`](../Trace-BFVR-FirstPerson-Arms.bat) in the
+game folder. It records the game-selected local first-person soldier's
+template, animated/collision Skeleton pointers, right-hand bone index, and
+active-item index, plus native child-to-bone binding records, one final
+right-hand matrix after the original native animation update returns, and its
+existing in-update `AnimatedBundle` attachment-query candidates. It also reads
+the game-owned current-item lookup object's vtable target and a short code
+prefix so BFVR can identify the live dispatch without calling it. It makes no
+game-method calls, game-data writes, or debug-register access. It waits up to
+two minutes for a local first-person traversal, then records the exact
+narrow-projection AnimatedMesh instances drawn during a brief full
+post-capture window. Spawn or re-enter first person once; it then removes its
+hooks, signals completion, and writes the result to
+`build\bfvr-cmake-validate\logs\observer.log`. At timeout, the loader closes
+only the BF1942 process it directly launched, so use an unsaved local/offline
+session. It deliberately does not claim a direct arm-mesh owner; that requires
+a separate renderer-correlated observation, which this revision performs.
+
+This trace is for the next motion-control feasibility gate only. It neither
+changes the currently enabled native-arm rendering nor implements IK.
+
+The older classified-D3D8 weapon path still has a two-stage Left Touch Menu
+development calibration, but native-arm mode does not rebase from that button
+or from death/respawn. It captures the right-hand orientation relation once
+for the injected/OpenXR process and retains it while soldier/Skeleton
+lifetimes change. Its current position uses the provisional PID 33220
+tracking-to-Skeleton translation; installed items still have different
+authored camera positions, skeleton parts, and mesh pivots. Automatic
+native-metadata normalization is in development. Use only a local/offline
+infantry map and report wrong shot direction, guarded-fire log messages,
+focus-loss behavior, or discomfort. Vehicle behavior is not yet supported by
+this gate.
 
 ## Latest headset acceptance
 

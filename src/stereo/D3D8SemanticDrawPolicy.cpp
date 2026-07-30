@@ -13,6 +13,7 @@ constexpr std::uint32_t kTreeRendererDrawBillboardsReturn = 0x0064D84C;
 constexpr std::uint32_t kNewRendFontDrawReturn = 0x0065D140;
 constexpr std::uint32_t kTreeMeshDrawBlocksReturn = 0x0067C997;
 constexpr std::uint32_t kAnimatedMeshDrawMeshReturn = 0x005AF40F;
+constexpr std::uint32_t kWaterSurfaceDrawReturn = 0x00654571;
 constexpr std::uint32_t kSpriteInfoDrawReturn = 0x0062E8BE;
 constexpr std::uint32_t kMenuQuadFlushReturn = 0x00664CF6;
 constexpr std::uint32_t kMenuQuadCacheReturn = 0x00665098;
@@ -148,6 +149,23 @@ D3D8SemanticDrawClass ClassifyBF1942Win32SemanticDraw(
     if (animatedMeshSkinning)
     {
         return D3D8SemanticDrawClass::AnimatedMeshSkinning;
+    }
+
+    const bool waterSurface =
+        signature.wrapperReturnAddress == kDrawIndexedPrimitiveWrapperReturn &&
+        signature.rendererReturnAddress == kWaterSurfaceDrawReturn &&
+        signature.indexedPrimitive &&
+        signature.perspective &&
+        signature.primitiveType == kTriangleList &&
+        signature.primitiveCount != 0 &&
+        signature.zEnable == 1 &&
+        (signature.zWriteEnable == 0 || signature.zWriteEnable == 1) &&
+        signature.alphaBlendEnable == 1 &&
+        signature.fogEnable == 1 &&
+        signature.lighting == 0;
+    if (waterSurface)
+    {
+        return D3D8SemanticDrawClass::WaterSurface;
     }
 
     const bool translucentSprite =

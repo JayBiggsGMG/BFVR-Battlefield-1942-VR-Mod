@@ -126,6 +126,9 @@ void CountStereoFrameSemanticDraw(
     case stereo::D3D8SemanticDrawClass::AnimatedMeshSkinning:
         InterlockedIncrement(&record.animatedMeshSkinningDraws);
         break;
+    case stereo::D3D8SemanticDrawClass::WaterSurface:
+        InterlockedIncrement(&record.waterSurfaceDraws);
+        break;
     case stereo::D3D8SemanticDrawClass::TranslucentSprite:
         InterlockedIncrement(&record.translucentSpriteDraws);
         break;

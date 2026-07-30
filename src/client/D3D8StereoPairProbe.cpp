@@ -19,6 +19,7 @@
 #include "client/D3D8To9VertexShaderIdentity.h"
 
 #include "stereo/D3D8DrawPolicy.h"
+#include "stereo/D3D8FirstPersonArmPolicy.h"
 #include "stereo/D3D8FrameCompositionPolicy.h"
 #include "stereo/D3D8SemanticDrawPolicy.h"
 #include "stereo/StereoMath.h"
@@ -72,6 +73,9 @@ constexpr std::size_t kDirect3DDevice8GetTransformSlot = 38;
 constexpr std::size_t kDirect3DDevice8SetViewportSlot = 40;
 constexpr std::size_t kDirect3DDevice8GetViewportSlot = 41;
 constexpr std::size_t kDirect3DDevice8GetRenderStateSlot = 51;
+// IDirect3DDevice8::GetTextureStageState follows GetTexture/SetTexture at
+// slots 60/61. Slot 64 is ValidateDevice and has an incompatible signature.
+constexpr std::size_t kDirect3DDevice8GetTextureStageStateSlot = 62;
 constexpr std::size_t kDirect3DDevice8DrawPrimitiveSlot = 70;
 constexpr std::size_t kDirect3DDevice8DrawIndexedPrimitiveSlot = 71;
 constexpr std::size_t kDirect3DDevice8DrawPrimitiveUPSlot = 72;
@@ -94,6 +98,9 @@ constexpr DWORD kD3DRenderStateZWriteEnable = 14;
 constexpr DWORD kD3DRenderStateAlphaBlendEnable = 27;
 constexpr DWORD kD3DRenderStateFogEnable = 28;
 constexpr DWORD kD3DRenderStateLighting = 137;
+constexpr DWORD kD3DRenderStateSourceBlend = 19;
+constexpr DWORD kD3DRenderStateDestinationBlend = 20;
+constexpr DWORD kD3DRenderStateTextureFactor = 60;
 constexpr DWORD kOwnedTargetClearColor = 0xFF102030;
 constexpr DWORD kMenuLayerClearColor = 0x00000000;
 constexpr UINT kMinimumCandidatePrimitiveCount = 1000;
@@ -113,6 +120,8 @@ constexpr DWORD kContinuousRenderRequestTimeoutMs = 0;
 constexpr DWORD kContinuousConsumptionTimeoutMs = 250;
 constexpr wchar_t kRunUntilStoppedEnvironment[] =
     L"BFVR_PRESENTATION_RUN_UNTIL_STOPPED";
+constexpr wchar_t kStereoWaterReflectionEnvironment[] =
+    L"BFVR_STEREO_WATER_REFLECTION";
 
 using PresentFn = HRESULT(WINAPI*)(
     void* device,
@@ -168,6 +177,11 @@ using GetTransformFn = HRESULT(WINAPI*)(void* device, DWORD state, void* matrix)
 using SetViewportFn = HRESULT(WINAPI*)(void* device, const D3DViewport* viewport);
 using GetViewportFn = HRESULT(WINAPI*)(void* device, D3DViewport* viewport);
 using GetRenderStateFn = HRESULT(WINAPI*)(void* device, DWORD state, DWORD* value);
+using GetTextureStageStateFn = HRESULT(WINAPI*)(
+    void* device,
+    DWORD stage,
+    DWORD type,
+    DWORD* value);
 using DrawPrimitiveFn = HRESULT(WINAPI*)(
     void* device,
     DWORD primitiveType,
@@ -261,6 +275,7 @@ struct DeviceMethods
     SetViewportFn setViewport = nullptr;
     GetViewportFn getViewport = nullptr;
     GetRenderStateFn getRenderState = nullptr;
+    GetTextureStageStateFn getTextureStageState = nullptr;
     DrawPrimitiveFn drawPrimitive = nullptr;
     DrawIndexedPrimitiveFn drawIndexedPrimitive = nullptr;
     DrawPrimitiveUPFn drawPrimitiveUP = nullptr;
@@ -330,6 +345,8 @@ bfvr::d3d8probe::D3D8StereoReadbackApi g_readbackApi = {};
 bfvr::D3D8RuntimeRenderRequest g_runtimeRenderRequest = {};
 bfvr::D3D8RuntimeFramePosePolicy g_runtimeFramePosePolicy = {};
 bool g_loggedImmutableLocalTrackingOrigin = false;
+volatile LONG g_loggedWaterPassStateMask = 0;
+volatile LONG g_processLifetimeShaderDrawSkips = 0;
 bfvr::D3D8RuntimeUiPlacement g_frameUiPlacement = {};
 bfvr::stereo::UiMenuAnchorTracker g_menuAnchorTracker = {};
 bool g_nativeMenuActive = false;
@@ -338,6 +355,7 @@ bool g_presentationFramePublished = false;
 bool g_offlinePresentation = false;
 bool g_runUntilStopped = false;
 bool g_keepOriginalFlatBackbuffer = false;
+bool g_headCenteredWaterReflection = true;
 PresentationRunRecord g_presentationRun = {};
 DWORD g_lastPresentationTimingReportAt = 0;
 bool g_presentationTimingStarted = false;
@@ -349,6 +367,14 @@ bool IsFullFrameMode()
 bool IsPresentationMode()
 {
     return g_mode == ProbeMode::FullFramePresentation;
+}
+
+bool IsHeadCenteredWaterReflectionPass(const DrawStateSnapshot& snapshot)
+{
+    return g_headCenteredWaterReflection &&
+        snapshot.semanticClass ==
+            bfvr::stereo::D3D8SemanticDrawClass::WaterSurface &&
+        snapshot.zWriteEnable != 0;
 }
 
 void AppendLog(const wchar_t* format, ...);
@@ -368,6 +394,94 @@ void AppendLog(const wchar_t* format, ...)
     _vsnwprintf_s(message, std::size(message), _TRUNCATE, format, arguments);
     va_end(arguments);
     g_callbacks.appendLog(message);
+}
+
+void LogWaterPassState(
+    void* device,
+    const DrawStateSnapshot& snapshot)
+{
+    if (g_methods.getRenderState == nullptr ||
+        g_methods.getTextureStageState == nullptr)
+    {
+        return;
+    }
+
+    const LONG passBit = snapshot.zWriteEnable != 0 ? 0x2 : 0x1;
+    if ((InterlockedOr(&g_loggedWaterPassStateMask, passBit) & passBit) != 0)
+    {
+        return;
+    }
+
+    DWORD sourceBlend = 0;
+    DWORD destinationBlend = 0;
+    DWORD textureFactor = 0;
+    const HRESULT sourceBlendResult = g_methods.getRenderState(
+        device,
+        kD3DRenderStateSourceBlend,
+        &sourceBlend);
+    const HRESULT destinationBlendResult = g_methods.getRenderState(
+        device,
+        kD3DRenderStateDestinationBlend,
+        &destinationBlend);
+    const HRESULT textureFactorResult = g_methods.getRenderState(
+        device,
+        kD3DRenderStateTextureFactor,
+        &textureFactor);
+
+    constexpr std::array<DWORD, 8> kWaterStageStates = {
+        1,  // D3DTSS_COLOROP
+        2,  // D3DTSS_COLORARG1
+        3,  // D3DTSS_COLORARG2
+        4,  // D3DTSS_ALPHAOP
+        5,  // D3DTSS_ALPHAARG1
+        6,  // D3DTSS_ALPHAARG2
+        11, // D3DTSS_TEXCOORDINDEX
+        24  // D3DTSS_TEXTURETRANSFORMFLAGS
+    };
+    std::array<std::array<DWORD, kWaterStageStates.size()>, 2> stages = {};
+    DWORD successfulStageReads = 0;
+    for (DWORD stage = 0; stage < stages.size(); ++stage)
+    {
+        for (std::size_t state = 0; state < kWaterStageStates.size(); ++state)
+        {
+            if (SUCCEEDED(g_methods.getTextureStageState(
+                    device,
+                    stage,
+                    kWaterStageStates[state],
+                    &stages[stage][state])))
+            {
+                successfulStageReads |= 1U <<
+                    (stage * kWaterStageStates.size() + state);
+            }
+        }
+    }
+
+    AppendLog(
+        L"D3D8 water pass diagnostic: zWrite=%lu blend[src=%lu(%08lX) dst=%lu(%08lX)] textureFactor=%08lX(%08lX) stageReads=%04lX stage0[colorOp=%lu arg1=%lu arg2=%lu alphaOp=%lu arg1=%lu arg2=%lu coord=%08lX transform=%lu] stage1[colorOp=%lu arg1=%lu arg2=%lu alphaOp=%lu arg1=%lu arg2=%lu coord=%08lX transform=%lu].",
+        snapshot.zWriteEnable,
+        sourceBlend,
+        static_cast<unsigned long>(sourceBlendResult),
+        destinationBlend,
+        static_cast<unsigned long>(destinationBlendResult),
+        textureFactor,
+        static_cast<unsigned long>(textureFactorResult),
+        successfulStageReads,
+        stages[0][0],
+        stages[0][1],
+        stages[0][2],
+        stages[0][3],
+        stages[0][4],
+        stages[0][5],
+        stages[0][6],
+        stages[0][7],
+        stages[1][0],
+        stages[1][1],
+        stages[1][2],
+        stages[1][3],
+        stages[1][4],
+        stages[1][5],
+        stages[1][6],
+        stages[1][7]);
 }
 
 void AppendPresentationLog(const wchar_t* message)
@@ -450,6 +564,30 @@ bool IsFiniteMatrix(const D3DMatrix& matrix)
         }
     }
     return true;
+}
+
+// The eye views differ only by the tracked eye offset.  Averaging them gives
+// the tracked head-centre view without falling back to BF1942's flat source
+// camera.  That keeps the fixed-function reflection vector responsive to HMD
+// motion while removing the IPD disagreement that caused alternating bands.
+bool BuildHeadCenteredWaterReflectionView(
+    const D3DMatrix& leftEyeView,
+    const D3DMatrix& rightEyeView,
+    D3DMatrix& headCenteredView)
+{
+    for (std::size_t row = 0; row < std::size(headCenteredView.values); ++row)
+    {
+        for (std::size_t column = 0;
+             column < std::size(headCenteredView.values[row]);
+             ++column)
+        {
+            headCenteredView.values[row][column] =
+                (leftEyeView.values[row][column] +
+                 rightEyeView.values[row][column]) *
+                0.5F;
+        }
+    }
+    return IsFiniteMatrix(headCenteredView);
 }
 
 bool EqualMatrix(const D3DMatrix& left, const D3DMatrix& right)
@@ -765,232 +903,7 @@ bool RestoreAndVerifyFrameState(void* device, const DrawStateSnapshot& snapshot)
     return exact;
 }
 
-void ReleaseFrameOwnedResources()
-{
-    if (IsPresentationMode() &&
-        g_presentationBridge.UsesGpuSharedTargets())
-    {
-        g_presentationBridge.PrepareForResourceRelease();
-    }
-    for (std::size_t index = 0; index < 3; ++index)
-    {
-        if (g_frame.reusableReadback[index] != nullptr)
-        {
-            g_frame.reusableReadbackRelease[index] =
-                bfvr::d3d8probe::ReleaseReusableReadback(
-                    g_readbackApi,
-                    g_frame.reusableReadback[index]);
-            g_frame.reusableReadbackDescription[index] = {};
-        }
-    }
-    if (g_frame.menuDepth != nullptr)
-    {
-        g_frame.menuDepthRelease = ReleaseUnknown(g_frame.menuDepth);
-        g_frame.menuDepth = nullptr;
-    }
-    if (g_frame.menuColor != nullptr)
-    {
-        g_frame.menuColorRelease = ReleaseUnknown(g_frame.menuColor);
-        g_frame.menuColor = nullptr;
-    }
-    for (std::size_t eye = 0; eye < 2; ++eye)
-    {
-        if (g_frame.ownedDepth[eye] != nullptr)
-        {
-            g_frame.ownedDepthRelease[eye] =
-                ReleaseUnknown(g_frame.ownedDepth[eye]);
-            g_frame.ownedDepth[eye] = nullptr;
-        }
-        if (g_frame.ownedColor[eye] != nullptr)
-        {
-            g_frame.ownedColorRelease[eye] =
-                ReleaseUnknown(g_frame.ownedColor[eye]);
-            g_frame.ownedColor[eye] = nullptr;
-        }
-    }
-    InterlockedExchange(&g_frame.resourcesReady, 0);
-}
-
-bool CreateAndClearFrameResources(void* device, const DrawStateSnapshot& snapshot)
-{
-    if (InterlockedCompareExchange(&g_frame.resourcesReady, 0, 0) != 0)
-    {
-        return true;
-    }
-
-    g_frame.colorDescription = snapshot.colorDescription;
-    g_frame.depthDescription = snapshot.depthDescription;
-    if (IsPresentationMode())
-    {
-        g_frame.colorDescription.width =
-            g_presentationBridge.LeftWorldWidth();
-        g_frame.colorDescription.height =
-            g_presentationBridge.LeftWorldHeight();
-        g_frame.colorDescription.format =
-            g_presentationBridge.WorldD3DFormat();
-        g_frame.depthDescription.width = g_frame.colorDescription.width;
-        g_frame.depthDescription.height = g_frame.colorDescription.height;
-        g_runtimeWorldViewport = {
-            0,
-            0,
-            g_frame.colorDescription.width,
-            g_frame.colorDescription.height,
-            snapshot.viewport.minZ,
-            snapshot.viewport.maxZ};
-    }
-    g_frame.menuColorDescription = snapshot.colorDescription;
-    if (IsPresentationMode())
-    {
-        g_frame.menuColorDescription.width =
-            g_presentationBridge.UiWidth();
-        g_frame.menuColorDescription.height =
-            g_presentationBridge.UiHeight();
-        g_frame.menuColorDescription.format =
-            g_presentationBridge.UiD3DFormat();
-    }
-    else
-    {
-        g_frame.menuColorDescription.format = kD3DFormatA8R8G8B8;
-    }
-    bool created =
-        g_frame.ownedColor[0] != nullptr &&
-        g_frame.ownedColor[1] != nullptr &&
-        g_frame.ownedDepth[0] != nullptr &&
-        g_frame.ownedDepth[1] != nullptr &&
-        g_frame.menuColor != nullptr &&
-        g_frame.menuDepth != nullptr;
-    if (!created)
-    {
-        created = true;
-        for (std::size_t eye = 0; eye < 2; ++eye)
-        {
-            const HRESULT colorResult =
-                g_frame.ownedColor[eye] != nullptr
-                ? S_OK
-                : g_methods.createRenderTarget(
-                    device,
-                    g_frame.colorDescription.width,
-                    g_frame.colorDescription.height,
-                    g_frame.colorDescription.format,
-                    g_frame.colorDescription.multiSampleType,
-                    FALSE,
-                    &g_frame.ownedColor[eye]);
-            const HRESULT depthResult =
-                g_frame.ownedDepth[eye] != nullptr
-                ? S_OK
-                : g_methods.createDepthStencilSurface(
-                    device,
-                    g_frame.depthDescription.width,
-                    g_frame.depthDescription.height,
-                    g_frame.depthDescription.format,
-                    g_frame.depthDescription.multiSampleType,
-                    &g_frame.ownedDepth[eye]);
-            if (FAILED(colorResult) ||
-                FAILED(depthResult) ||
-                g_frame.ownedColor[eye] == nullptr ||
-                g_frame.ownedDepth[eye] == nullptr)
-            {
-                created = false;
-                break;
-            }
-        }
-        if (created)
-        {
-            const HRESULT menuColorResult =
-                g_frame.menuColor != nullptr
-                ? S_OK
-                : g_methods.createRenderTarget(
-                    device,
-                    g_frame.menuColorDescription.width,
-                    g_frame.menuColorDescription.height,
-                    g_frame.menuColorDescription.format,
-                    g_frame.menuColorDescription.multiSampleType,
-                    FALSE,
-                    &g_frame.menuColor);
-            const HRESULT menuDepthResult =
-                g_frame.menuDepth != nullptr
-                ? S_OK
-                : g_methods.createDepthStencilSurface(
-                    device,
-                    g_frame.menuColorDescription.width,
-                    g_frame.menuColorDescription.height,
-                    snapshot.depthDescription.format,
-                    snapshot.depthDescription.multiSampleType,
-                    &g_frame.menuDepth);
-            created =
-                SUCCEEDED(menuColorResult) &&
-                SUCCEEDED(menuDepthResult) &&
-                g_frame.menuColor != nullptr &&
-                g_frame.menuDepth != nullptr;
-        }
-    }
-
-    bool cleared = created;
-    if (created)
-    {
-        const DWORD clearFlags = kD3DClearTarget |
-            kD3DClearZBuffer |
-            (HasStencil(snapshot.depthDescription.format) ? kD3DClearStencil : 0);
-        for (std::size_t eye = 0; eye < 2; ++eye)
-        {
-            const HRESULT targetResult = g_methods.setRenderTarget(
-                device,
-                g_frame.ownedColor[eye],
-                g_frame.ownedDepth[eye]);
-            const D3DViewport& viewport = IsPresentationMode()
-                ? g_runtimeWorldViewport
-                : snapshot.viewport;
-            const HRESULT viewportResult = SUCCEEDED(targetResult)
-                ? g_methods.setViewport(device, &viewport)
-                : E_FAIL;
-            const HRESULT clearResult = SUCCEEDED(viewportResult)
-                ? g_methods.clear(
-                    device,
-                    0,
-                    nullptr,
-                    clearFlags,
-                    kOwnedTargetClearColor,
-                    1.0F,
-                    0)
-                : E_FAIL;
-            if (FAILED(clearResult))
-            {
-                cleared = false;
-                break;
-            }
-        }
-        if (cleared)
-        {
-            const HRESULT targetResult = g_methods.setRenderTarget(
-                device,
-                g_frame.menuColor,
-                g_frame.menuDepth);
-            const HRESULT viewportResult = SUCCEEDED(targetResult)
-                ? g_methods.setViewport(device, &snapshot.viewport)
-                : E_FAIL;
-            const HRESULT clearResult = SUCCEEDED(viewportResult)
-                ? g_methods.clear(
-                    device,
-                    0,
-                    nullptr,
-                    clearFlags,
-                    kMenuLayerClearColor,
-                    1.0F,
-                    0)
-                : E_FAIL;
-            cleared = SUCCEEDED(clearResult);
-        }
-    }
-
-    const bool restored = RestoreAndVerifyFrameState(device, snapshot);
-    if (!created || !cleared || !restored)
-    {
-        ReleaseFrameOwnedResources();
-        return false;
-    }
-    InterlockedExchange(&g_frame.resourcesReady, 1);
-    return true;
-}
+#include "client/internal/D3D8StereoPairFrameResources.inl"
 
 HRESULT InvokeOriginalFrameDraw(
     void* device,
@@ -1066,13 +979,22 @@ FrameMirrorResult MirrorDrawIntoFrame(
         return FrameMirrorResult::NotMirrored;
     }
     ApplyFrameSemanticPolicy(invocation, snapshot);
-    if (IsPresentationMode() &&
+    if (snapshot.semanticClass ==
+        bfvr::stereo::D3D8SemanticDrawClass::WaterSurface)
+    {
+        LogWaterPassState(device, snapshot);
+    }
+    const bool firstPersonArmDraw =
         bfvr::stereo::IsBF1942FirstPersonArmDraw(
             snapshot.semanticClass,
             snapshot.drawPolicy ==
                 bfvr::stereo::D3D8DrawPolicy::StereoPerspective,
             snapshot.projection.values[0][0],
-            snapshot.projection.values[1][1]))
+            snapshot.projection.values[1][1]);
+    if (bfvr::stereo::ShouldSuppressBF1942FirstPersonArmDraw(
+            IsPresentationMode(),
+            firstPersonArmDraw,
+            g_presentationConfiguration.nativeFirstPersonArmsEnabled))
     {
         InterlockedIncrement(&g_frame.suppressedFirstPersonArmDraws);
         ReleaseFrameSourceReferences(snapshot);
@@ -1083,6 +1005,23 @@ FrameMirrorResult MirrorDrawIntoFrame(
         !PrepareFrameTreeSpriteShaderTransforms(device, snapshot))
     {
         ReleaseFrameSourceReferences(snapshot);
+        if (IsPresentationMode() && g_runUntilStopped)
+        {
+            const LONG skippedDraws =
+                InterlockedIncrement(&g_processLifetimeShaderDrawSkips);
+            if (skippedDraws <= 3)
+            {
+                AppendLog(
+                    L"D3D8 process-lifetime presentation skipped one draw whose programmable-shader source constants could not be safely transformed (processSkips=%ld); the native draw and OpenXR session remain active.",
+                    skippedDraws);
+            }
+            // Preparation is read-only. A source-constant mismatch on one
+            // animated mesh or sprite must omit only that draw from the VR
+            // replay; the hook wrapper forwards its native flat draw. Treating
+            // this as a terminal frame failure previously ended OpenXR at the
+            // first observed spawned animated-mesh mismatch.
+            return FrameMirrorResult::NotMirrored;
+        }
         return FrameMirrorResult::Failed;
     }
 
@@ -1096,6 +1035,13 @@ FrameMirrorResult MirrorDrawIntoFrame(
     const D3DMatrix* const eyeProjections[2] = {
         &snapshot.leftProjection,
         &snapshot.rightProjection};
+    D3DMatrix headCenteredWaterReflectionView = {};
+    const bool headCenteredWaterReflection =
+        IsHeadCenteredWaterReflectionPass(snapshot) &&
+        BuildHeadCenteredWaterReflectionView(
+            snapshot.leftView,
+            snapshot.rightView,
+            headCenteredWaterReflectionView);
     const auto compositionLayer =
         bfvr::stereo::SelectD3D8FrameCompositionLayer(snapshot.semanticClass);
     HRESULT eyeDrawResults[2] = {E_FAIL, E_FAIL};
@@ -1128,6 +1074,10 @@ FrameMirrorResult MirrorDrawIntoFrame(
     {
         for (std::size_t eye = 0; eye < 2; ++eye)
         {
+            const D3DMatrix* const replayView = headCenteredWaterReflection
+                ? &headCenteredWaterReflectionView
+                : eyeViews[eye];
+            const D3DMatrix* const replayProjection = eyeProjections[eye];
             const HRESULT targetResult = g_methods.setRenderTarget(
                 device,
                 g_frame.ownedColor[eye],
@@ -1140,13 +1090,16 @@ FrameMirrorResult MirrorDrawIntoFrame(
                         : &snapshot.viewport)
                 : E_FAIL;
             const HRESULT viewResult = SUCCEEDED(viewportResult)
-                ? g_methods.setTransform(device, kD3DTransformView, eyeViews[eye])
+            ? g_methods.setTransform(
+                device,
+                kD3DTransformView,
+                replayView)
                 : E_FAIL;
             const HRESULT projectionResult = SUCCEEDED(viewResult)
                 ? g_methods.setTransform(
                     device,
                     kD3DTransformProjection,
-                    eyeProjections[eye])
+                    replayProjection)
                 : E_FAIL;
             HRESULT weaponWorldResult = projectionResult;
             if (SUCCEEDED(weaponWorldResult) && invocation.replayWeaponMotion)
@@ -1253,6 +1206,10 @@ FrameMirrorResult MirrorDrawIntoFrame(
     bfvr::d3d8probe::CountStereoFrameSemanticDraw(
         g_frame,
         snapshot.semanticClass);
+    if (headCenteredWaterReflection)
+    {
+        InterlockedIncrement(&g_frame.headCenteredWaterReflectionDraws);
+    }
     RecordDrawProvenance(invocation, snapshot);
     InterlockedExchangeAdd(
         &g_frame.mirroredPrimitives,
@@ -1300,16 +1257,16 @@ bool CompletePresentationFrame(void* device)
                 0),
             g_presentationFramePublished ? 1 : 0);
         InterlockedIncrement(&g_presentationRun.failedFrames);
-        ReleaseFrameOwnedResources();
         if (g_runUntilStopped)
         {
             // A match/server transition may invalidate a source frame after
             // the runtime request has already been accepted.  That is not a
-            // process-lifetime presentation failure: release only the
-            // frame-owned D3D8 resources and let the next native Present
-            // request a fresh OpenXR frame.  The x64 presenter supersedes the
-            // unanswered sequence while continuing to submit its last valid
-            // image, so the headset session never needs to end.
+            // process-lifetime presentation failure. GPU transport surfaces
+            // are process-lifetime resources: releasing them also asks the
+            // bridge to stop its companion. Preserve them and let the next
+            // native Present request a fresh OpenXR frame. The x64 presenter
+            // supersedes the unanswered sequence while continuing to submit
+            // its last valid image, so the headset session never needs to end.
             bfvr::d3d8probe::ResetStereoFrameRecordForResourceReuse(g_frame);
             g_presentationFramePublished = false;
             g_runtimeRenderRequest = {};
@@ -1321,6 +1278,7 @@ bool CompletePresentationFrame(void* device)
                 sequence);
             return false;
         }
+        ReleaseFrameOwnedResources();
         InterlockedExchange(&g_record.state, 5);
         return false;
     }
@@ -1733,7 +1691,9 @@ HRESULT WINAPI HookPresent(
         // Ref2 draw.  Returning to the idle state here permits the next
         // native Present to obtain a new runtime request instead of pinning
         // the game and presenter to the empty transition frame.
-        ReleaseFrameOwnedResources();
+        // Do not call ReleaseFrameOwnedResources here: GPU shared color
+        // targets are process-lifetime resources and that teardown also stops
+        // the owned OpenXR companion.
         bfvr::d3d8probe::ResetStereoFrameRecordForResourceReuse(g_frame);
         g_presentationFramePublished = false;
         g_runtimeRenderRequest = {};
@@ -2052,6 +2012,9 @@ bool ResolveDeviceMethods()
         reinterpret_cast<GetViewportFn>(vtable[kDirect3DDevice8GetViewportSlot]);
     g_methods.getRenderState =
         reinterpret_cast<GetRenderStateFn>(vtable[kDirect3DDevice8GetRenderStateSlot]);
+    g_methods.getTextureStageState =
+        reinterpret_cast<GetTextureStageStateFn>(
+            vtable[kDirect3DDevice8GetTextureStageStateSlot]);
     g_methods.drawPrimitive =
         reinterpret_cast<DrawPrimitiveFn>(vtable[kDirect3DDevice8DrawPrimitiveSlot]);
     g_methods.drawIndexedPrimitive =
@@ -2086,6 +2049,7 @@ bool ResolveDeviceMethods()
         reinterpret_cast<void*>(g_methods.setViewport),
         reinterpret_cast<void*>(g_methods.getViewport),
         reinterpret_cast<void*>(g_methods.getRenderState),
+        reinterpret_cast<void*>(g_methods.getTextureStageState),
         reinterpret_cast<void*>(g_methods.drawPrimitive),
         reinterpret_cast<void*>(g_methods.drawIndexedPrimitive),
         reinterpret_cast<void*>(g_methods.drawPrimitiveUP),
@@ -2137,6 +2101,13 @@ bool InstallHooks()
     if (!ResolveDeviceMethods() || !InitializeGameImageRange())
     {
         return false;
+    }
+    if (IsPresentationMode())
+    {
+        AppendLog(
+            g_headCenteredWaterReflection
+                ? L"Enabled the exact water additive-reflection fallback: its fixed-function reflection-vector pass uses the tracked head-centre View while retaining each eye's projection; base water remains stereo. Set BFVR_STEREO_WATER_REFLECTION=1 to restore the legacy fully stereo reflection path."
+                : L"BFVR_STEREO_WATER_REFLECTION=1 restored the legacy fully stereo water reflection path.");
     }
     g_readbackApi = {
         g_methods.createImageSurface,
@@ -2292,6 +2263,19 @@ DWORD WINAPI RunProbe(void*)
         AppendLog(
             L"Ignoring invalid BFVR_OPENXR_WORLD_RENDER_SCALE; expected 0.50 through 1.25 and using default %.2f.",
             g_presentationConfiguration.worldRenderScale);
+    }
+    if (IsPresentationMode() &&
+        g_presentationConfiguration.nativeFirstPersonArmsSource ==
+            bfvr::D3D8NativeFirstPersonArmsSource::InvalidEnvironment)
+    {
+        AppendLog(
+            L"Ignoring invalid BFVR_NATIVE_1P_ARMS; expected strict 0 or 1 and retaining the default native first-person-arm replay.");
+    }
+    if (IsPresentationMode() &&
+        g_presentationConfiguration.nativeFirstPersonArmsEnabled)
+    {
+        AppendLog(
+            L"Native first-person-arm replay is enabled. BFVR will stereo-replay only the exact game-selected AnimatedMesh arm draws; it does not apply controller IK or change gameplay state.");
     }
     if (IsPresentationMode() &&
         (!g_lifecycle.presentationReadable ||
@@ -2525,8 +2509,15 @@ void StartD3D8StereoFramePresentationProbe(
         GetEnvironmentVariableW(
             kRunUntilStoppedEnvironment,
             runUntilStopped,
-            static_cast<DWORD>(std::size(runUntilStopped))) == 1 &&
+        static_cast<DWORD>(std::size(runUntilStopped))) == 1 &&
         runUntilStopped[0] == L'1';
+    wchar_t stereoWaterReflection[2] = {};
+    g_headCenteredWaterReflection = !(
+        GetEnvironmentVariableW(
+            kStereoWaterReflectionEnvironment,
+            stereoWaterReflection,
+            static_cast<DWORD>(std::size(stereoWaterReflection))) == 1 &&
+        stereoWaterReflection[0] == L'1');
     g_keepOriginalFlatBackbuffer = ReadKeepOriginalFlatBackbuffer();
     if (g_keepOriginalFlatBackbuffer)
     {

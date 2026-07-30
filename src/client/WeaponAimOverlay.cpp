@@ -1,5 +1,6 @@
 #include "client/WeaponAimOverlay.h"
 
+#include "client/BFSoldierVrMotionFilter.h"
 #include "client/WeaponPoseRuntimeCache.h"
 #include "stereo/WeaponFireAimMath.h"
 
@@ -9,6 +10,7 @@
 
 #include <array>
 #include <algorithm>
+#include <cmath>
 #include <cstdarg>
 #include <cstddef>
 #include <cstdio>
@@ -20,6 +22,8 @@ namespace
 
 constexpr wchar_t kEnableWeaponMotionEnvironment[] =
     L"BFVR_ENABLE_WEAPON_MOTION";
+constexpr wchar_t kEnableNativeArmIkEnvironment[] =
+    L"BFVR_ENABLE_NATIVE_1P_ARMS_IK";
 constexpr std::ptrdiff_t kWeaponFireCoreRva = 0x0013CDB0;
 // WeaponFire_Ordinary dispatches the same fire core through five mutually
 // exclusive native branches: the default barrel, barrel zero, an indexed
@@ -35,6 +39,8 @@ constexpr std::ptrdiff_t kPlayerManagerGlobalRva = 0x0057D76C;
 constexpr std::size_t kPlayerManagerLocalPlayerOffset = 0x54;
 constexpr std::size_t kBFPlayerIsAliveOffset = 0xA9;
 constexpr DWORD kVisualWeaponPoseMaximumAgeMs = 125;
+constexpr float kMaximumNativeFireToHandDistance = 1.25F;
+constexpr float kMaximumSolvedHandDisplacement = 1.50F;
 constexpr std::size_t kRecordCapacity = 16;
 constexpr BYTE kWeaponFireCorePrefix[] = {
     0x81, 0xEC, 0xB8, 0x01, 0x00, 0x00, 0x53, 0x55,
@@ -49,6 +55,7 @@ struct AimRecord
     float nativeForward[3] = {};
     float adjustedForward[3] = {};
     float nativePosition[3] = {};
+    float adjustedPosition[3] = {};
 };
 
 bool HasExpectedPrefix(
@@ -98,6 +105,13 @@ public:
             InterlockedExchange(&started, 0);
             return;
         }
+        wchar_t nativeArmIkEnabled[2] = {};
+        moveNativeFireOrigin =
+            GetEnvironmentVariableW(
+                kEnableNativeArmIkEnvironment,
+                nativeArmIkEnabled,
+                static_cast<DWORD>(std::size(nativeArmIkEnabled))) == 1 &&
+            nativeArmIkEnabled[0] == L'1';
 
         gameImage = static_cast<std::byte*>(image);
         fireTarget = gameImage == nullptr
@@ -156,7 +170,9 @@ public:
         }
         hookEnabled = true;
         WriteLog(
-            L"Controller-directed fire overlay armed at 0x0053CDB0. Only the five verified branches in WeaponFire_Ordinary (default, barrel zero, indexed loop, all barrels, or rotating barrel) can receive the exact fresh world attachment already used by the rendered weapon for the alive local infantry player. It uses that displayed attachment directly rather than requiring a same-generation controller sample, preventing normal inter-frame timing from falling back to the native center matrix. BF1942 retains the native fire-matrix position, weapon/barrel muzzle offsets, spread, cadence, projectile creation, and networking path; unsupported calls still forward unchanged.");
+            moveNativeFireOrigin
+                ? L"Controller-directed fire overlay armed at 0x0053CDB0 for native 1P arms. The five verified ordinary-infantry branches receive the same direct tracked OpenXR-aim gun basis used by the solved hand, with the fire parent origin moved to that held-gun pose. BF1942 retains weapon/barrel offsets, spread, cadence, projectile creation, and networking; unsupported calls forward unchanged."
+                : L"Controller-directed fire overlay armed at 0x0053CDB0. Only the five verified branches in WeaponFire_Ordinary can receive the fresh displayed-weapon rotation for the alive local infantry player; native fire position and unsupported calls remain unchanged.");
     }
 
     void Stop()
@@ -263,33 +279,99 @@ private:
         }
 
         bfvr::stereo::Matrix4 visualWeaponWorldAttachment = {};
+        bfvr::stereo::Matrix4 controllerGunWorld = {};
         LONG visualControllerGeneration = 0;
-        if (!bfvr::ReadFreshWeaponWorldAttachment(
-                visualWeaponWorldAttachment,
-                visualControllerGeneration,
-                kVisualWeaponPoseMaximumAgeMs))
+        float nativeFireToHandDistance = 0.0F;
+        float solvedHandDisplacement = 0.0F;
+        if (moveNativeFireOrigin)
+        {
+            bfvr::NativeArmWeaponVisualPose nativeArmPose = {};
+            if (!bfvr::ReadFreshNativeArmWeaponVisualPose(
+                    nativeArmPose,
+                    kVisualWeaponPoseMaximumAgeMs))
+            {
+                InterlockedIncrement(&missingNativeArmPose);
+                LogLocalFallback(
+                    L"Local WeaponFire_Core call forwarded unchanged because no fresh native-arm anchor pair was available.");
+                originalFire(weapon, actor, matrix, barrelIndex);
+                return;
+            }
+            if (nativeArmPose.soldier !=
+                bfvr::ReadCurrentBFSoldierVrCameraSoldier())
+            {
+                InterlockedIncrement(&cameraLifetimeMismatch);
+                LogLocalFallback(
+                    L"Local WeaponFire_Core call forwarded unchanged because the displayed hand and current camera-soldier lifetimes differ.");
+                originalFire(weapon, actor, matrix, barrelIndex);
+                return;
+            }
+            const auto anchorDistances =
+                bfvr::stereo::MeasureD3D8NativeArmFireAnchorDistances(
+                    nativeMatrix,
+                    nativeArmPose.nativeHandWorld,
+                    nativeArmPose.targetHandWorld);
+            if (!anchorDistances.has_value())
+            {
+                InterlockedIncrement(&anchorDistanceRejected);
+                LogLocalFallback(
+                    L"Local WeaponFire_Core call forwarded unchanged because its native fire/hand anchors were not finite rigid transforms.");
+                originalFire(weapon, actor, matrix, barrelIndex);
+                return;
+            }
+            nativeFireToHandDistance =
+                anchorDistances->nativeFireToHand;
+            solvedHandDisplacement =
+                anchorDistances->solvedHandDisplacement;
+            if (nativeFireToHandDistance > kMaximumNativeFireToHandDistance ||
+                solvedHandDisplacement > kMaximumSolvedHandDisplacement)
+            {
+                InterlockedIncrement(&anchorDistanceRejected);
+                if (InterlockedIncrement(&loggedLocalFallbacks) <= 8)
+                {
+                    WriteLog(
+                        L"Local WeaponFire_Core call forwarded unchanged because its native origin is not associated with the solved hand (fireToHand=%.3f m, handDisplacement=%.3f m, limits=%.3f/%.3f m). A cinematic/death/match-start camera matrix is not eligible for the native-arm attachment.",
+                        nativeFireToHandDistance,
+                        solvedHandDisplacement,
+                        kMaximumNativeFireToHandDistance,
+                        kMaximumSolvedHandDisplacement);
+                }
+                originalFire(weapon, actor, matrix, barrelIndex);
+                return;
+            }
+            controllerGunWorld = nativeArmPose.controllerGunWorld;
+            visualControllerGeneration =
+                nativeArmPose.controllerGeneration;
+        }
+        else if (!bfvr::ReadFreshWeaponWorldAttachment(
+                     visualWeaponWorldAttachment,
+                     visualControllerGeneration,
+                     kVisualWeaponPoseMaximumAgeMs))
         {
             InterlockedIncrement(&missingVisualWeaponPose);
-            if (InterlockedIncrement(&loggedLocalFallbacks) <= 8)
-            {
-                WriteLog(
-                    L"Local WeaponFire_Core call forwarded unchanged because no fresh displayed-weapon attachment was available.");
-            }
+            LogLocalFallback(
+                L"Local WeaponFire_Core call forwarded unchanged because no fresh displayed-weapon attachment was available.");
             originalFire(weapon, actor, matrix, barrelIndex);
             return;
         }
 
-        const auto adjusted =
-            bfvr::stereo::MakeD3D8WorldAttachedWeaponFireMatrix(
+        const auto adjusted = moveNativeFireOrigin
+            ? bfvr::stereo::MakeD3D8ControllerDirectedWeaponFireMatrix(
                 nativeMatrix,
-                visualWeaponWorldAttachment);
+                controllerGunWorld,
+                true)
+            : bfvr::stereo::MakeD3D8WorldAttachedWeaponFireMatrix(
+                nativeMatrix,
+                visualWeaponWorldAttachment,
+                false);
         if (!adjusted.has_value())
         {
             InterlockedIncrement(&mathRejections);
             if (InterlockedIncrement(&loggedLocalFallbacks) <= 8)
             {
                 WriteLog(
-                    L"Local WeaponFire_Core call forwarded unchanged because the displayed-weapon attachment could not be composed with the native fire matrix.");
+                    moveNativeFireOrigin
+                        ? L"Local WeaponFire_Core call forwarded unchanged because the direct controller gun pose could not replace the native fire basis."
+                        : L"Local WeaponFire_Core call forwarded unchanged because the displayed-weapon attachment could not be composed with the native fire matrix.");
             }
             originalFire(weapon, actor, matrix, barrelIndex);
             return;
@@ -301,6 +383,26 @@ private:
             barrelIndex,
             visualControllerGeneration,
             visualControllerGeneration);
+        if (InterlockedIncrement(&loggedAdjustedSamples) <= 8)
+        {
+            WriteLog(
+                L"Controller-directed fire applied direct OpenXR-aim gun pose: generation=%ld fireToHand=%.3f m handDisplacement=%.3f m nativeOrigin=(%.3f,%.3f,%.3f) heldGunOrigin=(%.3f,%.3f,%.3f) nativeForward=(%.5f,%.5f,%.5f) heldGunForward=(%.5f,%.5f,%.5f).",
+                visualControllerGeneration,
+                nativeFireToHandDistance,
+                solvedHandDisplacement,
+                nativeMatrix.values[3][0],
+                nativeMatrix.values[3][1],
+                nativeMatrix.values[3][2],
+                adjusted->values[3][0],
+                adjusted->values[3][1],
+                adjusted->values[3][2],
+                nativeMatrix.values[2][0],
+                nativeMatrix.values[2][1],
+                nativeMatrix.values[2][2],
+                adjusted->values[2][0],
+                adjusted->values[2][1],
+                adjusted->values[2][2]);
+        }
         InterlockedIncrement(&adjustedCalls);
         originalFire(weapon, actor, &*adjusted, barrelIndex);
     }
@@ -319,6 +421,14 @@ private:
             }
         }
         return false;
+    }
+
+    void LogLocalFallback(const wchar_t* message) noexcept
+    {
+        if (InterlockedIncrement(&loggedLocalFallbacks) <= 8)
+        {
+            WriteLog(L"%s", message);
+        }
     }
 
     bool IsLocalAliveActor(void* actor) const noexcept
@@ -371,6 +481,8 @@ private:
                 adjustedMatrix.values[2][component];
             record.nativePosition[component] =
                 nativeMatrix.values[3][component];
+            record.adjustedPosition[component] =
+                adjustedMatrix.values[3][component];
         }
         MemoryBarrier();
         InterlockedExchange(&record.sequence, sequence);
@@ -379,13 +491,16 @@ private:
     void Report() const
     {
         WriteLog(
-            L"Controller-directed fire overlay stopped: observed=%ld adjusted=%ld wrongCaller=%ld nonLocalOrDead=%ld unreadable=%ld missingVisualWeaponPose=%ld mathRejected=%ld.",
+            L"Controller-directed fire overlay stopped: observed=%ld adjusted=%ld wrongCaller=%ld nonLocalOrDead=%ld unreadable=%ld missingVisualWeaponPose=%ld missingNativeArmPose=%ld cameraLifetimeMismatch=%ld anchorDistanceRejected=%ld mathRejected=%ld.",
             observedCalls,
             adjustedCalls,
             wrongCallerCalls,
             nonLocalOrDeadCalls,
             unreadableMatrices,
             missingVisualWeaponPose,
+            missingNativeArmPose,
+            cameraLifetimeMismatch,
+            anchorDistanceRejected,
             mathRejections);
         const LONG maximum = std::min(
             InterlockedCompareExchange(
@@ -405,7 +520,7 @@ private:
                 continue;
             }
             WriteLog(
-                L"Controller-directed fire sample seq=%ld trackingGeneration=%ld visualGeneration=%ld barrel=%lu position=(%.4f,%.4f,%.4f) nativeForward=(%.5f,%.5f,%.5f) adjustedForward=(%.5f,%.5f,%.5f).",
+                L"Controller-directed fire sample seq=%ld trackingGeneration=%ld visualGeneration=%ld barrel=%lu nativePosition=(%.4f,%.4f,%.4f) adjustedPosition=(%.4f,%.4f,%.4f) nativeForward=(%.5f,%.5f,%.5f) adjustedForward=(%.5f,%.5f,%.5f).",
                 record.sequence,
                 record.trackingGeneration,
                 record.visualGeneration,
@@ -413,6 +528,9 @@ private:
                 record.nativePosition[0],
                 record.nativePosition[1],
                 record.nativePosition[2],
+                record.adjustedPosition[0],
+                record.adjustedPosition[1],
+                record.adjustedPosition[2],
                 record.nativeForward[0],
                 record.nativeForward[1],
                 record.nativeForward[2],
@@ -443,6 +561,7 @@ private:
         }
         fireTarget = nullptr;
         gameImage = nullptr;
+        moveNativeFireOrigin = false;
     }
 
     void WriteLog(const wchar_t* format, ...) const
@@ -479,12 +598,17 @@ private:
     volatile LONG nonLocalOrDeadCalls = 0;
     volatile LONG unreadableMatrices = 0;
     volatile LONG missingVisualWeaponPose = 0;
+    volatile LONG missingNativeArmPose = 0;
+    volatile LONG cameraLifetimeMismatch = 0;
+    volatile LONG anchorDistanceRejected = 0;
     volatile LONG loggedLocalFallbacks = 0;
+    volatile LONG loggedAdjustedSamples = 0;
     volatile LONG mathRejections = 0;
     volatile LONG nextRecordSequence = 0;
     bool ownsMinHook = false;
     bool hookCreated = false;
     bool hookEnabled = false;
+    bool moveNativeFireOrigin = false;
 };
 
 PVOID volatile WeaponAimOverlay::active = nullptr;

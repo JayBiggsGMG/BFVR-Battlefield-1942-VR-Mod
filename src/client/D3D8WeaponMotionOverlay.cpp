@@ -34,6 +34,8 @@ constexpr DWORD kLegacyRecoilMaximumAgeMs = 125;
 constexpr float kBf1942WorldUnitsPerMeter = 1.0F;
 constexpr wchar_t kEnableWeaponMotionEnvironment[] =
     L"BFVR_ENABLE_WEAPON_MOTION";
+constexpr wchar_t kEnableNativeArmIkEnvironment[] =
+    L"BFVR_ENABLE_NATIVE_1P_ARMS_IK";
 constexpr wchar_t kEnableWeaponCalibrationEnvironment[] =
     L"BFVR_ENABLE_WEAPON_CALIBRATION";
 
@@ -649,6 +651,17 @@ void StartD3D8WeaponMotionOverlay(
             static_cast<DWORD>(std::size(enabled))) != 1 ||
         enabled[0] != L'1')
     {
+        return;
+    }
+    wchar_t nativeArmIkEnabled[2] = {};
+    if (GetEnvironmentVariableW(
+            kEnableNativeArmIkEnvironment,
+            nativeArmIkEnabled,
+            static_cast<DWORD>(std::size(nativeArmIkEnabled))) == 1 &&
+        nativeArmIkEnabled[0] == L'1')
+    {
+        AppendLog(
+            L"Visual weapon-motion overlay remains disabled because native 1P arm IK owns the game-selected hand and rendered weapon transform. The controller-fire overlay separately applies the solved hand's complete world attachment to BF1942's native fire matrix.");
         return;
     }
     const auto provisionalAttachment =

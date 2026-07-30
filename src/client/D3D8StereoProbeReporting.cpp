@@ -59,6 +59,10 @@ const wchar_t* DescribeSemanticClass(
     {
         return L"animated-mesh-skinning";
     }
+    if (semanticClass == stereo::D3D8SemanticDrawClass::WaterSurface)
+    {
+        return L"water-surface";
+    }
     if (semanticClass == stereo::D3D8SemanticDrawClass::TranslucentSprite)
     {
         return L"translucent-sprite";
@@ -180,7 +184,7 @@ void ReportStereoFrameResult(
         InterlockedCompareExchange(&frame.excludedByKind[2], 0, 0),
         InterlockedCompareExchange(&frame.excludedByKind[3], 0, 0));
     appendLog(
-        L"D3D8 full-draw-frame transform policy: stereoPerspective=%ld monoPretransformed=%ld monoNonPerspective=%ld skyboxCubeFaces=%ld billboardBatches=%ld treeMeshAlphaBlocks=%ld treeMeshProgrammableSprites=%ld animatedMeshSkinning=%ld translucentSprites=%ld ref2FontGlyphBatches=%ld ref2MenuQuads=%ld vertexShaderReadFailures=%ld skinningPrepareFailures=%ld skinningSourceMismatches=%ld skinningApplyFailures=%ld spritePrepareFailures=%ld spriteSourceMismatches=%ld spriteApplyFailures=%ld treeSpritePrepareFailures=%ld treeSpriteSourceMismatches=%ld treeSpriteApplyFailures=%ld renderStateReadFailures=%ld provenanceSites=%ld/%zu provenanceOverflow=%ld. Confirmed Ref2 font and menu-quad draws form the shared 2D UI family; exact SkinningShader2Bones draws receive per-eye c0-c3 world-view-projection constants, exact translated TranslucentBucketDB sprites receive per-eye c0-c7 plus c9 camera constants, and exact TreeMesh programmable sprites receive per-eye c0-c7 constants, all with restoration verification.",
+        L"D3D8 full-draw-frame transform policy: stereoPerspective=%ld monoPretransformed=%ld monoNonPerspective=%ld skyboxCubeFaces=%ld billboardBatches=%ld treeMeshAlphaBlocks=%ld treeMeshProgrammableSprites=%ld animatedMeshSkinning=%ld waterSurfaces=%ld headCenteredWaterReflections=%ld translucentSprites=%ld ref2FontGlyphBatches=%ld ref2MenuQuads=%ld vertexShaderReadFailures=%ld skinningPrepareFailures=%ld skinningSourceMismatches=%ld skinningApplyFailures=%ld spritePrepareFailures=%ld spriteSourceMismatches=%ld spriteApplyFailures=%ld treeSpritePrepareFailures=%ld treeSpriteSourceMismatches=%ld treeSpriteApplyFailures=%ld renderStateReadFailures=%ld provenanceSites=%ld/%zu provenanceOverflow=%ld. Exact WinPC water uses its normal stereo replay except for the directly evidenced additive reflection pass: that pass uses the tracked head-centre View while retaining each eye's projection, preventing its fixed-function camera-space reflection vector from diverging per eye without pinning it to BF1942's flat source camera. Set BFVR_STEREO_WATER_REFLECTION=1 to restore the legacy fully stereo reflection path; exact SkinningShader2Bones draws receive per-eye c0-c3 world-view-projection constants, exact translated TranslucentBucketDB sprites receive per-eye c0-c7 plus c9 camera constants, and exact TreeMesh programmable sprites receive per-eye c0-c7 constants, all with restoration verification.",
         InterlockedCompareExchange(&frame.stereoPerspectiveDraws, 0, 0),
         InterlockedCompareExchange(&frame.monoPretransformedDraws, 0, 0),
         InterlockedCompareExchange(&frame.monoNonPerspectiveDraws, 0, 0),
@@ -192,6 +196,8 @@ void ReportStereoFrameResult(
             0,
             0),
         InterlockedCompareExchange(&frame.animatedMeshSkinningDraws, 0, 0),
+        InterlockedCompareExchange(&frame.waterSurfaceDraws, 0, 0),
+        InterlockedCompareExchange(&frame.headCenteredWaterReflectionDraws, 0, 0),
         InterlockedCompareExchange(&frame.translucentSpriteDraws, 0, 0),
         InterlockedCompareExchange(&frame.ref2FontGlyphBatchDraws, 0, 0),
         InterlockedCompareExchange(&frame.ref2MenuQuadDraws, 0, 0),

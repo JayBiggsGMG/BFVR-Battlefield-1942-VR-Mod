@@ -24,6 +24,12 @@ struct BFSoldierVrLegacyRecoil
     BFSoldierVrLegacyRecoil& recoil,
     DWORD maximumAgeMs) noexcept;
 
+// The camera-shake boundary identifies BF1942's local camera soldier on the
+// same game thread that later updates its animation Skeleton. Consumers may
+// compare this pointer with their current callback argument, but must not
+// dereference it outside that current callback.
+void* ReadCurrentBFSoldierVrCameraSoldier() noexcept;
+
 // Removes only the legacy player-camera recoil and shake contributions while
 // BFVR is presenting. Weapon recoil state, animation, firing, spread, and the
 // controller-directed fire transform remain owned by BF1942.

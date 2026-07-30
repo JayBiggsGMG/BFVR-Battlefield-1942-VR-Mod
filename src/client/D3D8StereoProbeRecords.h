@@ -180,6 +180,8 @@ struct StereoFrameRecord
     volatile LONG treeMeshAlphaBlockDraws = 0;
     volatile LONG treeMeshProgrammableSpriteDraws = 0;
     volatile LONG animatedMeshSkinningDraws = 0;
+    volatile LONG waterSurfaceDraws = 0;
+    volatile LONG headCenteredWaterReflectionDraws = 0;
     volatile LONG suppressedFirstPersonArmDraws = 0;
     volatile LONG translucentSpriteDraws = 0;
     volatile LONG ref2FontGlyphBatchDraws = 0;

@@ -112,6 +112,8 @@ add_library(BFVRClient SHARED
   client/D3D8PresentationConfiguration.cpp
   client/D3D8RenderViewPoseHook.cpp
   client/BFSoldierVrMotionFilter.cpp
+  client/BFSoldierFirstPersonArmProbe.cpp
+  client/BFSoldierNativeArmIk.cpp
   client/D3D8RuntimePosePolicy.cpp
   client/D3D8RuntimeRedirect.cpp
   client/PlayerInputProbe.cpp
@@ -151,6 +153,7 @@ add_library(BFVRD3D8To9FlatClient SHARED
 
 add_library(BFVRStereoMath STATIC
   stereo/D3D8DrawPolicy.cpp
+  stereo/D3D8FirstPersonArmPolicy.cpp
   stereo/D3D8FrameCompositionPolicy.cpp
   stereo/D3D8SemanticDrawPolicy.cpp
   stereo/D3D8ShaderTransform.cpp

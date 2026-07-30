@@ -1,5 +1,7 @@
 #include "client/BFSoldierVrMotionFilter.h"
 
+#include "client/BFSoldierNativeArmIk.h"
+
 #include <MinHook.h>
 
 #include <windows.h>
@@ -59,6 +61,8 @@ struct LegacyRecoilState
 
 SRWLOCK g_legacyRecoilLock = SRWLOCK_INIT;
 LegacyRecoilState g_legacyRecoil = {};
+volatile LONG g_legacyRecoilSequence = 0;
+PVOID g_currentCameraSoldier = nullptr;
 
 void PublishLegacyPitchRecoil(void* soldier, float pitch) noexcept
 {
@@ -85,7 +89,13 @@ void PublishLegacyYawRecoil(void* soldier, float yaw) noexcept
     g_legacyRecoil.yaw = yaw;
     g_legacyRecoil.yawUpdatedAt = GetTickCount();
     g_legacyRecoil.yawValid = true;
-    InterlockedIncrement(&g_legacyRecoil.sequence);
+    // This generation belongs to the publication stream, not to the current
+    // soldier snapshot. Other soldiers can transiently query the same global
+    // hooks between two local-arm updates; resetting the snapshot on that
+    // ownership change must not make a later local sample look like an old
+    // sequence.
+    g_legacyRecoil.sequence =
+        InterlockedIncrement(&g_legacyRecoilSequence);
     ReleaseSRWLockExclusive(&g_legacyRecoilLock);
 }
 
@@ -94,6 +104,7 @@ void ClearLegacyRecoil() noexcept
     AcquireSRWLockExclusive(&g_legacyRecoilLock);
     g_legacyRecoil = {};
     ReleaseSRWLockExclusive(&g_legacyRecoilLock);
+    InterlockedExchangePointer(&g_currentCameraSoldier, nullptr);
 }
 
 } // namespace
@@ -126,6 +137,11 @@ bool ReadFreshBFSoldierVrLegacyRecoil(
     recoil.soldier = snapshot.soldier;
     recoil.sequence = snapshot.sequence;
     return true;
+}
+
+void* ReadCurrentBFSoldierVrCameraSoldier() noexcept
+{
+    return InterlockedCompareExchangePointer(&g_currentCameraSoldier, nullptr, nullptr);
 }
 
 class BFSoldierVrMotionFilter::Impl
@@ -242,13 +258,24 @@ public:
                 static_cast<int>(yawStatus));
             return false;
         }
+        if (!StartBFSoldierNativeArmIk(gameImage, logCallback))
+        {
+            MH_DisableHook(yawRecoilTarget);
+            MH_DisableHook(pitchRecoilTarget);
+            MH_DisableHook(updateCameraShakeTarget);
+            enabled = false;
+            WriteLog(
+                L"VR player-motion filter disabled because requested native 1P arm IK could not arm safely.");
+            return false;
+        }
         WriteLog(
-            L"VR player-motion filter armed: BFSoldier pitch/yaw recoil returns zero only to the legacy camera path, and each generated camera-shake matrix is replaced with identity after BF1942 updates its native state. Weapon recoil state, animation, firing, spread, and controller-directed aim remain native.");
+            L"VR player-motion filter armed: BFSoldier pitch/yaw recoil returns zero only to the legacy camera path, and each generated camera-shake matrix is replaced with identity after BF1942 updates its native state. Native weapon animation, firing, spread, and controller-directed aim remain game-owned; the failed cumulative native-arm recoil transfer is disabled.");
         return true;
     }
 
     void DisableAndRemove()
     {
+        StopBFSoldierNativeArmIk();
         if (enabled)
         {
             MH_DisableHook(yawRecoilTarget);
@@ -294,6 +321,7 @@ private:
             return;
         }
         self->originalUpdateCameraShake(soldier, elapsedSeconds);
+        InterlockedExchangePointer(&g_currentCameraSoldier, soldier);
         InterlockedIncrement(&self->updateCameraShakeCalls);
         if (!self->WriteIdentityShakeMatrix(soldier))
         {

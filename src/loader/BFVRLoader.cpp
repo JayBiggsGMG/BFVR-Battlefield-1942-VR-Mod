@@ -50,6 +50,7 @@ struct Options
     bool weaponViewModelProbe = false;
     bool weaponTransformOwnershipProbe = false;
     bool weaponFireProbe = false;
+    bool firstPersonArmProbe = false;
     bool weaponMotionProbe = false;
     bool runUntilStopped = false;
     DWORD diagnosticTimeoutMs = 0;
@@ -318,6 +319,10 @@ bool ParseOptions(int argc, wchar_t* argv[], Options& options)
         {
             options.weaponFireProbe = true;
         }
+        else if (argument == L"--first-person-arm-probe")
+        {
+            options.firstPersonArmProbe = true;
+        }
         else if (argument == L"--weapon-motion-probe")
         {
             options.weaponMotionProbe = true;
@@ -419,6 +424,11 @@ bool ParseOptions(int argc, wchar_t* argv[], Options& options)
         fwprintf(stderr, L"[FAIL] --weapon-fire-probe requires --diagnostic-timeout-ms of at least 185000 so its 180-second forwarding-only observation can remove its hook.\n");
         return false;
     }
+    if (options.firstPersonArmProbe && options.diagnosticTimeoutMs < 125000)
+    {
+        fwprintf(stderr, L"[FAIL] --first-person-arm-probe requires --diagnostic-timeout-ms of at least 125000 so its 120-second forwarding-only observation can remove both hooks.\n");
+        return false;
+    }
     if ((options.weaponViewModelProbe ? 1 : 0) +
             (options.weaponTransformOwnershipProbe ? 1 : 0) +
             (options.weaponFireProbe ? 1 : 0) > 1)
@@ -474,6 +484,25 @@ bool ParseOptions(int argc, wchar_t* argv[], Options& options)
         fwprintf(stderr, L"[FAIL] Weapon probes are intentionally isolated from every other graphics, input, and OpenXR probe.\n");
         return false;
     }
+    if (options.firstPersonArmProbe &&
+        (options.presentBridgeProbe || options.surfaceDescriptorProbe ||
+         options.surfaceCopyProbe || options.surfaceStreamProbe ||
+         options.surfaceResetProbe || options.surfaceReadbackProbe ||
+         options.surfaceSceneReadbackProbe || options.surfaceD3D11UploadProbe ||
+         options.renderViewTransformProbe || options.renderViewSetterBaselineProbe ||
+         options.renderViewSingleEyeProbe || options.configuredViewListProbe ||
+         options.configuredViewListWriterProbe || options.sceneBatchProbe ||
+         options.d3d8CallInventoryProbe || options.d3d8StateCensusProbe ||
+         options.d3d8StereoPairProbe || options.d3d8StereoFrameProbe ||
+         options.d3d8StereoFramePresentationProbe || options.d3d8To9FlatProbe ||
+         options.d3d8To9ObserverProbe || options.playerInputProbe ||
+         options.weaponViewModelProbe || options.weaponTransformOwnershipProbe ||
+         options.weaponFireProbe || options.weaponMotionProbe ||
+         options.runUntilStopped))
+    {
+        fwprintf(stderr, L"[FAIL] --first-person-arm-probe is intentionally isolated from every other graphics, input, weapon, and OpenXR probe.\n");
+        return false;
+    }
     if (options.runUntilStopped &&
         (!options.d3d8StereoFramePresentationProbe ||
          !options.d3d8To9ObserverProbe))
@@ -499,7 +528,7 @@ void PrintUsage()
 {
     wprintf(L"BFVRLoader (D3D8 observer prototype)\n");
     wprintf(L"A diagnostic timeout closes only the game process started by this loader after the requested observation window. --run-until-stopped keeps the combined translated OpenXR test active for BF1942's process lifetime.\n");
-    wprintf(L"Usage: BFVRLoader [--dry-run] [--present-bridge-probe] [--surface-descriptor-probe] [--surface-copy-probe] [--surface-stream-probe] [--surface-reset-probe] [--surface-readback-probe] [--surface-scene-readback-probe] [--surface-d3d11-upload-probe] [--render-view-transform-probe] [--render-view-setter-baseline-probe] [--render-view-single-eye-probe] [--configured-view-list-probe] [--configured-view-list-writer-probe] [--scene-batch-probe] [--d3d8-call-inventory-probe] [--d3d8-state-census-probe] [--d3d8-stereo-pair-probe] [--d3d8-stereo-frame-probe] [--d3d8-openxr-presentation-probe] [--d3d8to9-flat-probe] [--d3d8to9-observer-probe] [--player-input-probe] [--weapon-viewmodel-probe] [--weapon-transform-ownership-probe] [--weapon-fire-probe] [--weapon-motion-probe] [--diagnostic-timeout-ms <1000-300000> | --run-until-stopped] [--game-root <path>] [--client <path>] [-- <game arguments>]\n");
+    wprintf(L"Usage: BFVRLoader [--dry-run] [--present-bridge-probe] [--surface-descriptor-probe] [--surface-copy-probe] [--surface-stream-probe] [--surface-reset-probe] [--surface-readback-probe] [--surface-scene-readback-probe] [--surface-d3d11-upload-probe] [--render-view-transform-probe] [--render-view-setter-baseline-probe] [--render-view-single-eye-probe] [--configured-view-list-probe] [--configured-view-list-writer-probe] [--scene-batch-probe] [--d3d8-call-inventory-probe] [--d3d8-state-census-probe] [--d3d8-stereo-pair-probe] [--d3d8-stereo-frame-probe] [--d3d8-openxr-presentation-probe] [--d3d8to9-flat-probe] [--d3d8to9-observer-probe] [--player-input-probe] [--weapon-viewmodel-probe] [--weapon-transform-ownership-probe] [--weapon-fire-probe] [--first-person-arm-probe] [--weapon-motion-probe] [--diagnostic-timeout-ms <1000-300000> | --run-until-stopped] [--game-root <path>] [--client <path>] [-- <game arguments>]\n");
     wprintf(L"The loader starts BF1942.exe suspended, loads BFVRClient.dll from the BFVR folder, then resumes it.\n");
     wprintf(L"--present-bridge-probe is an explicit active test: it installs a no-op in-process D3D8 Present detour only after the verified D3D8 lifecycle trace completes.\n");
     wprintf(L"--surface-descriptor-probe is a separate explicit one-shot test: at the passively confirmed ordinary-world Projection submission it calls GetRenderTarget/GetDesc/Release on the same D3D8 thread.\n");
@@ -526,7 +555,8 @@ void PrintUsage()
     wprintf(L"--weapon-viewmodel-probe is an isolated forwarding-only direct-D3D8 capture. It requires --diagnostic-timeout-ms >= 160000, waits for a sustained local-infantry alive gate, then gives an 8-second preparation window before recording 240 frames of original setter arguments and draw signatures. It creates no resource or changes no input, game, camera, D3D state, or rendering output. Manually stay on foot, select a contrasting ordinary infantry weapon, and begin any desired fire/reload transition before capture.\n");
     wprintf(L"--weapon-transform-ownership-probe is an isolated, bounded active D3D8 test. After the same local-infantry gate and an 8-second preparation window, it offsets only the evidence-classified generic fixed-function weapon candidates +0.25 right in view space for 180 frames and restores the original World transform before each draw returns. It creates no resource and changes no input, game, camera, weapon, projectile, or network state. Use it only to observe whether the first-person weapon shifts.\n");
     wprintf(L"--weapon-fire-probe is an isolated 180-second forwarding-only native fire capture. It records the profiled fire-core's caller-supplied 4x4 matrix, barrel index, caller, and a raw actor/local-player comparison while forwarding every call unchanged. Load a local infantry map, then fire several shots with two ordinary weapons during the window. It does not alter input, camera, weapon, projectile, ray, hit registration, or network state.\n");
-    wprintf(L"--weapon-motion-probe enables the right-hand 6DOF weapon development slice only on the continuous translated OpenXR path: combine it with --d3d8to9-observer-probe --d3d8-openxr-presentation-probe --run-until-stopped. The tracked grip drives only the proven shared fixed-function presentation candidate. At the independently proven ordinary local-infantry WeaponFire_Core boundary, the same fresh valid/tracked grip-derived visual orientation reorients the native fire matrix while preserving its position and BF1942's weapon/barrel offsets, spread, cadence, projectile creation, and networking path. Every failed tracking, ownership, caller, pose, or matrix gate forwards the original draw or shot.\n");
+    wprintf(L"--first-person-arm-probe is an isolated 120-second forwarding-only native ownership trace. It identifies the game-owned local first-person direct-child chain, native marker values, two soldier Skeleton pointers, right-hand index, and child-to-bone spans by observing BF1942's own visibility traversal. It invokes no game methods and writes no BF1942 data. Spawn or re-enter first person once during the window.\n");
+    wprintf(L"--weapon-motion-probe enables the native right-hand 6DOF development slice only on the continuous translated OpenXR path: combine it with --d3d8to9-observer-probe --d3d8-openxr-presentation-probe --run-until-stopped. Controller displacement is applied to BF1942's current native right-hand anchor through its existing IK solver before the normal hand-to-item attachment. The paired rigid attachment reaches the independently proven ordinary local-infantry WeaponFire_Core boundary, moving the native fire origin while preserving weapon/barrel offsets, spread, cadence, projectile creation, and networking. Existing vehicle/mod-authored IK targets and all failed tracking, ownership, caller, pose, or matrix gates forward unchanged.\n");
     wprintf(L"Combine --d3d8to9-observer-probe with --d3d8-stereo-frame-probe for the live no-HMD D3D9Ex shared eye/UI target gate.\n");
     wprintf(L"Combine --d3d8to9-observer-probe with --d3d8-openxr-presentation-probe for the same GPU-resident target path through the x64 OpenXR presenter.\n");
 }
@@ -600,7 +630,7 @@ bool InjectLibrary(HANDLE process, const std::wstring& clientPath, DWORD& remote
     return loaded;
 }
 
-bool InitializeObserver(HANDLE process, DWORD primaryThreadId, const std::wstring& clientPath, DWORD remoteModuleBase, bool presentBridgeProbe, bool surfaceDescriptorProbe, bool surfaceCopyProbe, bool surfaceStreamProbe, bool surfaceResetProbe, bool surfaceReadbackProbe, bool surfaceSceneReadbackProbe, bool surfaceD3D11UploadProbe, bool renderViewTransformProbe, bool renderViewSetterBaselineProbe, bool renderViewSingleEyeProbe, bool configuredViewListProbe, bool configuredViewListWriterProbe, bool sceneBatchProbe, bool d3d8CallInventoryProbe, bool d3d8StateCensusProbe, bool d3d8StereoPairProbe, bool d3d8StereoFrameProbe, bool d3d8StereoFramePresentationProbe, bool d3d8To9FlatProbe, bool d3d8To9ObserverProbe, bool playerInputProbe, bool weaponViewModelProbe, bool weaponTransformOwnershipProbe, bool weaponFireProbe)
+bool InitializeObserver(HANDLE process, DWORD primaryThreadId, const std::wstring& clientPath, DWORD remoteModuleBase, bool presentBridgeProbe, bool surfaceDescriptorProbe, bool surfaceCopyProbe, bool surfaceStreamProbe, bool surfaceResetProbe, bool surfaceReadbackProbe, bool surfaceSceneReadbackProbe, bool surfaceD3D11UploadProbe, bool renderViewTransformProbe, bool renderViewSetterBaselineProbe, bool renderViewSingleEyeProbe, bool configuredViewListProbe, bool configuredViewListWriterProbe, bool sceneBatchProbe, bool d3d8CallInventoryProbe, bool d3d8StateCensusProbe, bool d3d8StereoPairProbe, bool d3d8StereoFrameProbe, bool d3d8StereoFramePresentationProbe, bool d3d8To9FlatProbe, bool d3d8To9ObserverProbe, bool playerInputProbe, bool weaponViewModelProbe, bool weaponTransformOwnershipProbe, bool weaponFireProbe, bool firstPersonArmProbe)
 {
     HMODULE localModule = LoadLibraryW(clientPath.c_str());
     if (localModule == nullptr)
@@ -668,6 +698,7 @@ bool InitializeObserver(HANDLE process, DWORD primaryThreadId, const std::wstrin
     initializationRequest = weaponViewModelProbe ? 25 : initializationRequest;
     initializationRequest = weaponTransformOwnershipProbe ? 26 : initializationRequest;
     initializationRequest = weaponFireProbe ? 27 : initializationRequest;
+    initializationRequest = firstPersonArmProbe ? 28 : initializationRequest;
     const ObserverInitializationParameters initializationParameters = {
         kObserverInitializationParametersMagic,
         sizeof(ObserverInitializationParameters),
@@ -917,6 +948,8 @@ int wmain(int argc, wchar_t* argv[])
             ? L"Starting a bounded, isolated weapon transform-ownership test."
             : options.weaponViewModelProbe
             ? L"Starting a bounded, isolated forwarding-only weapon view-model draw capture."
+            : options.firstPersonArmProbe
+            ? L"Starting a bounded, isolated forwarding-only first-person native-arm ownership trace."
             : options.weaponFireProbe
             ? L"Starting a bounded, isolated forwarding-only native weapon-fire capture."
             : options.playerInputProbe
@@ -979,12 +1012,16 @@ int wmain(int argc, wchar_t* argv[])
         L"BFVR_PRESENTATION_RUN_UNTIL_STOPPED";
     constexpr wchar_t kWeaponMotionEnvironment[] =
         L"BFVR_ENABLE_WEAPON_MOTION";
+    constexpr wchar_t kNativeArmIkEnvironment[] =
+        L"BFVR_ENABLE_NATIVE_1P_ARMS_IK";
     std::wstring priorForceWindowed;
     std::wstring priorRunUntilStopped;
     std::wstring priorWeaponMotion;
+    std::wstring priorNativeArmIk;
     bool hadPriorForceWindowed = false;
     bool hadPriorRunUntilStopped = false;
     bool hadPriorWeaponMotion = false;
+    bool hadPriorNativeArmIk = false;
     bool injectedNativeWorldRenderScale = false;
     if (d3d8To9SharedFrameProbe || d3d8To9OpenXRPresentationProbe)
     {
@@ -1137,6 +1174,53 @@ int wmain(int argc, wchar_t* argv[])
                     error);
                 return 2;
             }
+            const DWORD priorNativeArmIkLength = GetEnvironmentVariableW(
+                kNativeArmIkEnvironment,
+                nullptr,
+                0);
+            if (priorNativeArmIkLength > 0)
+            {
+                std::vector<wchar_t> priorValue(priorNativeArmIkLength);
+                if (GetEnvironmentVariableW(
+                        kNativeArmIkEnvironment,
+                        priorValue.data(),
+                        priorNativeArmIkLength) > 0)
+                {
+                    priorNativeArmIk = priorValue.data();
+                    hadPriorNativeArmIk = true;
+                }
+            }
+            if (!SetEnvironmentVariableW(kNativeArmIkEnvironment, L"1"))
+            {
+                const DWORD error = GetLastError();
+                SetEnvironmentVariableW(
+                    kWeaponMotionEnvironment,
+                    hadPriorWeaponMotion ? priorWeaponMotion.c_str() : nullptr);
+                SetEnvironmentVariableW(
+                    kForceWindowedEnvironment,
+                    hadPriorForceWindowed
+                        ? priorForceWindowed.c_str()
+                        : nullptr);
+                if (injectedNativeWorldRenderScale)
+                {
+                    SetEnvironmentVariableW(
+                        kWorldRenderScaleEnvironment,
+                        nullptr);
+                }
+                if (options.runUntilStopped)
+                {
+                    SetEnvironmentVariableW(
+                        kRunUntilStoppedEnvironment,
+                        hadPriorRunUntilStopped
+                            ? priorRunUntilStopped.c_str()
+                            : nullptr);
+                }
+                fwprintf(stderr, L"[FAIL] Could not enable native first-person arm IK (error=%lu).\n", error);
+                AppendLoaderError(
+                    L"SetEnvironmentVariableW(BFVR_ENABLE_NATIVE_1P_ARMS_IK)",
+                    error);
+                return 2;
+            }
         }
     }
     const BOOL processCreated = CreateProcessW(
@@ -1176,6 +1260,9 @@ int wmain(int argc, wchar_t* argv[])
             SetEnvironmentVariableW(
                 kWeaponMotionEnvironment,
                 hadPriorWeaponMotion ? priorWeaponMotion.c_str() : nullptr);
+            SetEnvironmentVariableW(
+                kNativeArmIkEnvironment,
+                hadPriorNativeArmIk ? priorNativeArmIk.c_str() : nullptr);
         }
     }
     if (!processCreated)
@@ -1223,6 +1310,7 @@ int wmain(int argc, wchar_t* argv[])
         options.d3d8StateCensusProbe ||
         options.weaponViewModelProbe ||
         options.weaponTransformOwnershipProbe ||
+        options.firstPersonArmProbe ||
         options.d3d8StereoPairProbe ||
         options.d3d8StereoFrameProbe ||
         options.d3d8StereoFramePresentationProbe)
@@ -1267,7 +1355,7 @@ int wmain(int argc, wchar_t* argv[])
         ? L"Injected the DXGI-free BFVRD3D8To9FlatClient.dll into the suspended BF1942.exe process."
         : L"Injected BFVRClient.dll into the suspended BF1942.exe process.");
 
-    if (!InitializeObserver(processInfo.hProcess, processInfo.dwThreadId, activeClientPath, remoteModuleBase, options.presentBridgeProbe, options.surfaceDescriptorProbe, options.surfaceCopyProbe, options.surfaceStreamProbe, options.surfaceResetProbe, options.surfaceReadbackProbe, options.surfaceSceneReadbackProbe, options.surfaceD3D11UploadProbe, options.renderViewTransformProbe, options.renderViewSetterBaselineProbe, options.renderViewSingleEyeProbe, options.configuredViewListProbe, options.configuredViewListWriterProbe, options.sceneBatchProbe, options.d3d8CallInventoryProbe, options.d3d8StateCensusProbe, options.d3d8StereoPairProbe, options.d3d8StereoFrameProbe, options.d3d8StereoFramePresentationProbe, options.d3d8To9FlatProbe, options.d3d8To9ObserverProbe, options.playerInputProbe, options.weaponViewModelProbe, options.weaponTransformOwnershipProbe, options.weaponFireProbe))
+    if (!InitializeObserver(processInfo.hProcess, processInfo.dwThreadId, activeClientPath, remoteModuleBase, options.presentBridgeProbe, options.surfaceDescriptorProbe, options.surfaceCopyProbe, options.surfaceStreamProbe, options.surfaceResetProbe, options.surfaceReadbackProbe, options.surfaceSceneReadbackProbe, options.surfaceD3D11UploadProbe, options.renderViewTransformProbe, options.renderViewSetterBaselineProbe, options.renderViewSingleEyeProbe, options.configuredViewListProbe, options.configuredViewListWriterProbe, options.sceneBatchProbe, options.d3d8CallInventoryProbe, options.d3d8StateCensusProbe, options.d3d8StereoPairProbe, options.d3d8StereoFrameProbe, options.d3d8StereoFramePresentationProbe, options.d3d8To9FlatProbe, options.d3d8To9ObserverProbe, options.playerInputProbe, options.weaponViewModelProbe, options.weaponTransformOwnershipProbe, options.weaponFireProbe, options.firstPersonArmProbe))
     {
         TerminateProcess(processInfo.hProcess, 1);
         CloseHandle(processInfo.hThread);
@@ -1285,6 +1373,8 @@ int wmain(int argc, wchar_t* argv[])
              ? L"Initialized the D3D8 observer with the pinned, isolated d3d8to9 flat redirect outside DllMain while BF1942.exe remained suspended."
              : options.d3d8To9ObserverProbe
              ? L"Initialized the full D3D8 observer with the pinned d3d8to9 translator downstream outside DllMain while BF1942.exe remained suspended."
+            : options.firstPersonArmProbe
+            ? L"Initialized the BFVR observer and requested the isolated forwarding-only first-person native-arm ownership trace outside DllMain while BF1942.exe remained suspended."
             : options.weaponTransformOwnershipProbe
             ? L"Initialized the BFVR observer and requested the isolated bounded weapon transform-ownership test outside DllMain while BF1942.exe remained suspended."
             : options.weaponViewModelProbe
@@ -1349,6 +1439,8 @@ int wmain(int argc, wchar_t* argv[])
              ? L"Resumed BF1942.exe after redirecting Direct3DCreate8 through the pinned, isolated d3d8to9 translator."
              : options.d3d8To9ObserverProbe
              ? L"Resumed BF1942.exe with the full D3D8 observer in front of the pinned d3d8to9 translator."
+            : options.firstPersonArmProbe
+            ? L"Resumed BF1942.exe after observer injection with the isolated forwarding-only first-person native-arm ownership trace requested."
             : options.weaponTransformOwnershipProbe
             ? L"Resumed BF1942.exe after observer injection with the isolated bounded weapon transform-ownership test requested."
             : options.weaponViewModelProbe
@@ -1402,6 +1494,8 @@ int wmain(int argc, wchar_t* argv[])
              ? L"[PASS] Started BF1942.exe with the pinned, isolated d3d8to9 flat compatibility path (pid=%lu).\n"
              : options.d3d8To9ObserverProbe
              ? L"[PASS] Started BF1942.exe with the full BFVR D3D8 observer in front of the pinned d3d8to9 translator (pid=%lu).\n"
+            : options.firstPersonArmProbe
+            ? L"[PASS] Started BF1942.exe with the isolated forwarding-only first-person native-arm ownership trace (pid=%lu).\n"
             : options.weaponTransformOwnershipProbe
             ? L"[PASS] Started BF1942.exe with the isolated bounded weapon transform-ownership test (pid=%lu).\n"
             : options.weaponViewModelProbe
@@ -1542,7 +1636,8 @@ int wmain(int argc, wchar_t* argv[])
                         options.playerInputProbe,
                         options.weaponViewModelProbe,
                         options.weaponTransformOwnershipProbe,
-                        options.weaponFireProbe);
+                        options.weaponFireProbe,
+                        options.firstPersonArmProbe);
                 attachedProcessIds.push_back(successor.processId);
                 if (!injectedSuccessor)
                 {

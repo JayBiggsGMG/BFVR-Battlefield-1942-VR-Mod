@@ -65,7 +65,7 @@ bfvr::stereo::Matrix4 MultiplyMatrices(
     return result;
 }
 
-bfvr::stereo::Vec4 TransformRowVector(
+bfvr::stereo::Vec4 TransformRowVectorForTest(
     const bfvr::stereo::Vec4& vector,
     const bfvr::stereo::Matrix4& matrix) noexcept
 {
@@ -170,6 +170,164 @@ bool TestRenderedWeaponForwardBecomesFireForward()
             "rendered +Y barrel did not produce +Y fire forward");
 }
 
+bool TestControllerAimDirectlyOwnsFireBasisAndOrigin()
+{
+    constexpr std::string_view test = "direct controller aim fire";
+    auto native = YawRightAngle();
+    native.values[3][0] = 100.0F;
+    native.values[3][1] = 25.0F;
+    native.values[3][2] = -40.0F;
+    auto controllerGun = PitchUpRightAngle();
+    controllerGun.values[3][0] = 101.25F;
+    controllerGun.values[3][1] = 24.75F;
+    controllerGun.values[3][2] = -39.50F;
+
+    const auto directed =
+        bfvr::stereo::MakeD3D8ControllerDirectedWeaponFireMatrix(
+            native,
+            controllerGun,
+            true);
+    const auto orientationOnly =
+        bfvr::stereo::MakeD3D8ControllerDirectedWeaponFireMatrix(
+            native,
+            controllerGun,
+            false);
+    if (!Expect(
+            directed.has_value() && orientationOnly.has_value(),
+            test,
+            "valid controller gun pose was rejected"))
+    {
+        return false;
+    }
+    for (std::size_t row = 0; row < 3; ++row)
+    {
+        for (std::size_t column = 0; column < 3; ++column)
+        {
+            if (!Expect(
+                    NearlyEqual(
+                        directed->values[row][column],
+                        controllerGun.values[row][column]),
+                    test,
+                    "native camera orientation leaked into controller fire"))
+            {
+                return false;
+            }
+        }
+    }
+    return Expect(
+        NearlyEqual(directed->values[2][0], 0.0F) &&
+            NearlyEqual(directed->values[2][1], 1.0F) &&
+            NearlyEqual(directed->values[2][2], 0.0F),
+        test,
+        "fire forward did not equal controller gun forward") &&
+        Expect(
+            NearlyEqual(directed->values[3][0], controllerGun.values[3][0]) &&
+                NearlyEqual(
+                    directed->values[3][1],
+                    controllerGun.values[3][1]) &&
+                NearlyEqual(
+                    directed->values[3][2],
+                    controllerGun.values[3][2]),
+            test,
+            "direct fire did not use the held-gun origin") &&
+        Expect(
+            NearlyEqual(
+                orientationOnly->values[3][0],
+                native.values[3][0]) &&
+                NearlyEqual(
+                    orientationOnly->values[3][1],
+                    native.values[3][1]) &&
+                NearlyEqual(
+                    orientationOnly->values[3][2],
+                    native.values[3][2]),
+            test,
+            "orientation-only policy did not preserve native origin");
+}
+
+bool TestNativeHandPreservesAuthoredFireToWristRotation()
+{
+    constexpr std::string_view test = "authored fire-to-wrist rotation";
+    auto nativeFire = YawRightAngle();
+    nativeFire.values[3][0] = 100.0F;
+    nativeFire.values[3][1] = 20.0F;
+    nativeFire.values[3][2] = -40.0F;
+    const auto authoredFireToHand = PitchUpRightAngle();
+    auto nativeHand = MultiplyMatrices(authoredFireToHand, nativeFire);
+    nativeHand.values[3][0] = 100.3F;
+    nativeHand.values[3][1] = 19.8F;
+    nativeHand.values[3][2] = -39.6F;
+
+    const auto recovered =
+        bfvr::stereo::MakeD3D8NativeHandFromFireRotation(
+            nativeFire,
+            nativeHand);
+    if (!Expect(
+            recovered.has_value(),
+            test,
+            "valid native fire/hand pair was rejected"))
+    {
+        return false;
+    }
+    for (std::size_t row = 0; row < 3; ++row)
+    {
+        for (std::size_t column = 0; column < 3; ++column)
+        {
+            if (!Expect(
+                    NearlyEqual(
+                        recovered->values[row][column],
+                        authoredFireToHand.values[row][column]),
+                    test,
+                    "recovered relation did not match the native rig"))
+            {
+                return false;
+            }
+        }
+    }
+
+    const auto controllerGun = YawRightAngle();
+    const auto correctedHand =
+        bfvr::stereo::MakeD3D8ControllerDirectedNativeHandMatrix(
+            controllerGun,
+            *recovered);
+    if (!Expect(
+            correctedHand.has_value(),
+            test,
+            "valid controller/wrist relation was rejected"))
+    {
+        return false;
+    }
+    for (std::size_t row = 0; row < 3; ++row)
+    {
+        for (std::size_t column = 0; column < 3; ++column)
+        {
+            if (!Expect(
+                    NearlyEqual(
+                        correctedHand->values[row][column],
+                        nativeHand.values[row][column]),
+                    test,
+                    "local wrist correction was not pre-multiplied"))
+            {
+                return false;
+            }
+        }
+    }
+
+    auto invalidHand = nativeHand;
+    invalidHand.values[0][0] = 2.0F;
+    return Expect(
+        !bfvr::stereo::MakeD3D8NativeHandFromFireRotation(
+             nativeFire,
+             invalidHand).has_value(),
+        test,
+        "non-rigid native hand pose was accepted") &&
+        Expect(
+            !bfvr::stereo::MakeD3D8ControllerDirectedNativeHandMatrix(
+                 invalidHand,
+                 *recovered).has_value(),
+            test,
+            "non-rigid controller pose was accepted");
+}
+
 bool TestLegacyCameraRecoilBecomesHeldWeaponRecoil()
 {
     constexpr std::string_view test = "legacy recoil transferred to weapon";
@@ -219,7 +377,7 @@ bool TestLegacyCameraRecoilBecomesHeldWeaponRecoil()
             {
                 // weaponToGrip maps this local anchor to the grip origin.
                 // It must remain at the live grip after the gun recoils.
-                const auto anchor = TransformRowVector(
+                const auto anchor = TransformRowVectorForTest(
                     {0.24F, -0.08F, 0.51F, 1.0F},
                     *recoiled);
                 return NearlyEqual(anchor.x, 0.75F) &&
@@ -269,6 +427,12 @@ bool TestNativePositionAndWorldAttachmentArePreserved()
         bfvr::stereo::MakeD3D8WorldAttachedWeaponFireMatrix(
             native,
             visual);
+    const auto moved =
+        bfvr::stereo::MakeD3D8WorldAttachedWeaponFireMatrix(
+            native,
+            visual,
+            true);
+    const auto expectedMoved = MultiplyMatrices(native, visual);
     bool orientationMatches = adjusted.has_value();
     if (orientationMatches)
     {
@@ -298,7 +462,75 @@ bool TestNativePositionAndWorldAttachmentArePreserved()
         Expect(
             orientationMatches,
             test,
-            "visual orientation was not composed after the native world orientation");
+            "visual orientation was not composed after the native world orientation") &&
+        Expect(
+            moved.has_value() &&
+                NearlyEqual(
+                    moved->values[3][0],
+                    expectedMoved.values[3][0]) &&
+                NearlyEqual(
+                    moved->values[3][1],
+                    expectedMoved.values[3][1]) &&
+                NearlyEqual(
+                    moved->values[3][2],
+                    expectedMoved.values[3][2]),
+            test,
+            "native-arm fire origin did not follow the complete world attachment");
+}
+
+bool TestNativeArmFireAnchorDistancesRejectCinematicOrigin()
+{
+    constexpr std::string_view test = "native-arm fire anchor distances";
+    auto nativeHand = IdentityMatrix();
+    nativeHand.values[3][0] = 100.0F;
+    nativeHand.values[3][1] = 20.0F;
+    nativeHand.values[3][2] = -50.0F;
+    auto targetHand = nativeHand;
+    targetHand.values[3][0] += 0.35F;
+    targetHand.values[3][1] -= 0.20F;
+    targetHand.values[3][2] += 0.10F;
+    auto nearbyFire = nativeHand;
+    nearbyFire.values[3][0] += 0.55F;
+    auto cinematicFire = nativeHand;
+    cinematicFire.values[3][1] += 4.50F;
+
+    const auto nearby =
+        bfvr::stereo::MeasureD3D8NativeArmFireAnchorDistances(
+            nearbyFire,
+            nativeHand,
+            targetHand);
+    const auto cinematic =
+        bfvr::stereo::MeasureD3D8NativeArmFireAnchorDistances(
+            cinematicFire,
+            nativeHand,
+            targetHand);
+    auto invalidHand = nativeHand;
+    invalidHand.values[0][0] = 2.0F;
+    const auto invalid =
+        bfvr::stereo::MeasureD3D8NativeArmFireAnchorDistances(
+            nearbyFire,
+            invalidHand,
+            targetHand);
+
+    return Expect(
+               nearby.has_value() &&
+                   NearlyEqual(nearby->nativeFireToHand, 0.55F) &&
+                   NearlyEqual(
+                       nearby->solvedHandDisplacement,
+                       std::sqrt(0.35F * 0.35F +
+                           0.20F * 0.20F +
+                           0.10F * 0.10F)),
+               test,
+               "nearby native muzzle/hand pair was measured incorrectly") &&
+        Expect(
+            cinematic.has_value() &&
+                cinematic->nativeFireToHand > 1.25F,
+            test,
+            "distant cinematic origin did not exceed the gameplay guard") &&
+        Expect(
+            !invalid.has_value(),
+            test,
+            "non-rigid hand anchor was accepted");
 }
 
 bool TestFireOrientationMatchesSourceViewConjugatedVisualReplay()
@@ -474,8 +706,11 @@ int main()
     const bool passed =
         TestNeutralVisualWeaponPreservesNativeFireMatrix() &&
         TestRenderedWeaponForwardBecomesFireForward() &&
+        TestControllerAimDirectlyOwnsFireBasisAndOrigin() &&
+        TestNativeHandPreservesAuthoredFireToWristRotation() &&
         TestLegacyCameraRecoilBecomesHeldWeaponRecoil() &&
         TestNativePositionAndWorldAttachmentArePreserved() &&
+        TestNativeArmFireAnchorDistancesRejectCinematicOrigin() &&
         TestFireOrientationMatchesSourceViewConjugatedVisualReplay() &&
         TestInvalidInputsFailClosed();
     if (!passed)

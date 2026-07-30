@@ -97,7 +97,7 @@ void PrepareRuntimeRenderRequestPose()
         // lifecycle event and of controller availability.
         g_loggedImmutableLocalTrackingOrigin = true;
         AppendLog(
-            L"Using the immutable OpenXR LOCAL tracking origin; BF1942 spawn, death, respawn, Ready/menu, controller state, and D3D8 Reset cannot sample or redefine the 6DOF camera basis.");
+            L"Using the OpenXR LOCAL tracking origin; BF1942 spawn, death, respawn, Ready/menu, controller state, and D3D8 Reset cannot sample or redefine the 6DOF camera basis. Runtime-level OpenXR reference-space changes are a separate lifecycle event.");
     }
     g_renderViewPoseHook.UpdatePose(
         g_runtimeFramePosePolicy.renderViewReference,
