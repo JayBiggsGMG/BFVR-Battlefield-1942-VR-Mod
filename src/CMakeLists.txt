@@ -115,6 +115,7 @@ add_library(BFVRClient SHARED
   client/BFSoldierFirstPersonArmProbe.cpp
   client/BFSoldierLeftGripRotationBinding.cpp
   client/BFSoldierNativeArmIk.cpp
+  client/BFSoldierNativeArmPole.cpp
   client/BFSoldierOffHandSupportBinding.cpp
   client/BFSoldierOffHandWeaponSteering.cpp
   client/BFSoldierTrackedHandPose.cpp
@@ -157,6 +158,7 @@ add_library(BFVRD3D8To9FlatClient SHARED
 )
 
 add_library(BFVRStereoMath STATIC
+  stereo/ArmPoleVectorMath.cpp
   stereo/D3D8DrawPolicy.cpp
   stereo/D3D8FirstPersonArmPolicy.cpp
   stereo/D3D8FrameCompositionPolicy.cpp
@@ -217,11 +219,15 @@ add_executable(BFVROffHandSupportPolicyTests
   stereo/OffHandSupportPolicyTests.cpp
 )
 
+add_executable(BFVRArmPoleVectorMathTests
+  stereo/ArmPoleVectorMathTests.cpp
+)
+
 add_executable(BFVRRfaInspect
   tools/RfaInspect.cpp
 )
 
-foreach(target BFVRClient BFVRD3D8To9FlatClient BFVRLoader BFVROpenXRProbe BFVRSharedTextureProducerProbe BFVRD3D8To9SharedSurfaceProbe BFVRStereoMath BFVRStereoMathTests BFVRWeaponFireAimMathTests BFVROffHandSupportPolicyTests BFVRRfaInspect)
+foreach(target BFVRClient BFVRD3D8To9FlatClient BFVRLoader BFVROpenXRProbe BFVRSharedTextureProducerProbe BFVRD3D8To9SharedSurfaceProbe BFVRStereoMath BFVRStereoMathTests BFVRWeaponFireAimMathTests BFVROffHandSupportPolicyTests BFVRArmPoleVectorMathTests BFVRRfaInspect)
   target_compile_definitions(${target} PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
   set_property(TARGET ${target} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
   if(MSVC)
@@ -248,6 +254,7 @@ target_include_directories(BFVRStereoMath PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(BFVRStereoMathTests PRIVATE BFVRStereoMath)
 target_link_libraries(BFVRWeaponFireAimMathTests PRIVATE BFVRStereoMath)
 target_link_libraries(BFVROffHandSupportPolicyTests PRIVATE BFVRStereoMath)
+target_link_libraries(BFVRArmPoleVectorMathTests PRIVATE BFVRStereoMath)
 
 include(CTest)
 if(BUILD_TESTING)
@@ -258,6 +265,9 @@ if(BUILD_TESTING)
   add_test(
     NAME BFVROffHandSupportPolicyTests
     COMMAND BFVROffHandSupportPolicyTests)
+  add_test(
+    NAME BFVRArmPoleVectorMathTests
+    COMMAND BFVRArmPoleVectorMathTests)
 endif()
 
 foreach(target BFVRClient BFVROpenXRProbe)

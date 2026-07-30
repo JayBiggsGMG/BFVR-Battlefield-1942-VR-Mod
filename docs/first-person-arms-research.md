@@ -1114,6 +1114,107 @@ the pistol remained visual-only in the live session. The actual 35-degree
 limit, focus/tracking-loss fallback, semantic mod classification, native
 pistol-cup timing, and elbow-pole correction remain separate open checks.
 
+### Elbow pole and shoulder-frame research
+
+The user's next live observations isolate an animation-dependent bend-plane
+problem: the right rifle elbow is almost correct, the left rifle elbow points
+forward/away from the chest, pistol/knife/gadget forearms hang vertically, and
+locomotion can drag either elbow in front or sideways. Static analysis explains
+that grouping. WinPC `Skeleton::applyIK2BoneSolver` passes the current animated
+shoulder, elbow, and wrist to the Maya-style solver. Corrected cross-build and
+call-site analysis shows that the lower solver does have an explicit pole
+argument, but BF1942 supplies `(0,0,0)`. BFVR's correct hand endpoint therefore
+leaves the elbow free to inherit whichever bend plane the current
+item/locomotion animation supplied.
+
+Modern two-bone systems expose that missing degree of freedom directly.
+Unreal's official Two Bone IK documentation defines an effector for the hand
+and a separate Joint Target Location controlling the middle joint. Its
+[Virtual Bones documentation](https://dev.epicgames.com/documentation/unreal-engine/virtual-bones-in-unreal-engine)
+places the pole target behind the elbow, expresses it in parent-bone space, and
+keeps additive animation from perturbing that reference. The corresponding
+[Two Bone IK documentation](https://dev.epicgames.com/documentation/unreal-engine/animation-blueprint-two-bone-ik-in-unreal-engine)
+also separates joint target, twist, and stretching rather than treating them
+as one wrist transform.
+
+The VRST paper
+[Human Upper-Body Inverse Kinematics for Increased Embodiment in Consumer-Grade VR](https://arbook.icg.tugraz.at/schmalstieg/Schmalstieg_364.pdf)
+derives shoulders and elbows from HMD/controllers. Its relevant bounded
+heuristics are: keep neutral shoulders lateral to the neck; use
+hand-to-shoulder position as the strongest elbow input; generally point elbows
+away from body centre and backward when the hand is in front; and blend/fail
+carefully near vertical or behind-shoulder singularities. It also warns that
+head-yaw-derived shoulders visibly move while looking, supporting a torso/body
+frame rather than a transient animation or view frame.
+
+The first BFVR implementation misidentified the distinct elbow-point argument
+as the substitute for a missing joint hint. Headset PID 18812 rejected it:
+the right endpoint developed errors up to about 6 cm, the left grip lost
+alignment, the right elbow helicoptered, and rifle barrel/fire agreement was
+disturbed. That synthetic-elbow method is permanently removed.
+
+Reinspection against semantic Mac `maya::applyIK2BoneSolver` and Autodesk's
+published `ik2Bsolver` source recovers the actual standard control. Retail
+`FUN_0066B300` receives seven arguments: pole vector, shoulder, elbow, wrist,
+hand target, and two output matrices. At call site `0x0061157E`, ECX is a
+freshly zeroed three-float pole, EDX is the shoulder, and the remaining five
+arguments are passed on the stack. Autodesk's solve keeps handle position and
+pole direction separate, projecting the pole perpendicular to the
+shoulder-to-handle axis solely to choose the rotate plane.
+
+The replacement must therefore alter only the zero pole pointer for exact
+current BFVR-owned local hand-handle targets. Shoulder, elbow, wrist, target,
+and output pointers are forwarded unchanged; a nonzero native pole,
+game/mod-owned IK, non-local calls, and invalid/near-parallel directions bypass
+unchanged. The already-good right primary rifle stays native. Left and
+non-primary right arms may use mirrored outward/down/back component-space
+directions with singularity-safe continuity.
+
+No third-person chest or shoulder position participates. Runtime pointer
+equality proves that the selected 1P meshes consume the local animated
+Skeleton, but it does not prove that separately bound and projected 1P
+viewmodel geometry shares raw 3P visual positioning. The pole is direction
+only, expressed in the same component axes as the already-working hand target;
+it does not move a shoulder, root, hand, weapon, or fire basis.
+
+That exact transaction is now implemented in
+`BFSoldierNativeArmPole`. A validated hook on retail `FUN_0066B300`
+activates only while the local 1P Skeleton transform is consuming the exact
+current BFVR-owned right/left handle pointer. It replaces only a finite native
+zero pole; all six remaining solver arguments are
+forwarded unchanged. Right slot 3 bypasses the policy, while the left and
+non-primary right arms use mirrored outward/down/back directions projected
+away from the shoulder-to-target axis. Near-parallel cases reuse the prior
+valid direction, then try fixed component axes, and otherwise leave the native
+zero pole untouched.
+
+The runtime also performs a bounded read-only endpoint audit immediately after
+the unchanged Skeleton transform. For the first twelve adjusted arm solves it
+logs the supplied direction and final-hand-minus-target error, while counting
+all errors above 1 mm. It never feeds those measurements back into animation.
+Debug build
+`CD21A3AA5A07C212A87C9662871D5ED9B8AB47CC28CAAECCF0102FE9530CCCF6`
+passes the existing stereo, fire-aim, and off-hand suites plus new deterministic
+pole mirroring, unit/perpendicular projection, singularity continuity, and
+invalid-input coverage. Headset behavior and runtime zero endpoint error remain
+the next evidence gate.
+
+PID 31372 and the owner's direct headset judgment close the first pistol/rifle
+gate. The owner identifies this as the new best implementation and reports
+that pistol and rifle arms are generally good. The first twelve bounded
+left-arm endpoint probes each measured
+`targetError=(0.000000,0.000000,0.000000)` with zero length. The same run
+continued to acquire/release slot-3 authored-span support and activate bounded
+fixed-pivot steering, including requested/applied swings through 19.17
+degrees, while slot-2 repeatedly used only captured-close visual support.
+Those events span several local soldier lifetimes.
+
+This accepts the explicit-pole design as the new known-best 1P arm baseline
+without overstating it as universal perfection. The right primary rifle
+remained on its native pole by policy. Knife, grenade, gadget, every
+stance/locomotion edge, and arbitrary mod/faction rigs were not separately
+graded by the owner's concise report and remain open.
+
 ### Implementation gates
 
 1. Resolve `Bip01 L Hand` by native name on the live Skeleton; never hard-code

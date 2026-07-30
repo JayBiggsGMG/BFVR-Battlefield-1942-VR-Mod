@@ -11,8 +11,9 @@ namespace bfvr
 // a proximity-gated squeeze may constrain only that visual target. Primary
 // slot 3 preserves the native left-to-right-hand span; close sidearm slot 2
 // captures the user's current cup pose. The right controller remains the sole
-// gun/fire authority. Elbow/pole correction remains separate. It never supplies
-// a mesh, hand asset, reload, item, or projectile implementation.
+// gun/fire authority. Elbow bend may replace only the native solver's explicit
+// zero pole for exact BFVR-owned 1P targets; no third-person body position is
+// consumed. It never supplies a mesh, hand asset, reload, item, or projectile.
 [[nodiscard]] bool StartBFSoldierNativeArmIk(
     void* gameImage,
     void (*appendLog)(const wchar_t* message));

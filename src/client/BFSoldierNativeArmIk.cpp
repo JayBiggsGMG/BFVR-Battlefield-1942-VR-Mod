@@ -4,6 +4,7 @@
 #include "client/BFSoldierLeftGripRotationBinding.h"
 #include "client/BFSoldierOffHandSupportBinding.h"
 #include "client/BFSoldierOffHandWeaponSteering.h"
+#include "client/BFSoldierNativeArmPole.h"
 #include "client/BFSoldierTrackedHandPose.h"
 #include "client/BFSoldierVrMotionFilter.h"
 #include "client/ControllerInputCache.h"
@@ -12,11 +13,8 @@
 #include "stereo/StereoMath.h"
 #include "stereo/WeaponFireAimMath.h"
 #include "stereo/WeaponPoseMath.h"
-
 #include <MinHook.h>
-
 #include <windows.h>
-
 #include <array>
 #include <cmath>
 #include <cstdarg>
@@ -26,10 +24,8 @@
 #include <cstring>
 #include <optional>
 #include <utility>
-
 namespace
 {
-
 constexpr wchar_t kEnableNativeArmIkEnvironment[] =
     L"BFVR_ENABLE_NATIVE_1P_ARMS_IK";
 constexpr std::ptrdiff_t kSkeletonTransformRva = 0x00211690;
@@ -70,14 +66,12 @@ constexpr float kBf1942WorldUnitsPerMeter = 1.0F;
 constexpr float kMaximumLeftHandDisplacement = 1.5F;
 constexpr float kMaximumPrimarySupportSwingRadians =
     35.0F * 3.14159265358979323846F / 180.0F;
-// BF1942's authored floating-arm root sits too far behind the VR head. Move
-// the entire native first-person arm skeleton forward together so the
-// shoulder, solved hand, and game-attached weapon retain their relationships.
+// Move BF1942's floating 1P arm root forward as one unit so shoulder, solved
+// hand, and game-attached weapon retain their authored relationships.
 constexpr float kFirstPersonArmRootForwardOffset = 0.15F;
 // PID 33220's owner-identified closest physical-over-virtual calibration:
-// native hand (0.1392, 0.3777, 0.4687) minus raw grip
-// (0.0419, -0.2990, 0.5986). This is one global tracking-to-Skeleton frame
-// translation, never an arm/faction/weapon asset offset.
+// native hand (0.1392, 0.3777, 0.4687) minus raw grip (0.0419, -0.2990,
+// 0.5986). One tracking-to-Skeleton translation, never an asset offset.
 constexpr std::array<float, 3> kTrackingToSkeletonPositionOffset = {
     0.0973F,
     0.6767F,
@@ -89,7 +83,6 @@ constexpr LONG kStandingPose = 0;
 constexpr LONG kLastSupportedPose = 2;
 constexpr float kMaximumPoseCameraTranslation = 3.0F;
 constexpr char kLeftHandBoneName[] = "Bip01 L Hand";
-
 constexpr BYTE kSkeletonTransformPrefix[] = {
     0x81, 0xEC, 0x90, 0x00, 0x00, 0x00, 0x8B, 0xD1,
     0x8B, 0x42, 0x04, 0x33, 0xC9, 0x85, 0xC0, 0x89,
@@ -117,12 +110,10 @@ constexpr BYTE kBFSoldierGetPoseCameraPositionPrefix[] = {
     0x00, 0xC2, 0x04, 0x00};
 
 using Matrix4 = bfvr::stereo::Matrix4;
-
 bool IsFinite(const float value) noexcept
 {
     return std::isfinite(value);
 }
-
 bool IsFinite(const Matrix4& matrix) noexcept
 {
     for (const auto& row : matrix.values)
@@ -137,7 +128,6 @@ bool IsFinite(const Matrix4& matrix) noexcept
     }
     return true;
 }
-
 bool HasExpectedPrefix(
     const void* target,
     const BYTE* expected,
@@ -156,7 +146,6 @@ bool HasExpectedPrefix(
         return false;
     }
 }
-
 Matrix4 Multiply(const Matrix4& left, const Matrix4& right) noexcept
 {
     Matrix4 result = {};
@@ -173,7 +162,6 @@ Matrix4 Multiply(const Matrix4& left, const Matrix4& right) noexcept
     }
     return result;
 }
-
 Matrix4 IdentityMatrix() noexcept
 {
     Matrix4 result = {};
@@ -183,7 +171,6 @@ Matrix4 IdentityMatrix() noexcept
     }
     return result;
 }
-
 std::optional<Matrix4> Invert(const Matrix4& matrix) noexcept
 {
     if (!IsFinite(matrix))
@@ -276,6 +263,8 @@ struct ArmIkRestore
 {
     std::byte* boneRecord = nullptr;
     LONG previousHandleIndex = -1;
+    LONG handBone = -1;
+    LONG handleIndex = -1;
     std::array<float, 3> targetPosition = {};
     std::array<float, 3> targetDelta = {};
     std::array<float, 3> gripDelta = {};
@@ -291,7 +280,6 @@ struct PendingLocalActiveItemAttachment
     const Matrix4* leftHandWorld = nullptr;
     LONG leftHandBone = -1;
 };
-
 struct RightHandFrameContext
 {
     void* soldier = nullptr;
@@ -299,9 +287,9 @@ struct RightHandFrameContext
     Matrix4 controllerRightHandWorld = {};
     Matrix4 inverseSoldierWorld = {};
     LONG controllerGeneration = 0;
+    LONG activeItemIndex = -1;
     bool valid = false;
 };
-
 struct ActiveItemAlignmentSnapshot
 {
     const void* activeItem = nullptr;
@@ -312,13 +300,11 @@ struct ActiveItemAlignmentSnapshot
     LONG leftHandBone = -1;
     bool leftSupportPoseValid = false;
 };
-
 struct PoseCameraTranslation
 {
     std::array<float, 3> localDelta = {};
     LONG pose = kStandingPose;
 };
-
 float DistanceSquared(
     const std::array<float, 3>& left,
     const std::array<float, 3>& right) noexcept
@@ -474,11 +460,12 @@ public:
         attachmentHookEnabled_ = true;
         skeletonHookEnabled_ = true;
         enabled_ = true;
+        (void)armPole_.Start(gameImage_, appendLog_);
         WriteLog(
             L"Native 1P right-arm IK armed at Skeleton::transform and the exact active-item AnimatedBundle attachment callback. OpenXR aim owns the held gun/fire basis continuously; BF1942's selected item supplies its own native hand-from-fire relation before IK is enabled, with no shot, spawn-camera, or process-global calibration. BF1942's authored crouch/prone camera translation is inherited without changing controller orientation. The complete native 1P arm root is shifted %.2f metres forward for VR shoulder placement. Existing authored IK targets are left untouched.",
             kFirstPersonArmRootForwardOffset);
         WriteLog(
-            L"Native 1P left-hand IK follows tracked OpenXR grip position and relative wrist rotation after selected-item warm-up. Left squeeze is reserved for proximity-gated support. Primary slot 3 preserves BF1942's native left-to-right-hand relation and permits a minimal fixed-pivot swing capped at 35 degrees; the exact result is shared by weapon presentation and fire. Close sidearm slot 2 captures the user's current visual cup without a jump and is permanently visual-only. Elbow/pole correction remains deferred.");
+            L"Native 1P left-hand IK follows tracked OpenXR grip position and relative wrist rotation after selected-item warm-up. Left squeeze is reserved for proximity-gated support. Primary slot 3 preserves BF1942's native left-to-right-hand relation and permits a minimal fixed-pivot swing capped at 35 degrees; the exact result is shared by weapon presentation and fire. Close sidearm slot 2 captures the user's current visual cup without a jump and is permanently visual-only. Elbow bend uses only Maya's direction-only rotate-plane pole for exact BFVR-owned 1P targets; no third-person body position is consumed.");
         return true;
     }
 
@@ -502,6 +489,7 @@ public:
         {
             Sleep(0);
         }
+        armPole_.Stop();
         bfvr::ClearWeaponViewOffset();
         if (enabled_)
         {
@@ -577,14 +565,20 @@ private:
                 skeleton,
                 rightFrame,
                 leftRestore);
+            self->armPole_.BeginFrame(skeleton, rightRestore.handBone,
+                rightRestore.handleIndex, leftRestore.handBone,
+                leftRestore.handleIndex, rightFrame.activeItemIndex);
             self->originalSkeletonTransform_(
                 skeleton,
                 effectiveRootTransform,
                 transformLimit);
+            self->armPole_.CaptureSolvedEndpoints(
+                rightRestore.boneRecord, leftRestore.boneRecord);
             self->CaptureInjectedMotionProbe(rightRestore);
         }
         __finally
         {
+            self->armPole_.EndFrame();
             self->Restore(leftRestore);
             self->Restore(rightRestore);
             if (!rightRestore.active)
@@ -1467,6 +1461,8 @@ private:
             ownedHandleIndex_ = activeHandleIndex;
             restore.boneRecord = boneRecord;
             restore.previousHandleIndex = priorHandleIndex;
+            restore.handBone = handBone;
+            restore.handleIndex = activeHandleIndex;
             restore.targetPosition = targetPosition;
             restore.targetDelta = {
                 targetPosition[0] - calibrationTargetPosition_[0],
@@ -1510,6 +1506,7 @@ private:
             frame.inverseSoldierWorld =
                 *inverseSoldierTransform;
             frame.controllerGeneration = generation;
+            frame.activeItemIndex = alignment.activeItemIndex;
             frame.valid = true;
             InterlockedIncrement(&injectedFrames_);
             return true;
@@ -1874,6 +1871,8 @@ private:
             restore.boneRecord = boneRecord;
             restore.previousHandleIndex =
                 priorHandleIndex;
+            restore.handBone = leftHandBone;
+            restore.handleIndex = activeHandleIndex;
             restore.controllerGeneration = generation;
             restore.active = true;
             if (loggedFreeLeftSoldier_ != soldier ||
@@ -2449,6 +2448,7 @@ private:
     bool activeItemAlignmentValid_ = false;
     bool activeItemLeftSupportPoseValid_ = false;
     bfvr::BFSoldierBoneResolver boneResolver_ = {};
+    bfvr::BFSoldierNativeArmPole armPole_ = {};
     void* cachedLeftHandSkeleton_ = nullptr;
     LONG cachedLeftHandBone_ = -1;
     void* loggedStanceSoldier_ = nullptr;
