@@ -901,3 +901,232 @@ stable skeleton lifetime, concrete wrist targets, a safe update boundary, and
 correct handling of native animation transitions. Failing any one of these is
 a reason to retain the native animated arms or omit arms, not to hard-code a
 single arm model.
+
+## Off-hand and two-handed weapon policy (2026-07-30)
+
+The 2026-07-29 known-best firearm path is the starting invariant: right grip
+owns the physical hold position, right aim owns firearm direction, the current
+game-selected item supplies its authored `handFromFire` rotation, and the same
+gun pose reaches the visual hand/weapon and `WeaponFire_Core`. Left-hand work
+must be additive and must fail back to that exact one-hand behavior.
+
+### External implementation findings
+
+- OpenXR defines `grip` as the pose for reliably rendering an object held in a
+  hand and `aim` as the runtime's pointing pose. The off hand should therefore
+  acquire and place a support hand from its **grip** pose, not from its aim ray
+  ([OpenXR 1.1](https://registry.khronos.org/OpenXR/specs/1.1/html/xrspec.html#input-sources)).
+- UEVR's generic flat-to-VR route attaches a chosen native weapon component to
+  one controller and calibrates that mesh/controller offset. It does not infer
+  a universal second grip; a game-specific integration must recover that
+  weapon's support relationship
+  ([UEVR 6DOF guide](https://docs.uevr.io/usage/adding_6dof.html)).
+- Half-Life 2: VR Mod requires the off hand to be near a weapon handle/grab
+  point and the player to hold Grip. The primary hand continues to aim; the
+  effect of two-handing is weapon-dependent, ranging from recoil control to
+  aesthetic support
+  ([HL2VR manual](https://halflife2vr.com/manual/#weapons)).
+- GTFO VR demonstrates the alternative automatic policy: double-handed aiming
+  activates when the off hand approaches the weapon grip and releases after it
+  moves far enough away. Its threshold and always-on behavior are configurable
+  ([GTFO VR source project](https://github.com/DSprtn/GTFO_VR_Plugin#aiming)).
+- Lambda1VR and RTCWQuest use held off-hand Grip for weapon stabilization.
+  Lambda1VR explicitly rejects the two-controller direction when the hands are
+  closer than 15 cm because the short baseline destabilizes handgun aiming
+  ([Lambda1VR controls](https://github.com/Team-Beef-Studios/Lambda1VR#controls),
+  [RTCWQuest controls](https://github.com/Team-Beef-Studios/RTCWQuest#controls)).
+- Unity's XR Interaction Toolkit models multi-hand interaction with a separate
+  `secondaryAttachTransform`, multiple-grab transformers, and an explicit
+  reinitialization choice when returning to one grab. This is useful structural
+  corroboration for an authored support socket plus a deliberate release
+  transition, not a BFVR runtime dependency
+  ([XR Grab Interactable](https://docs.unity.cn/Packages/com.unity.xr.interaction.toolkit%403.0/manual/xr-grab-interactable.html)).
+- FRIK's mature arm path rejects invalid or unreachable controller targets and
+  smooths wrist-twist changes to suppress elbow shake. BF1942 owns the actual
+  two-bone solve, but BFVR still needs the same finite/reachability/lifecycle
+  gates around any submitted target
+  ([FRIK Skeleton source](https://github.com/rollingrock/Fallout-4-VR-Body/blob/main/src/skeleton/Skeleton.cpp)).
+
+These implementations do not support a single universal behavior for all
+weapons. In particular, a long gun benefits from the line between two separated
+hands, while a cupped pistol has such a short baseline that using the off-hand
+position as full aim authority can amplify controller noise. BFVR should derive
+the distinction from the selected item's native authored hand separation before
+adding a manual weapon class table.
+
+### BFVR-specific transform policy
+
+The existing local `Skeleton::transform` transaction already observes the
+native right-hand matrix and the exact selected active item. Once a mod-safe
+`Bip01 L Hand` resolver exists, one untouched native update can provide a
+same-lifetime tuple:
+
+```text
+nativeLeftWorld
+nativeRightWorld
+nativeFireWorld
+```
+
+In BF1942's established row-vector order, the authored support relation is:
+
+```text
+leftFromFire = nativeLeftWorld * inverse(nativeFireWorld)
+```
+
+Under the current one-hand controller gun pose, its predicted support socket is:
+
+```text
+predictedLeftWorld = leftFromFire * controllerGunWorld
+```
+
+That relationship preserves the active animation's rifle fore-end, pistol-cup,
+and wrist pose without a BFVR per-weapon offset. It must be refreshed only
+after untouched native warm-up updates and scoped to the exact item and soldier
+lifetime, just like the validated right-hand `handFromFire` relation.
+
+Support acquisition should compare the tracked left grip with
+`predictedLeftWorld` rather than comparing the two controller origins. Require
+held left squeeze plus a small acquisition radius, then retain the state until
+squeeze release or a larger release radius. The larger radius supplies
+hysteresis. Tracking/focus loss, item/soldier changes, death, menus, non-finite
+matrices, or an existing native left-hand IK handle release immediately to the
+unmodified one-hand path.
+
+While supported:
+
+1. Right grip remains the weapon translation pivot.
+2. The weapon is never scaled to make two independently tracked hands fit.
+3. For a long authored support span, apply the minimal rotation about the right
+   grip that carries the predicted support direction toward the tracked left
+   grip. Right aim supplies the starting basis and retains roll authority.
+4. Draw the left hand at the authored support socket, not at an arbitrary point
+   floating off the weapon. Radial controller/socket mismatch is tolerated only
+   within the bounded capture/release region.
+5. For close pistol/cupped support, permanently keep the known-good right aim
+   entirely authoritative and use the off hand as visual IK only. A short
+   two-controller baseline is poorly conditioned for direction and must never
+   steer, translate, scale, stabilize, or otherwise modify the validated
+   pistol gun/fire basis.
+6. If the gun basis changes for long-gun support, publish that exact basis to
+   both the active visual/IK path and `WeaponFire_Core`; never create separate
+   visual and projectile aims.
+7. Do not reduce native spread/recoil, change cadence, or add a gameplay
+   accuracy bonus in the first implementation. Other mods do so, but it is a
+   separate gameplay policy rather than a requirement for two-hand pose.
+
+The release fallback is the existing direct right-grip/right-aim firearm pose.
+An optional short visual transition can be evaluated later, but the first
+bounded implementation should prefer exact visual/fire agreement and immediate
+fail-closed release over retaining a stale support pose.
+
+### Ungripped left hand and the knife-pose suggestion
+
+The owner's observed knife idle is useful evidence: roughly two seconds after
+equipping the knife, BF1942 exposes a plausible neutral left-arm/hand pose. It
+should be captured passively and compared with other native item, faction, and
+mod poses. It should **not** become a runtime dependency that requires a knife
+animation or hard-coded stock skeleton index.
+
+The first ungripped experiment should be narrower: solve the dynamically
+resolved left hand to the tracked left-grip **position** while retaining the
+current native wrist orientation. This tests left-arm reach, shoulder placement,
+handle ownership, and cleanup without inventing a controller-to-anatomical-wrist
+rotation. Only after the neutral native poses and left-hand bone axes are
+measured should BFVR decide whether the knife pose supplies a reusable neutral
+orientation reference or whether the current animation is the safer fallback.
+
+PID 21068 validated that position-only endpoint solve and exposed an independent
+extreme/opposite elbow-pole defect, which is intentionally deferred. The next
+bounded wrist test treats the accepted per-item native orientation as a zero
+pose and applies only controller rotation relative to the grip orientation at
+that capture. This can validate twist axes/order without claiming a final
+absolute palm/controller calibration or changing the elbow plane.
+
+PID 21116 then validated the relative wrist mapping across two active-item
+bindings: all rotation/twist axes and directions were correct. The elbow still
+selected the opposite pole and pointed away from the player, confirming that
+the accepted endpoint/wrist result should remain unchanged while pole-plane
+work is deferred.
+
+### Support acquisition and input resolution
+
+At the owner's direction, left squeeze no longer submits native prone. It is
+exclusive to off-hand support, and right-stick-down remains the prone route.
+This removes the gameplay side effect instead of conditionally mediating two
+meanings on the same press.
+
+The first runtime acquisition slice is visual-only for every item. It uses the
+right-authoritative gun matrix only to predict the authored support socket,
+requires the tracked left grip to remain within 0.12 m while squeezed for
+0.04 s, retains through a 0.20-m radius, and replaces only the left-hand IK
+target. It cannot modify weapon aim or fire. Close pistol/cupped support remains
+permanently visual-only; possible bounded long-gun steering is a later,
+separate policy.
+
+PID 9512 rejected that first positional anchor while validating its safety.
+BFVR had applied `leftFromFire` to a controller gun matrix whose orientation
+was the gun basis but whose translation was intentionally the right-grip
+origin. The stock slot-3 sample measured 0.3276 m left-hand-to-right-hand but
+only about 0.107 m left-hand-to-fire-origin, explaining why the rifle hand
+landed beside the dominant grip.
+
+The corrected visual policy therefore uses two explicit item-slot modes:
+
+1. Slot 3 applies
+   `nativeLeftWorld * inverse(nativeRightHandWorld)` to the exact solved
+   controller right-hand pose, preserving BF1942's real two-hand span.
+2. Slot 2 does not reuse BF1942's currently sampled 0.4426-m idle left-hand
+   pose as a pistol cup. The owner confirms that the game does contain a real
+   authored cupped pistol pose, but the current untouched warm-up sample does
+   not expose its animation state/timing. Until that state is recovered,
+   close+squeeze captures the current visual left-to-right relation without a
+   jump and locks that cup to the right hand until release. Left-controller
+   noise never reaches weapon aim.
+
+Other slots fail back to the free hand. PID 6476 and the owner's direct report
+validate both corrected modes in-headset. Pistol support remains permanently
+visual-only; long-gun steering remains a separate policy.
+
+That long-gun policy is now implemented for supported slot 3. It starts from
+the exact one-hand gun basis, holds the right-grip translation fixed, and
+applies the minimal twist-free swing that brings BF1942's authored support
+direction toward the tracked left-grip direction. The swing is capped at 35
+degrees, radial mismatch does not scale or translate the gun, and collapsed or
+ambiguous opposite directions fail back to one-hand aim. It is eligible only
+after the existing support state has acquired and only while current
+focus/tracking/squeeze, item binding, and native IK ownership remain valid.
+
+The adjusted gun matrix is installed before both visual right-hand/weapon
+attachment calculation and `WeaponFire_Core` publication. Thus rendered aim
+and projectile aim share one basis. The slot-2 captured cup is rejected by the
+steering bridge and binding, so the pistol remains permanently visual-only.
+Build `777A1982D5D38713292E7DBA9AAFFDA81C87BB64587C91DB794AC6CA38C48C2E`
+passes deterministic fixed-pivot, clamp, no-scale, radial-mismatch,
+degeneracy, current-input, tracked-grip conversion, and pistol-rejection
+coverage; headset behavior is still open.
+
+PID 24796 closes the first focused headset check. The owner reported that the
+two-hand result works very well. Runtime evidence shows repeated slot-3
+acquisition, next-frame steering activation, and release across three soldier
+lifetimes, with first-applied swings between 0.72 and 15.99 degrees. Repeated
+slot-2 cup acquisitions produced no primary-steering activation, confirming
+the pistol remained visual-only in the live session. The actual 35-degree
+limit, focus/tracking-loss fallback, semantic mod classification, native
+pistol-cup timing, and elbow-pole correction remain separate open checks.
+
+### Implementation gates
+
+1. Resolve `Bip01 L Hand` by native name on the live Skeleton; never hard-code
+   stock index 21.
+2. Passively validate same-update left/right/item transforms across rifle,
+   pistol, knife, grenade, weapon switch, reload, death/respawn, and at least
+   one mod/faction path.
+3. Pure-test the `Free -> Candidate -> Supported` state machine, hysteresis,
+   primary-pivot minimal rotation, close-support visual-only policy, item
+   lifetime invalidation, and all non-finite/untracked fallbacks.
+4. Extend the temporary native IK transaction with a separate reusable left
+   handle and guaranteed restoration of both bone handle indices. Preserve any
+   vehicle/mod-authored target.
+5. Headset-validate rifle and pistol separately before claiming general
+   two-hand support. Knives and grenades remain outside the claim while their
+   existing right-wrist presentation is unresolved.

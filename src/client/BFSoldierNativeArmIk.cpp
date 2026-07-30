@@ -1,5 +1,10 @@
 #include "client/BFSoldierNativeArmIk.h"
 
+#include "client/BFSoldierBoneResolver.h"
+#include "client/BFSoldierLeftGripRotationBinding.h"
+#include "client/BFSoldierOffHandSupportBinding.h"
+#include "client/BFSoldierOffHandWeaponSteering.h"
+#include "client/BFSoldierTrackedHandPose.h"
 #include "client/BFSoldierVrMotionFilter.h"
 #include "client/ControllerInputCache.h"
 #include "client/WeaponPoseRuntimeCache.h"
@@ -39,6 +44,7 @@ constexpr std::size_t kAnimatedBundleInterfaceOffset = 0x11C;
 constexpr std::size_t kSoldierTemplateOffset = 0x4C;
 constexpr std::size_t kSoldierFirstPersonStateOffset = 0x290;
 constexpr std::size_t kSoldierAnimationSkeletonOffset = 0x298;
+constexpr std::size_t kSoldierActiveItemIndexOffset = 0x3E8;
 constexpr std::ptrdiff_t kPlayerManagerGlobalRva = 0x0057D76C;
 constexpr std::size_t kPlayerManagerLocalPlayerOffset = 0x54;
 constexpr std::size_t kBFPlayerIsAliveOffset = 0xA9;
@@ -58,8 +64,12 @@ constexpr std::size_t kIkHandleStride = 0x50;
 constexpr std::size_t kMaximumBones = 256;
 constexpr std::size_t kMaximumIkHandles = 512;
 constexpr DWORD kControllerSampleMaximumAgeMs = 125;
+constexpr DWORD kLeftControllerHand = 0;
 constexpr DWORD kRightControllerHand = 1;
 constexpr float kBf1942WorldUnitsPerMeter = 1.0F;
+constexpr float kMaximumLeftHandDisplacement = 1.5F;
+constexpr float kMaximumPrimarySupportSwingRadians =
+    35.0F * 3.14159265358979323846F / 180.0F;
 // BF1942's authored floating-arm root sits too far behind the VR head. Move
 // the entire native first-person arm skeleton forward together so the
 // shoulder, solved hand, and game-attached weapon retain their relationships.
@@ -78,6 +88,7 @@ constexpr LONG kMaximumMotionProbeReports = 12;
 constexpr LONG kStandingPose = 0;
 constexpr LONG kLastSupportedPose = 2;
 constexpr float kMaximumPoseCameraTranslation = 3.0F;
+constexpr char kLeftHandBoneName[] = "Bip01 L Hand";
 
 constexpr BYTE kSkeletonTransformPrefix[] = {
     0x81, 0xEC, 0x90, 0x00, 0x00, 0x00, 0x8B, 0xD1,
@@ -277,6 +288,29 @@ struct PendingLocalActiveItemAttachment
 {
     void* soldier = nullptr;
     const Matrix4* handWorld = nullptr;
+    const Matrix4* leftHandWorld = nullptr;
+    LONG leftHandBone = -1;
+};
+
+struct RightHandFrameContext
+{
+    void* soldier = nullptr;
+    const void* activeItem = nullptr;
+    Matrix4 controllerRightHandWorld = {};
+    Matrix4 inverseSoldierWorld = {};
+    LONG controllerGeneration = 0;
+    bool valid = false;
+};
+
+struct ActiveItemAlignmentSnapshot
+{
+    const void* activeItem = nullptr;
+    Matrix4 handFromFire = {};
+    Matrix4 nativeLeftHandLocal = {};
+    Matrix4 leftHandFromRightHand = {};
+    LONG activeItemIndex = -1;
+    LONG leftHandBone = -1;
+    bool leftSupportPoseValid = false;
 };
 
 struct PoseCameraTranslation
@@ -373,6 +407,17 @@ public:
             return false;
         }
 
+        if (boneResolver_.Initialize(gameImage_))
+        {
+            WriteLog(
+                L"Native 1P off-hand probe armed its mod-safe live Skeleton name resolver for Bip01 L Hand.");
+        }
+        else
+        {
+            WriteLog(
+                L"Native 1P off-hand probe could not validate BF1942's BoneManager/string accessors. Left-hand discovery is disabled fail-closed; right-hand IK remains available.");
+        }
+
         const MH_STATUS createSkeletonStatus = MH_CreateHook(
             skeletonTransformTarget_,
             reinterpret_cast<LPVOID>(&NativeArmIk::SkeletonTransformHook),
@@ -432,6 +477,8 @@ public:
         WriteLog(
             L"Native 1P right-arm IK armed at Skeleton::transform and the exact active-item AnimatedBundle attachment callback. OpenXR aim owns the held gun/fire basis continuously; BF1942's selected item supplies its own native hand-from-fire relation before IK is enabled, with no shot, spawn-camera, or process-global calibration. BF1942's authored crouch/prone camera translation is inherited without changing controller orientation. The complete native 1P arm root is shifted %.2f metres forward for VR shoulder placement. Existing authored IK targets are left untouched.",
             kFirstPersonArmRootForwardOffset);
+        WriteLog(
+            L"Native 1P left-hand IK follows tracked OpenXR grip position and relative wrist rotation after selected-item warm-up. Left squeeze is reserved for proximity-gated support. Primary slot 3 preserves BF1942's native left-to-right-hand relation and permits a minimal fixed-pivot swing capped at 35 degrees; the exact result is shared by weapon presentation and fire. Close sidearm slot 2 captures the user's current visual cup without a jump and is permanently visual-only. Elbow/pole correction remains deferred.");
         return true;
     }
 
@@ -459,7 +506,7 @@ public:
         if (enabled_)
         {
             WriteLog(
-                L"Native 1P arm IK stopped: localTransforms=%ld rootShifted=%ld injected=%ld lifetimeBindings=%ld nativePoseCaptures=%ld trackingRejected=%ld deadPlayerRejected=%ld nativeTargetPreserved=%ld matrixRejected=%ld callFailures=%ld restoreFailures=%ld motionProbes=%ld activeItemChanges=%ld activeItemAlignments=%ld activeItemAlignmentFailures=%ld stanceTranslatedFrames=%ld stanceTransitions=%ld stanceReadFailures=%ld.",
+                L"Native 1P arm IK stopped: localTransforms=%ld rootShifted=%ld injected=%ld lifetimeBindings=%ld nativePoseCaptures=%ld trackingRejected=%ld deadPlayerRejected=%ld nativeTargetPreserved=%ld matrixRejected=%ld callFailures=%ld restoreFailures=%ld motionProbes=%ld activeItemChanges=%ld activeItemAlignments=%ld activeItemAlignmentFailures=%ld leftHandResolutions=%ld leftSupportCaptures=%ld leftSupportCaptureFailures=%ld leftInjected=%ld leftTrackingRejected=%ld leftNativeTargetPreserved=%ld leftMatrixRejected=%ld leftCallFailures=%ld leftRotationBindings=%ld leftRotationBindingFailures=%ld leftSupportEntered=%ld leftSupportExited=%ld primarySteered=%ld stanceTranslatedFrames=%ld stanceTransitions=%ld stanceReadFailures=%ld.",
                 localUpdates_,
                 rootShiftedFrames_,
                 injectedFrames_,
@@ -475,6 +522,19 @@ public:
                 activeItemChanges_,
                 activeItemAlignments_,
                 activeItemAlignmentFailures_,
+                leftHandResolutions_,
+                leftSupportCaptures_,
+                leftSupportCaptureFailures_,
+                leftInjectedFrames_,
+                leftTrackingRejected_,
+                leftNativeTargetPreserved_,
+                leftMatrixRejected_,
+                leftApplyFailures_,
+                leftRotationBindings_,
+                leftRotationBindingFailures_,
+                leftSupportEntered_,
+                leftSupportExited_,
+                primarySteeredFrames_,
                 stanceTranslatedFrames_,
                 stanceTransitions_,
                 stanceReadFailures_);
@@ -497,7 +557,9 @@ private:
         }
         InterlockedIncrement(&self->callbackEntrants_);
         pendingLocalActiveItemAttachment_ = {};
-        ArmIkRestore restore = {};
+        ArmIkRestore rightRestore = {};
+        ArmIkRestore leftRestore = {};
+        RightHandFrameContext rightFrame = {};
         __try
         {
             Matrix4 adjustedRoot = {};
@@ -510,17 +572,22 @@ private:
                 effectiveRootTransform = &adjustedRoot;
                 InterlockedIncrement(&self->rootShiftedFrames_);
             }
-            self->TryInject(skeleton, restore);
+            self->TryInject(skeleton, rightRestore, rightFrame);
+            self->TryInjectFreeLeftHand(
+                skeleton,
+                rightFrame,
+                leftRestore);
             self->originalSkeletonTransform_(
                 skeleton,
                 effectiveRootTransform,
                 transformLimit);
-            self->CaptureInjectedMotionProbe(restore);
+            self->CaptureInjectedMotionProbe(rightRestore);
         }
         __finally
         {
-            self->Restore(restore);
-            if (!restore.active)
+            self->Restore(leftRestore);
+            self->Restore(rightRestore);
+            if (!rightRestore.active)
             {
                 self->CaptureNativePose(skeleton);
             }
@@ -586,6 +653,18 @@ private:
 
         auto* const item = static_cast<std::byte*>(
             animatedBundleInterface) - kAnimatedBundleInterfaceOffset;
+        LONG activeItemIndex = -1;
+        __try
+        {
+            activeItemIndex =
+                *reinterpret_cast<const LONG*>(
+                    static_cast<const std::byte*>(soldier) +
+                    kSoldierActiveItemIndexOffset);
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            activeItemIndex = -1;
+        }
         bool shouldCapture = false;
         AcquireSRWLockExclusive(&activeItemAlignmentLock_);
         if (activeItemSoldier_ != soldier ||
@@ -594,17 +673,23 @@ private:
             activeItemSoldier_ = soldier;
             activeItemInterface_ = animatedBundleInterface;
             activeItem_ = item;
+            activeItemIndex_ = activeItemIndex;
             activeItemNativeWarmupCallbacks_ = 0;
             activeItemAlignmentValid_ = false;
             activeItemHandFromFire_ = {};
+            activeItemLeftHandFromRightHand_ = {};
+            activeItemNativeLeftHandLocal_ = {};
+            activeItemLeftHandBone_ = -1;
+            activeItemLeftSupportPoseValid_ = false;
             InterlockedIncrement(&activeItemChanges_);
             if (InterlockedIncrement(&loggedActiveItemChanges_) <= 8)
             {
                 WriteLog(
-                    L"Native 1P arm observed a new game-selected active item: soldier=%p item=%p interface=%p. Controller IK is withheld while BF1942 supplies a native attachment sample; no shot is required.",
+                    L"Native 1P arm observed a new game-selected active item: soldier=%p item=%p interface=%p activeItemIndex=%ld. Controller IK is withheld while BF1942 supplies a native attachment sample; no shot is required.",
                     soldier,
                     item,
-                    animatedBundleInterface);
+                    animatedBundleInterface,
+                    activeItemIndex);
             }
         }
         else if (!activeItemAlignmentValid_)
@@ -653,6 +738,36 @@ private:
             return;
         }
 
+        Matrix4 nativeLeftHandLocal = {};
+        Matrix4 leftHandFromRightHand = {};
+        bool hasLeftSupportPose = false;
+        Matrix4 nativeLeftHandWorld = {};
+        if (pending.leftHandWorld != nullptr &&
+            pending.leftHandBone >= 0)
+        {
+            const auto inverseNativeHandWorld =
+                Invert(nativeHandWorld);
+            if (SafeCopyMatrix(
+                    pending.leftHandWorld,
+                    nativeLeftHandLocal) &&
+                inverseNativeHandWorld.has_value())
+            {
+                nativeLeftHandWorld = Multiply(
+                    nativeLeftHandLocal,
+                    *soldierTransform);
+                leftHandFromRightHand = Multiply(
+                    nativeLeftHandWorld,
+                    *inverseNativeHandWorld);
+                hasLeftSupportPose =
+                    IsFinite(nativeLeftHandWorld) &&
+                    IsFinite(leftHandFromRightHand);
+            }
+            if (!hasLeftSupportPose)
+            {
+                InterlockedIncrement(&leftSupportCaptureFailures_);
+            }
+        }
+
         bool published = false;
         AcquireSRWLockExclusive(&activeItemAlignmentLock_);
         if (activeItemSoldier_ == soldier &&
@@ -661,6 +776,16 @@ private:
         {
             activeItemHandFromFire_ = *handFromFire;
             activeItemAlignmentValid_ = true;
+            if (hasLeftSupportPose)
+            {
+                activeItemLeftHandFromRightHand_ =
+                    leftHandFromRightHand;
+                activeItemNativeLeftHandLocal_ =
+                    nativeLeftHandLocal;
+                activeItemLeftHandBone_ =
+                    pending.leftHandBone;
+                activeItemLeftSupportPoseValid_ = true;
+            }
             published = true;
         }
         ReleaseSRWLockExclusive(&activeItemAlignmentLock_);
@@ -677,6 +802,27 @@ private:
                 nativeFireWorld->values[3][0],
                 nativeFireWorld->values[3][1],
                 nativeFireWorld->values[3][2]);
+            if (hasLeftSupportPose)
+            {
+                const float supportSpan = std::sqrt(DistanceSquared(
+                    {nativeHandWorld.values[3][0],
+                     nativeHandWorld.values[3][1],
+                     nativeHandWorld.values[3][2]},
+                    {nativeLeftHandWorld.values[3][0],
+                     nativeLeftHandWorld.values[3][1],
+                     nativeLeftHandWorld.values[3][2]}));
+                InterlockedIncrement(&leftSupportCaptures_);
+                WriteLog(
+                    L"Native 1P off-hand probe captured the same-update native left-to-right-hand relation without applying it: soldier=%p item=%p activeItemIndex=%ld leftBone=%ld nativeLeft=(%.4f,%.4f,%.4f) handSpan=%.4f. Primary-slot visual support may preserve this relation; close sidearms use a user-captured cup because BF1942's native left pose is not assumed to be a grip.",
+                    soldier,
+                    item,
+                    activeItemIndex,
+                    pending.leftHandBone,
+                    nativeLeftHandWorld.values[3][0],
+                    nativeLeftHandWorld.values[3][1],
+                    nativeLeftHandWorld.values[3][2],
+                    supportSpan);
+            }
         }
     }
 
@@ -722,17 +868,57 @@ private:
             {
                 return;
             }
+            const LONG leftHandBone = ResolveLeftHandBone(skeleton);
+            const Matrix4* const leftHandWorld =
+                leftHandBone >= 0 && leftHandBone < boneCount &&
+                leftHandBone != handBone
+                ? reinterpret_cast<const Matrix4*>(
+                      boneRecords +
+                      static_cast<std::size_t>(leftHandBone) *
+                          kBoneRecordStride +
+                      kBoneFinalMatrixOffset)
+                : nullptr;
             pendingLocalActiveItemAttachment_ = {
                 soldier,
                 reinterpret_cast<const Matrix4*>(
                     boneRecords +
                     static_cast<std::size_t>(handBone) * kBoneRecordStride +
-                    kBoneFinalMatrixOffset)};
+                    kBoneFinalMatrixOffset),
+                leftHandWorld,
+                leftHandWorld == nullptr ? -1 : leftHandBone};
         }
         __except (EXCEPTION_EXECUTE_HANDLER)
         {
             pendingLocalActiveItemAttachment_ = {};
         }
+    }
+
+    LONG ResolveLeftHandBone(void* skeleton) noexcept
+    {
+        if (skeleton == nullptr || !boneResolver_.IsReady())
+        {
+            return -1;
+        }
+        if (cachedLeftHandSkeleton_ == skeleton &&
+            cachedLeftHandBone_ >= 0)
+        {
+            return cachedLeftHandBone_;
+        }
+
+        const auto resolved =
+            boneResolver_.ResolveBoneIndex(skeleton, kLeftHandBoneName);
+        if (!resolved.has_value())
+        {
+            return -1;
+        }
+        cachedLeftHandSkeleton_ = skeleton;
+        cachedLeftHandBone_ = static_cast<LONG>(*resolved);
+        InterlockedIncrement(&leftHandResolutions_);
+        WriteLog(
+            L"Native 1P off-hand probe resolved Bip01 L Hand dynamically on live Skeleton %p at bone %ld.",
+            skeleton,
+            cachedLeftHandBone_);
+        return cachedLeftHandBone_;
     }
 
     bool TryMakeForwardShiftedRoot(
@@ -810,9 +996,13 @@ private:
         }
     }
 
-    bool TryInject(void* skeleton, ArmIkRestore& restore) noexcept
+    bool TryInject(
+        void* skeleton,
+        ArmIkRestore& restore,
+        RightHandFrameContext& frame) noexcept
     {
         restore = {};
+        frame = {};
         void* const soldier = bfvr::ReadCurrentBFSoldierVrCameraSoldier();
         if (skeleton == nullptr || soldier == nullptr)
         {
@@ -1032,14 +1222,17 @@ private:
                 kTrackingToSkeletonPositionOffset[2];
             controllerGunLocal.values[3][3] = 1.0F;
 
+            std::array<float, 3> stanceTranslation = {};
             const auto poseCameraTranslation =
                 ReadPoseCameraTranslation(soldier);
             if (poseCameraTranslation.has_value())
             {
                 for (std::size_t axis = 0; axis < 3; ++axis)
                 {
-                    controllerGunLocal.values[3][axis] +=
+                    stanceTranslation[axis] =
                         poseCameraTranslation->localDelta[axis];
+                    controllerGunLocal.values[3][axis] +=
+                        stanceTranslation[axis];
                 }
                 if (poseCameraTranslation->pose != kStandingPose)
                 {
@@ -1069,13 +1262,11 @@ private:
             // anatomical right-hand bone. The current game-selected item
             // supplies its authored hand-from-fire rotation through the
             // native attachment callback before controller IK is allowed.
-            const Matrix4 controllerGunWorld = Multiply(
+            Matrix4 controllerGunWorld = Multiply(
                 controllerGunLocal,
                 *soldierTransform);
-            Matrix4 nativeHandFromFireRotation = {};
-            if (!ReadActiveItemAlignment(
-                    soldier,
-                    nativeHandFromFireRotation))
+            ActiveItemAlignmentSnapshot alignment = {};
+            if (!ReadActiveItemAlignment(soldier, alignment))
             {
                 // Alignment warm-up affects only the anatomical hand/visual
                 // item. Keep publishing direct OpenXR gun aim so an immediate
@@ -1101,15 +1292,95 @@ private:
                 InterlockedIncrement(&matrixRejected_);
                 return false;
             }
-            const auto correctedHandWorld =
+            auto correctedHandWorld =
                 bfvr::stereo::MakeD3D8ControllerDirectedNativeHandMatrix(
                 controllerGunWorld,
-                nativeHandFromFireRotation);
+                alignment.handFromFire);
             if (!correctedHandWorld.has_value())
             {
                 ResetLifetimeBinding();
                 InterlockedIncrement(&matrixRejected_);
                 return false;
+            }
+            if (alignment.leftSupportPoseValid &&
+                alignment.activeItemIndex == 3 &&
+                IsTrackedGrip(sample.hands[kLeftControllerHand]))
+            {
+                const bool nativeLeftTargetActive =
+                    alignment.leftHandBone < 0 ||
+                    alignment.leftHandBone >= boneCount ||
+                    alignment.leftHandBone >=
+                        static_cast<LONG>(kMaximumBones) ||
+                    *reinterpret_cast<const LONG*>(
+                        boneRecords +
+                        static_cast<std::size_t>(
+                            alignment.leftHandBone) *
+                            kBoneRecordStride +
+                        kBoneIkHandleIndexOffset) != -1;
+                bfvr::BFSoldierOffHandWeaponSteeringInput input = {};
+                input.bindingId =
+                    bfvr::MakeBFSoldierOffHandBindingId(
+                        soldier, alignment.activeItem);
+                input.sessionFocused = sample.sessionFocused;
+                input.leftGripTracked = true;
+                input.leftSqueezeActive =
+                    (sample.hands[kLeftControllerHand].flags &
+                     bfvr::shared::
+                         kControllerHandFlagSqueezeActive) != 0;
+                input.nativeLeftHandTargetActive =
+                    nativeLeftTargetActive;
+                input.mode =
+                    bfvr::BFSoldierOffHandSupportMode::
+                        AuthoredHandSpan;
+                input.leftHand = sample.hands[kLeftControllerHand];
+                input.soldierWorld = *soldierTransform;
+                input.controllerGunWorld = controllerGunWorld;
+                input.controllerRightHandWorld =
+                    *correctedHandWorld;
+                input.leftHandFromRightHand =
+                    alignment.leftHandFromRightHand;
+                input.trackingOriginOffset =
+                    kTrackingToSkeletonPositionOffset;
+                input.stanceTranslation = stanceTranslation;
+                input.maximumSwingRadians =
+                    kMaximumPrimarySupportSwingRadians;
+                input.worldUnitsPerMetre =
+                    kBf1942WorldUnitsPerMeter;
+                const auto steering =
+                    bfvr::TryComputeBFSoldierOffHandWeaponSteering(
+                        offHandSupportBinding_,
+                        input);
+                if (steering.has_value())
+                {
+                    const auto steeredHand =
+                        bfvr::stereo::
+                            MakeD3D8ControllerDirectedNativeHandMatrix(
+                                steering->gunWorld,
+                                alignment.handFromFire);
+                    if (steeredHand.has_value())
+                    {
+                        controllerGunWorld = steering->gunWorld;
+                        correctedHandWorld = steeredHand;
+                        InterlockedIncrement(&primarySteeredFrames_);
+                        if (loggedPrimarySteeringBindingId_ !=
+                            input.bindingId)
+                        {
+                            loggedPrimarySteeringBindingId_ =
+                                input.bindingId;
+                            WriteLog(
+                                L"Native 1P two-hand primary steering active: soldier=%p item=%p activeItemIndex=%ld requested=%.2f deg applied=%.2f deg limit=35.00 deg. The right grip remains the fixed pivot; no scale is applied; this exact gun basis feeds right-hand IK, weapon presentation, and WeaponFire_Core. Sidearm support remains visual-only.",
+                                soldier,
+                                alignment.activeItem,
+                                alignment.activeItemIndex,
+                                steering->requestedSwingRadians *
+                                    180.0F /
+                                    3.14159265358979323846F,
+                                steering->appliedSwingRadians *
+                                    180.0F /
+                                    3.14159265358979323846F);
+                        }
+                    }
+                }
             }
             Matrix4 target = Multiply(
                 *correctedHandWorld,
@@ -1233,6 +1504,13 @@ private:
                 controllerGunWorld,
                 soldier,
                 generation);
+            frame.soldier = soldier;
+            frame.activeItem = alignment.activeItem;
+            frame.controllerRightHandWorld = targetWorld;
+            frame.inverseSoldierWorld =
+                *inverseSoldierTransform;
+            frame.controllerGeneration = generation;
+            frame.valid = true;
             InterlockedIncrement(&injectedFrames_);
             return true;
         }
@@ -1243,6 +1521,428 @@ private:
             InterlockedIncrement(&applyFailures_);
             return false;
         }
+    }
+
+    bool TryInjectFreeLeftHand(
+        void* skeleton,
+        const RightHandFrameContext& rightFrame,
+        ArmIkRestore& restore) noexcept
+    {
+        restore = {};
+        void* const soldier =
+            bfvr::ReadCurrentBFSoldierVrCameraSoldier();
+        if (skeleton == nullptr || soldier == nullptr ||
+            !IsLocalPlayerAlive())
+        {
+            ResetLeftGripRotationBinding();
+            ResetOffHandSupportBinding();
+            return false;
+        }
+
+        // Skeleton::transform is global. Reject non-local transforms before
+        // reading controller state or changing the resolver/handle cache.
+        __try
+        {
+            const auto* const soldierBytes =
+                static_cast<const std::byte*>(soldier);
+            if (*reinterpret_cast<void* const*>(
+                    soldierBytes +
+                    kSoldierAnimationSkeletonOffset) !=
+                skeleton)
+            {
+                // Global Skeleton transforms interleave with the local arm.
+                // A remote Skeleton is not a local support invalidation.
+                return false;
+            }
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            return false;
+        }
+
+        bfvr::D3D8RuntimeControllerSample sample = {};
+        LONG generation = 0;
+        if (!bfvr::ReadFreshAcceptedControllerInput(
+                sample,
+                generation,
+                kControllerSampleMaximumAgeMs) ||
+            !IsTrackedGrip(sample.hands[kLeftControllerHand]))
+        {
+            ResetLeftGripRotationBinding();
+            ResetOffHandSupportBinding();
+            InterlockedIncrement(&leftTrackingRejected_);
+            return false;
+        }
+
+        const LONG leftHandBone =
+            ResolveLeftHandBone(skeleton);
+        ActiveItemAlignmentSnapshot alignment = {};
+        if (leftHandBone < 0 ||
+            !ReadActiveItemAlignment(soldier, alignment) ||
+            !alignment.leftSupportPoseValid ||
+            alignment.leftHandBone != leftHandBone)
+        {
+            ResetOffHandSupportBinding();
+            return false;
+        }
+        const Matrix4& nativeLeftHandLocal =
+            alignment.nativeLeftHandLocal;
+        const Matrix4& leftHandFromRightHand =
+            alignment.leftHandFromRightHand;
+        const void* const activeItem = alignment.activeItem;
+        const LONG activeItemIndex = alignment.activeItemIndex;
+        if (!rightFrame.valid ||
+            rightFrame.soldier != soldier ||
+            rightFrame.activeItem != activeItem ||
+            rightFrame.controllerGeneration != generation)
+        {
+            ResetOffHandSupportBinding();
+        }
+
+        __try
+        {
+            const auto* const soldierBytes =
+                static_cast<const std::byte*>(soldier);
+            if (soldierBytes[kSoldierFirstPersonStateOffset] ==
+                    std::byte{0} ||
+                *reinterpret_cast<void* const*>(
+                    soldierBytes +
+                    kSoldierAnimationSkeletonOffset) !=
+                    skeleton)
+            {
+                ResetOffHandSupportBinding();
+                return false;
+            }
+
+            const LONG boneCount =
+                *reinterpret_cast<const LONG*>(
+                    static_cast<const std::byte*>(skeleton) +
+                    kSkeletonBoneCountOffset);
+            std::byte* const boneRecords =
+                *reinterpret_cast<std::byte* const*>(
+                    static_cast<const std::byte*>(skeleton) +
+                    kSkeletonBoneRecordsOffset);
+            if (leftHandBone >= boneCount ||
+                leftHandBone >=
+                    static_cast<LONG>(kMaximumBones) ||
+                boneRecords == nullptr)
+            {
+                ResetOffHandSupportBinding();
+                InterlockedIncrement(&leftMatrixRejected_);
+                return false;
+            }
+
+            std::byte* const boneRecord =
+                boneRecords +
+                static_cast<std::size_t>(leftHandBone) *
+                    kBoneRecordStride;
+            const LONG priorHandleIndex =
+                *reinterpret_cast<const LONG*>(
+                    boneRecord + kBoneIkHandleIndexOffset);
+            if (priorHandleIndex != -1)
+            {
+                // Vehicle steering or a mod-authored target owns the left
+                // hand. Never replace it with the experimental free-hand
+                // controller target.
+                ResetOwnedLeftHandle();
+                ResetLeftGripRotationBinding();
+                ResetOffHandSupportBinding();
+                InterlockedIncrement(
+                    &leftNativeTargetPreserved_);
+                return false;
+            }
+
+            std::array<float, 3> stanceTranslation = {};
+            const auto poseCameraTranslation =
+                ReadPoseCameraTranslation(soldier);
+            if (poseCameraTranslation.has_value())
+            {
+                stanceTranslation =
+                    poseCameraTranslation->localDelta;
+            }
+            const auto leftGrip =
+                bfvr::MakeBFSoldierTrackedHandPose(
+                    sample.hands[kLeftControllerHand],
+                    IdentityMatrix(),
+                    kTrackingToSkeletonPositionOffset,
+                    stanceTranslation,
+                    kBf1942WorldUnitsPerMeter);
+            if (!leftGrip.has_value())
+            {
+                ResetOffHandSupportBinding();
+                InterlockedIncrement(&leftMatrixRejected_);
+                return false;
+            }
+            Matrix4 target = {};
+            if (!MakeControllerRotatedLeftHandTarget(
+                    soldier,
+                    skeleton,
+                    leftHandBone,
+                    activeItem,
+                    leftGrip->local,
+                    nativeLeftHandLocal,
+                    generation,
+                    target))
+            {
+                InterlockedIncrement(&leftMatrixRejected_);
+                return false;
+            }
+            target.values[3][0] = leftGrip->local.values[3][0];
+            target.values[3][1] = leftGrip->local.values[3][1];
+            target.values[3][2] = leftGrip->local.values[3][2];
+            target.values[3][3] = 1.0F;
+
+            if (rightFrame.valid &&
+                rightFrame.soldier == soldier &&
+                rightFrame.activeItem == activeItem &&
+                rightFrame.controllerGeneration == generation)
+            {
+                bfvr::BFSoldierOffHandSupportInput supportInput = {};
+                supportInput.bindingId =
+                    bfvr::MakeBFSoldierOffHandBindingId(
+                        soldier, activeItem);
+                supportInput.timeSeconds =
+                    static_cast<double>(
+                        sample.predictedDisplayTime) *
+                    1.0e-9;
+                supportInput.squeezeValue =
+                    sample.hands[kLeftControllerHand]
+                        .squeezeValue;
+                supportInput.sessionFocused =
+                    sample.sessionFocused;
+                supportInput.leftGripTracked = true;
+                supportInput.leftSqueezeActive =
+                    (sample.hands[kLeftControllerHand].flags &
+                     bfvr::shared::
+                         kControllerHandFlagSqueezeActive) != 0;
+                supportInput.nativeLeftHandTargetActive = false;
+                supportInput.mode =
+                    activeItemIndex == 2
+                    ? bfvr::BFSoldierOffHandSupportMode::
+                          CapturedClose
+                    : activeItemIndex == 3
+                    ? bfvr::BFSoldierOffHandSupportMode::
+                          AuthoredHandSpan
+                    : bfvr::BFSoldierOffHandSupportMode::
+                          Disabled;
+                supportInput.leftHandFromRightHand =
+                    leftHandFromRightHand;
+                supportInput.controllerRightHandWorld =
+                    rightFrame.controllerRightHandWorld;
+                supportInput.inverseSoldierWorld =
+                    rightFrame.inverseSoldierWorld;
+                supportInput.controllerLeftHandLocal = target;
+                const auto support =
+                    offHandSupportBinding_.Update(
+                        supportInput);
+                if (support.enteredSupport)
+                {
+                    InterlockedIncrement(
+                        &leftSupportEntered_);
+                    const wchar_t* const supportMode =
+                        activeItemIndex == 2
+                        ? L"captured close sidearm cup"
+                        : L"native left-to-right-hand span";
+                    WriteLog(
+                        L"Native 1P off-hand support acquired: soldier=%p item=%p activeItemIndex=%ld bone=%ld controllerGeneration=%ld distance=%.4f m mode=%ls. Close sidearms remain visual-only; the authored primary span becomes eligible for bounded fixed-pivot steering on the next matched frame.",
+                        soldier,
+                        activeItem,
+                        activeItemIndex,
+                        leftHandBone,
+                        generation,
+                        support.controllerDistanceMetres,
+                        supportMode);
+                }
+                if (support.exitedSupport)
+                {
+                    InterlockedIncrement(
+                        &leftSupportExited_);
+                    loggedPrimarySteeringBindingId_ = 0;
+                    WriteLog(
+                        L"Native 1P off-hand support released: soldier=%p item=%p activeItemIndex=%ld controllerGeneration=%ld distance=%.4f m. The left hand returned to tracked free-hand IK and any primary steering returned immediately to right-authoritative aim.",
+                        soldier,
+                        activeItem,
+                        activeItemIndex,
+                        generation,
+                        support.controllerDistanceMetres);
+                }
+                if (support.supported)
+                {
+                    target = support.targetLocal;
+                }
+            }
+
+            const std::array<float, 3> nativePosition = {
+                nativeLeftHandLocal.values[3][0],
+                nativeLeftHandLocal.values[3][1],
+                nativeLeftHandLocal.values[3][2]};
+            const std::array<float, 3> targetPosition = {
+                target.values[3][0],
+                target.values[3][1],
+                target.values[3][2]};
+            if (!IsFinite(target) ||
+                DistanceSquared(
+                    nativePosition,
+                    targetPosition) >
+                    kMaximumLeftHandDisplacement *
+                        kMaximumLeftHandDisplacement)
+            {
+                InterlockedIncrement(&leftMatrixRejected_);
+                return false;
+            }
+
+            const std::byte* const skeletonBytes =
+                static_cast<const std::byte*>(skeleton);
+            const std::byte* const handleBegin =
+                *reinterpret_cast<std::byte* const*>(
+                    skeletonBytes +
+                    kSkeletonIkHandleBeginOffset);
+            const std::byte* const handleEnd =
+                *reinterpret_cast<std::byte* const*>(
+                    skeletonBytes +
+                    kSkeletonIkHandleEndOffset);
+            const std::uintptr_t begin =
+                reinterpret_cast<std::uintptr_t>(
+                    handleBegin);
+            const std::uintptr_t end =
+                reinterpret_cast<std::uintptr_t>(
+                    handleEnd);
+            if ((handleBegin != nullptr &&
+                 handleEnd == nullptr) ||
+                end < begin ||
+                end - begin >
+                    kMaximumIkHandles * kIkHandleStride ||
+                (end - begin) % kIkHandleStride != 0)
+            {
+                InterlockedIncrement(&leftMatrixRejected_);
+                return false;
+            }
+
+            const std::size_t handleCount =
+                static_cast<std::size_t>(
+                    (end - begin) / kIkHandleStride);
+            if (ownedLeftHandleSkeleton_ == skeleton &&
+                ownedLeftHandleBone_ == leftHandBone &&
+                ownedLeftHandleIndex_ >= 0)
+            {
+                const std::size_t ownedIndex =
+                    static_cast<std::size_t>(
+                        ownedLeftHandleIndex_);
+                if (handleBegin != nullptr &&
+                    ownedIndex < handleCount &&
+                    *reinterpret_cast<const LONG*>(
+                        handleBegin +
+                        ownedIndex * kIkHandleStride +
+                        0x4C) == leftHandBone)
+                {
+                    *reinterpret_cast<LONG*>(
+                        boneRecord +
+                        kBoneIkHandleIndexOffset) =
+                        ownedLeftHandleIndex_;
+                }
+                else
+                {
+                    ResetOwnedLeftHandle();
+                }
+            }
+
+            const auto applyIk =
+                reinterpret_cast<ApplyIkFn>(applyIkTarget_);
+            if (applyIk == nullptr)
+            {
+                InterlockedIncrement(&leftApplyFailures_);
+                return false;
+            }
+            applyIk(
+                skeleton,
+                leftHandBone,
+                targetPosition.data(),
+                &target);
+            const LONG activeHandleIndex =
+                *reinterpret_cast<const LONG*>(
+                    boneRecord +
+                    kBoneIkHandleIndexOffset);
+            if (activeHandleIndex < 0)
+            {
+                InterlockedIncrement(&leftApplyFailures_);
+                return false;
+            }
+
+            ownedLeftHandleSkeleton_ = skeleton;
+            ownedLeftHandleBone_ = leftHandBone;
+            ownedLeftHandleIndex_ = activeHandleIndex;
+            restore.boneRecord = boneRecord;
+            restore.previousHandleIndex =
+                priorHandleIndex;
+            restore.controllerGeneration = generation;
+            restore.active = true;
+            if (loggedFreeLeftSoldier_ != soldier ||
+                loggedFreeLeftSkeleton_ != skeleton ||
+                loggedFreeLeftBone_ != leftHandBone)
+            {
+                loggedFreeLeftSoldier_ = soldier;
+                loggedFreeLeftSkeleton_ = skeleton;
+                loggedFreeLeftBone_ = leftHandBone;
+                WriteLog(
+                    L"Native 1P free left hand bound to tracked OpenXR grip: soldier=%p skeleton=%p bone=%ld generation=%ld native=(%.4f,%.4f,%.4f) target=(%.4f,%.4f,%.4f). Position is absolute; wrist twist/rotation is relative to the selected item's native zero pose. After proximity acquisition, primary slot 3 may steer by a bounded fixed-pivot swing; close sidearm slot 2 captures only a visual cup. Elbow/pole correction is not active.",
+                    soldier,
+                    skeleton,
+                    leftHandBone,
+                    generation,
+                    nativePosition[0],
+                    nativePosition[1],
+                    nativePosition[2],
+                    targetPosition[0],
+                    targetPosition[1],
+                    targetPosition[2]);
+            }
+            InterlockedIncrement(&leftInjectedFrames_);
+            return true;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            InterlockedIncrement(&leftApplyFailures_);
+            return false;
+        }
+    }
+
+    bool MakeControllerRotatedLeftHandTarget(
+        void* soldier,
+        void* skeleton,
+        const LONG leftHandBone,
+        const void* activeItem,
+        const Matrix4& leftGrip,
+        const Matrix4& nativeLeftHandLocal,
+        const LONG generation,
+        Matrix4& target) noexcept
+    {
+        target = {};
+        bool createdBinding = false;
+        if (!leftGripRotationBinding_.Update(
+                soldier,
+                skeleton,
+                activeItem,
+                leftHandBone,
+                leftGrip,
+                nativeLeftHandLocal,
+                target,
+                createdBinding))
+        {
+            InterlockedIncrement(&leftRotationBindingFailures_);
+            return false;
+        }
+        if (createdBinding)
+        {
+            InterlockedIncrement(&leftRotationBindings_);
+            WriteLog(
+                L"Native 1P free left wrist bound relative controller rotation: soldier=%p skeleton=%p item=%p bone=%ld generation=%ld. The current native wrist is the zero pose; subsequent tracked grip twist/rotation is applied 1:1. Elbow/pole correction remains deliberately deferred.",
+                soldier,
+                skeleton,
+                activeItem,
+                leftHandBone,
+                generation);
+        }
+        return IsFinite(target);
     }
 
     std::optional<Matrix4> ReadSoldierTransform(void* soldier) noexcept
@@ -1351,9 +2051,9 @@ private:
 
     bool ReadActiveItemAlignment(
         const void* soldier,
-        Matrix4& handFromFire) noexcept
+        ActiveItemAlignmentSnapshot& result) noexcept
     {
-        handFromFire = {};
+        result = {};
         AcquireSRWLockShared(&activeItemAlignmentLock_);
         const bool valid =
             activeItemAlignmentValid_ &&
@@ -1362,10 +2062,31 @@ private:
             activeItemInterface_ != nullptr;
         if (valid)
         {
-            handFromFire = activeItemHandFromFire_;
+            result.handFromFire = activeItemHandFromFire_;
+            result.activeItem = activeItem_;
+            result.activeItemIndex = activeItemIndex_;
+            result.leftHandBone = activeItemLeftHandBone_;
+            result.leftSupportPoseValid =
+                activeItemLeftSupportPoseValid_;
+            if (result.leftSupportPoseValid)
+            {
+                result.nativeLeftHandLocal =
+                    activeItemNativeLeftHandLocal_;
+                result.leftHandFromRightHand =
+                    activeItemLeftHandFromRightHand_;
+            }
         }
         ReleaseSRWLockShared(&activeItemAlignmentLock_);
-        return valid && IsFinite(handFromFire);
+        if (!valid || result.activeItem == nullptr ||
+            !IsFinite(result.handFromFire))
+        {
+            return false;
+        }
+        result.leftSupportPoseValid =
+            result.leftSupportPoseValid &&
+            IsFinite(result.nativeLeftHandLocal) &&
+            IsFinite(result.leftHandFromRightHand);
+        return true;
     }
 
     void ResetActiveItemAlignment() noexcept
@@ -1374,9 +2095,14 @@ private:
         activeItemSoldier_ = nullptr;
         activeItemInterface_ = nullptr;
         activeItem_ = nullptr;
+        activeItemIndex_ = -1;
         activeItemHandFromFire_ = {};
+        activeItemLeftHandFromRightHand_ = {};
+        activeItemNativeLeftHandLocal_ = {};
+        activeItemLeftHandBone_ = -1;
         activeItemNativeWarmupCallbacks_ = 0;
         activeItemAlignmentValid_ = false;
+        activeItemLeftSupportPoseValid_ = false;
         ReleaseSRWLockExclusive(&activeItemAlignmentLock_);
     }
 
@@ -1568,6 +2294,24 @@ private:
         ownedHandleIndex_ = -1;
     }
 
+    void ResetOwnedLeftHandle() noexcept
+    {
+        ownedLeftHandleSkeleton_ = nullptr;
+        ownedLeftHandleBone_ = -1;
+        ownedLeftHandleIndex_ = -1;
+    }
+
+    void ResetLeftGripRotationBinding() noexcept
+    {
+        leftGripRotationBinding_.Reset();
+    }
+
+    void ResetOffHandSupportBinding() noexcept
+    {
+        offHandSupportBinding_.Reset();
+        loggedPrimarySteeringBindingId_ = 0;
+    }
+
     void RemoveHooks() noexcept
     {
         if (skeletonHookCreated_ && skeletonTransformTarget_ != nullptr)
@@ -1600,12 +2344,21 @@ private:
         setRelativeBoneTransformTarget_ = nullptr;
         getSoldierPoseTarget_ = nullptr;
         getPoseCameraPositionTarget_ = nullptr;
+        boneResolver_.Reset();
+        cachedLeftHandSkeleton_ = nullptr;
+        cachedLeftHandBone_ = -1;
         originalSkeletonTransform_ = nullptr;
         originalSetRelativeBoneTransform_ = nullptr;
         ResetLifetimeBinding();
         ResetObservedNativePose();
         ResetOwnedHandle();
+        ResetOwnedLeftHandle();
+        ResetLeftGripRotationBinding();
+        ResetOffHandSupportBinding();
         ResetActiveItemAlignment();
+        loggedFreeLeftSoldier_ = nullptr;
+        loggedFreeLeftSkeleton_ = nullptr;
+        loggedFreeLeftBone_ = -1;
         loggedStanceSoldier_ = nullptr;
         loggedStancePose_ = -1;
         InterlockedExchange(&started_, 0);
@@ -1660,6 +2413,19 @@ private:
     volatile LONG activeItemChanges_ = 0;
     volatile LONG activeItemAlignments_ = 0;
     volatile LONG activeItemAlignmentFailures_ = 0;
+    volatile LONG leftHandResolutions_ = 0;
+    volatile LONG leftSupportCaptures_ = 0;
+    volatile LONG leftSupportCaptureFailures_ = 0;
+    volatile LONG leftInjectedFrames_ = 0;
+    volatile LONG leftTrackingRejected_ = 0;
+    volatile LONG leftNativeTargetPreserved_ = 0;
+    volatile LONG leftMatrixRejected_ = 0;
+    volatile LONG leftApplyFailures_ = 0;
+    volatile LONG leftRotationBindings_ = 0;
+    volatile LONG leftRotationBindingFailures_ = 0;
+    volatile LONG leftSupportEntered_ = 0;
+    volatile LONG leftSupportExited_ = 0;
+    volatile LONG primarySteeredFrames_ = 0;
     volatile LONG stanceTranslatedFrames_ = 0;
     volatile LONG stanceTransitions_ = 0;
     volatile LONG stanceReadFailures_ = 0;
@@ -1672,11 +2438,19 @@ private:
     bool hasCalibration_ = false;
     SRWLOCK activeItemAlignmentLock_ = SRWLOCK_INIT;
     Matrix4 activeItemHandFromFire_ = {};
+    Matrix4 activeItemLeftHandFromRightHand_ = {};
+    Matrix4 activeItemNativeLeftHandLocal_ = {};
     const void* activeItemSoldier_ = nullptr;
     const void* activeItemInterface_ = nullptr;
     const void* activeItem_ = nullptr;
+    LONG activeItemIndex_ = -1;
     LONG activeItemNativeWarmupCallbacks_ = 0;
+    LONG activeItemLeftHandBone_ = -1;
     bool activeItemAlignmentValid_ = false;
+    bool activeItemLeftSupportPoseValid_ = false;
+    bfvr::BFSoldierBoneResolver boneResolver_ = {};
+    void* cachedLeftHandSkeleton_ = nullptr;
+    LONG cachedLeftHandBone_ = -1;
     void* loggedStanceSoldier_ = nullptr;
     LONG loggedStancePose_ = -1;
     Matrix4 observedNativeHand_ = {};
@@ -1688,6 +2462,17 @@ private:
     void* ownedHandleSkeleton_ = nullptr;
     LONG ownedHandleBone_ = -1;
     LONG ownedHandleIndex_ = -1;
+    void* ownedLeftHandleSkeleton_ = nullptr;
+    LONG ownedLeftHandleBone_ = -1;
+    LONG ownedLeftHandleIndex_ = -1;
+    bfvr::BFSoldierLeftGripRotationBinding
+        leftGripRotationBinding_ = {};
+    bfvr::BFSoldierOffHandSupportBinding
+        offHandSupportBinding_ = {};
+    std::uint64_t loggedPrimarySteeringBindingId_ = 0;
+    void* loggedFreeLeftSoldier_ = nullptr;
+    void* loggedFreeLeftSkeleton_ = nullptr;
+    LONG loggedFreeLeftBone_ = -1;
 };
 
 NativeArmIk* NativeArmIk::active_ = nullptr;

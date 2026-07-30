@@ -113,9 +113,14 @@ add_library(BFVRClient SHARED
   client/D3D8RenderViewPoseHook.cpp
   client/BFSoldierVrMotionFilter.cpp
   client/BFSoldierFirstPersonArmProbe.cpp
+  client/BFSoldierLeftGripRotationBinding.cpp
   client/BFSoldierNativeArmIk.cpp
+  client/BFSoldierOffHandSupportBinding.cpp
+  client/BFSoldierOffHandWeaponSteering.cpp
+  client/BFSoldierTrackedHandPose.cpp
   client/D3D8RuntimePosePolicy.cpp
   client/D3D8RuntimeRedirect.cpp
+  client/BFSoldierBoneResolver.cpp
   client/PlayerInputProbe.cpp
   client/WeaponFireProbe.cpp
   client/WeaponAimOverlay.cpp
@@ -158,6 +163,8 @@ add_library(BFVRStereoMath STATIC
   stereo/D3D8SemanticDrawPolicy.cpp
   stereo/D3D8ShaderTransform.cpp
   stereo/D3D8WeaponDrawPolicy.cpp
+  stereo/OffHandSupportPolicy.cpp
+  stereo/OffHandWeaponSteeringMath.cpp
   stereo/WeaponMotionPolicy.cpp
   stereo/WeaponFireAimMath.cpp
   stereo/StereoMath.cpp
@@ -203,11 +210,18 @@ add_executable(BFVRWeaponFireAimMathTests
   stereo/WeaponFireAimMathTests.cpp
 )
 
+add_executable(BFVROffHandSupportPolicyTests
+  client/BFSoldierOffHandSupportBinding.cpp
+  client/BFSoldierOffHandWeaponSteering.cpp
+  client/BFSoldierTrackedHandPose.cpp
+  stereo/OffHandSupportPolicyTests.cpp
+)
+
 add_executable(BFVRRfaInspect
   tools/RfaInspect.cpp
 )
 
-foreach(target BFVRClient BFVRD3D8To9FlatClient BFVRLoader BFVROpenXRProbe BFVRSharedTextureProducerProbe BFVRD3D8To9SharedSurfaceProbe BFVRStereoMath BFVRStereoMathTests BFVRWeaponFireAimMathTests BFVRRfaInspect)
+foreach(target BFVRClient BFVRD3D8To9FlatClient BFVRLoader BFVROpenXRProbe BFVRSharedTextureProducerProbe BFVRD3D8To9SharedSurfaceProbe BFVRStereoMath BFVRStereoMathTests BFVRWeaponFireAimMathTests BFVROffHandSupportPolicyTests BFVRRfaInspect)
   target_compile_definitions(${target} PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
   set_property(TARGET ${target} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
   if(MSVC)
@@ -233,6 +247,7 @@ target_include_directories(BFVRD3D8To9FlatClient PRIVATE
 target_include_directories(BFVRStereoMath PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(BFVRStereoMathTests PRIVATE BFVRStereoMath)
 target_link_libraries(BFVRWeaponFireAimMathTests PRIVATE BFVRStereoMath)
+target_link_libraries(BFVROffHandSupportPolicyTests PRIVATE BFVRStereoMath)
 
 include(CTest)
 if(BUILD_TESTING)
@@ -240,6 +255,9 @@ if(BUILD_TESTING)
   add_test(
     NAME BFVRWeaponFireAimMathTests
     COMMAND BFVRWeaponFireAimMathTests)
+  add_test(
+    NAME BFVROffHandSupportPolicyTests
+    COMMAND BFVROffHandSupportPolicyTests)
 endif()
 
 foreach(target BFVRClient BFVROpenXRProbe)

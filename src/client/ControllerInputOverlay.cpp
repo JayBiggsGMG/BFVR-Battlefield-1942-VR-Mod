@@ -482,19 +482,8 @@ private:
                 kControllerTriggerReleaseThreshold,
                 triggerHeld));
 
-        const bool leftSqueezeActive =
-            (left.flags & bfvr::shared::kControllerHandFlagSqueezeActive) != 0;
-        const bool wasLeftSqueezeHeld = leftSqueezeHeld;
-        UpdateAnalogHeld(
-            leftSqueezeActive,
-            left.squeezeValue,
-            kControllerSqueezePressThreshold,
-            kControllerSqueezeReleaseThreshold,
-            leftSqueezeHeld);
-        SetPulseInput(
-            destination,
-            kLogicalInputProne,
-            leftSqueezeHeld && !wasLeftSqueezeHeld);
+        // Left squeeze is reserved exclusively for off-hand support. Prone
+        // remains available on right-stick down.
 
         const bool rightSqueezeActive =
             (right.flags & bfvr::shared::kControllerHandFlagSqueezeActive) != 0;
@@ -584,7 +573,7 @@ private:
         if (InterlockedCompareExchange(&firstEligibleFrameLogged, 1, 0) == 0)
         {
             WriteLog(
-                L"Controller input overlay accepted its first fresh focused local frame. Layout: left stick move; right stick smooth-turn with up jump/action and down prone; right trigger fire; right grip alt-fire; A jump/action; B reload; X use; Y crouch; left grip press prone. Controller poses do not write native camera-look input. All values remain temporary native PlayerInput fields.");
+                L"Controller input overlay accepted its first fresh focused local frame. Layout: left stick move; right stick smooth-turn with up jump/action and down prone; right trigger fire; right grip alt-fire; A jump/action; B reload; X use; Y crouch; left grip is reserved exclusively for off-hand support and submits no gameplay action. Controller poses do not write native camera-look input. All values remain temporary native PlayerInput fields.");
         }
     }
 
@@ -631,7 +620,6 @@ private:
     void ResetControllerState() noexcept
     {
         triggerHeld = false;
-        leftSqueezeHeld = false;
         rightSqueezeHeld = false;
         rightPrimaryWasDown = false;
         rightSecondaryWasDown = false;
@@ -719,7 +707,6 @@ private:
     volatile LONG unwritableDestinationFrames = 0;
     volatile LONG appliedFrames = 0;
     bool triggerHeld = false;
-    bool leftSqueezeHeld = false;
     bool rightSqueezeHeld = false;
     bool rightPrimaryWasDown = false;
     bool rightSecondaryWasDown = false;

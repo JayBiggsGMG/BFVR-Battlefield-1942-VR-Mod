@@ -1,0 +1,660 @@
+#include "stereo/OffHandSupportPolicy.h"
+#include "stereo/OffHandWeaponSteeringMath.h"
+#include "client/BFSoldierOffHandWeaponSteering.h"
+#include "client/BFSoldierOffHandSupportBinding.h"
+
+#include <cmath>
+#include <cstdio>
+#include <limits>
+
+namespace
+{
+
+using bfvr::stereo::OffHandSupportPolicy;
+using bfvr::stereo::OffHandSupportSample;
+using bfvr::stereo::OffHandSupportState;
+using bfvr::stereo::Matrix4;
+
+bool Expect(
+    const bool condition,
+    const char* message) noexcept
+{
+    if (!condition)
+    {
+        std::fprintf(stderr, "FAIL: %s\n", message);
+    }
+    return condition;
+}
+
+OffHandSupportSample ValidSample(
+    const double timeSeconds,
+    const float distanceMetres,
+    const std::uint64_t bindingId = 1) noexcept
+{
+    OffHandSupportSample sample = {};
+    sample.bindingId = bindingId;
+    sample.timeSeconds = timeSeconds;
+    sample.supportDistanceMetres = distanceMetres;
+    sample.sessionFocused = true;
+    sample.leftGripTracked = true;
+    sample.leftGripHeld = true;
+    sample.supportPoseValid = true;
+    return sample;
+}
+
+Matrix4 Translation(
+    const float x,
+    const float y,
+    const float z) noexcept
+{
+    Matrix4 result = {};
+    result.values[0][0] = 1.0F;
+    result.values[1][1] = 1.0F;
+    result.values[2][2] = 1.0F;
+    result.values[3][0] = x;
+    result.values[3][1] = y;
+    result.values[3][2] = z;
+    result.values[3][3] = 1.0F;
+    return result;
+}
+
+bool ReconstructsAuthoredVisualSocket() noexcept
+{
+    const auto leftFromRightHand =
+        Translation(0.40F, 0.0F, 0.0F);
+    Matrix4 controllerRightHandWorld = {};
+    // Row-vector +90-degree Z rotation: the authored +X socket must become
+    // +Y under the live solved right-hand basis.
+    controllerRightHandWorld.values[0][1] = 1.0F;
+    controllerRightHandWorld.values[1][0] = -1.0F;
+    controllerRightHandWorld.values[2][2] = 1.0F;
+    controllerRightHandWorld.values[3][0] = 2.0F;
+    controllerRightHandWorld.values[3][1] = 1.0F;
+    controllerRightHandWorld.values[3][2] = -3.0F;
+    controllerRightHandWorld.values[3][3] = 1.0F;
+    const auto inverseSoldier =
+        Translation(-2.0F, -1.0F, 3.0F);
+    const auto controllerLeft =
+        Translation(0.10F, 0.40F, 0.0F);
+    const auto result =
+        bfvr::stereo::ComputeOffHandAuthoredSupportPose(
+            leftFromRightHand,
+            controllerRightHandWorld,
+            inverseSoldier,
+            controllerLeft,
+            1.0F);
+    return Expect(
+               result.has_value(),
+               "valid authored visual socket was rejected") &&
+        Expect(
+            std::fabs(
+                result->targetLocal.values[3][1] -
+                0.40F) < 0.0001F,
+            "authored support target used the wrong row-vector order") &&
+        Expect(
+            std::fabs(
+                result->targetLocal.values[0][1] -
+                1.0F) < 0.0001F,
+            "authored support orientation did not follow the gun basis") &&
+        Expect(
+            std::fabs(
+                result->controllerDistanceMetres -
+                0.10F) < 0.0001F,
+            "controller-to-authored-socket distance is incorrect");
+}
+
+bool CapturedClosePoseIsNoJumpAndFollowsRightHand() noexcept
+{
+    auto rightHandWorld =
+        Translation(2.0F, 1.0F, -3.0F);
+    const auto inverseSoldier =
+        Translation(-2.0F, -1.0F, 3.0F);
+    const auto controllerLeft =
+        Translation(-0.08F, -0.03F, 0.02F);
+    const auto candidate =
+        bfvr::stereo::ComputeOffHandCloseSupportCandidate(
+            rightHandWorld,
+            inverseSoldier,
+            controllerLeft,
+            1.0F);
+    const auto relation =
+        bfvr::stereo::CaptureOffHandCloseRelation(
+            rightHandWorld,
+            inverseSoldier,
+            controllerLeft);
+    const auto atCapture =
+        relation.has_value()
+        ? bfvr::stereo::
+              ComputeOffHandCapturedCloseSupportPose(
+                  *relation,
+                  rightHandWorld,
+                  inverseSoldier,
+                  controllerLeft,
+                  1.0F)
+        : std::nullopt;
+    if (!Expect(
+            candidate.has_value() &&
+                relation.has_value() &&
+                atCapture.has_value(),
+            "valid close visual cup could not be captured") ||
+        !Expect(
+            candidate->controllerDistanceMetres > 0.08F &&
+                candidate->controllerDistanceMetres < 0.10F,
+            "close candidate did not measure hand separation") ||
+        !Expect(
+            std::fabs(
+                atCapture->targetLocal.values[3][0] -
+                controllerLeft.values[3][0]) < 0.0001F &&
+                std::fabs(
+                    atCapture->targetLocal.values[3][1] -
+                    controllerLeft.values[3][1]) < 0.0001F &&
+                std::fabs(
+                    atCapture->targetLocal.values[3][2] -
+                    controllerLeft.values[3][2]) < 0.0001F,
+            "close visual cup jumped when captured"))
+    {
+        return false;
+    }
+
+    rightHandWorld.values[3][0] += 0.50F;
+    const auto followed =
+        bfvr::stereo::ComputeOffHandCapturedCloseSupportPose(
+            *relation,
+            rightHandWorld,
+            inverseSoldier,
+            controllerLeft,
+            1.0F);
+    return Expect(
+        followed.has_value() &&
+            std::fabs(
+                followed->targetLocal.values[3][0] -
+                (controllerLeft.values[3][0] + 0.50F)) <
+                0.0001F,
+        "captured close cup did not follow the solved right hand");
+}
+
+bool CloseBindingCapturesAndIgnoresLeftNoise() noexcept
+{
+    bfvr::BFSoldierOffHandSupportBinding binding;
+    bfvr::BFSoldierOffHandSupportInput input = {};
+    input.bindingId = 7;
+    input.timeSeconds = 1.0;
+    input.squeezeValue = 1.0F;
+    input.sessionFocused = true;
+    input.leftGripTracked = true;
+    input.leftSqueezeActive = true;
+    input.mode =
+        bfvr::BFSoldierOffHandSupportMode::CapturedClose;
+    input.controllerRightHandWorld =
+        Translation(2.0F, 1.0F, -3.0F);
+    input.inverseSoldierWorld =
+        Translation(-2.0F, -1.0F, 3.0F);
+    input.controllerLeftHandLocal =
+        Translation(-0.08F, -0.03F, 0.02F);
+    if (!Expect(
+            binding.Update(input).state ==
+                OffHandSupportState::Candidate,
+            "close binding did not enter Candidate"))
+    {
+        return false;
+    }
+
+    input.timeSeconds = 1.05;
+    const auto acquired = binding.Update(input);
+    if (!Expect(
+            acquired.supported &&
+                acquired.enteredSupport,
+            "close binding did not capture support") ||
+        !Expect(
+            std::fabs(
+                acquired.targetLocal.values[3][0] -
+                input.controllerLeftHandLocal.values[3][0]) <
+                0.0001F,
+            "close binding jumped on acquisition"))
+    {
+        return false;
+    }
+    bfvr::BFSoldierOffHandSteeringInput steeringInput = {};
+    steeringInput.bindingId = input.bindingId;
+    steeringInput.squeezeValue = input.squeezeValue;
+    steeringInput.sessionFocused = true;
+    steeringInput.leftGripTracked = true;
+    steeringInput.leftSqueezeActive = true;
+    steeringInput.mode =
+        bfvr::BFSoldierOffHandSupportMode::CapturedClose;
+    steeringInput.controllerGunWorld =
+        input.controllerRightHandWorld;
+    steeringInput.predictedSupportWorld =
+        Translation(2.0F, 1.0F, -2.6F);
+    steeringInput.trackedLeftHandWorld =
+        Translation(2.1F, 1.0F, -2.6F);
+    steeringInput.maximumSwingRadians = 0.60F;
+    bfvr::stereo::OffHandWeaponSteeringResult steering = {};
+    if (!Expect(
+            !binding.TryComputeSupportedWeaponSteering(
+                steeringInput,
+                steering),
+            "captured-close pistol support was allowed to steer"))
+    {
+        return false;
+    }
+
+    input.timeSeconds = 1.06;
+    input.controllerRightHandWorld.values[3][0] += 0.10F;
+    input.controllerLeftHandLocal.values[3][0] += 0.15F;
+    const auto followed = binding.Update(input);
+    if (!Expect(
+            followed.supported &&
+                std::fabs(
+                    followed.targetLocal.values[3][0] -
+                    0.02F) < 0.0001F,
+            "close binding did not follow only the right-hand delta"))
+    {
+        return false;
+    }
+
+    input.timeSeconds = 1.07;
+    input.leftSqueezeActive = false;
+    input.squeezeValue = 0.0F;
+    const auto released = binding.Update(input);
+    return Expect(
+        released.state == OffHandSupportState::Free &&
+            released.exitedSupport,
+        "close binding did not release on squeeze-up");
+}
+
+bool AuthoredBindingAllowsOnlyCurrentSupportedSteering() noexcept
+{
+    bfvr::BFSoldierOffHandSupportBinding binding;
+    bfvr::BFSoldierOffHandSupportInput input = {};
+    input.bindingId = 11;
+    input.timeSeconds = 1.0;
+    input.squeezeValue = 1.0F;
+    input.sessionFocused = true;
+    input.leftGripTracked = true;
+    input.leftSqueezeActive = true;
+    input.mode =
+        bfvr::BFSoldierOffHandSupportMode::AuthoredHandSpan;
+    input.leftHandFromRightHand =
+        Translation(0.0F, 0.0F, 0.40F);
+    input.controllerRightHandWorld =
+        Translation(2.0F, 1.0F, -3.0F);
+    input.inverseSoldierWorld =
+        Translation(-2.0F, -1.0F, 3.0F);
+    input.controllerLeftHandLocal =
+        Translation(0.0F, 0.0F, 0.35F);
+    static_cast<void>(binding.Update(input));
+    input.timeSeconds = 1.05;
+    const auto acquired = binding.Update(input);
+    if (!Expect(
+            acquired.supported,
+            "authored binding did not acquire for steering"))
+    {
+        return false;
+    }
+
+    bfvr::BFSoldierOffHandSteeringInput steeringInput = {};
+    steeringInput.bindingId = input.bindingId;
+    steeringInput.squeezeValue = input.squeezeValue;
+    steeringInput.sessionFocused = true;
+    steeringInput.leftGripTracked = true;
+    steeringInput.leftSqueezeActive = true;
+    steeringInput.mode = input.mode;
+    steeringInput.controllerGunWorld =
+        input.controllerRightHandWorld;
+    steeringInput.predictedSupportWorld =
+        Translation(2.0F, 1.0F, -2.6F);
+    steeringInput.trackedLeftHandWorld =
+        Translation(2.1F, 1.0F, -2.6F);
+    steeringInput.maximumSwingRadians = 0.60F;
+    bfvr::stereo::OffHandWeaponSteeringResult steering = {};
+    if (!Expect(
+            binding.TryComputeSupportedWeaponSteering(
+                steeringInput,
+                steering),
+            "supported authored span could not steer"))
+    {
+        return false;
+    }
+
+    steeringInput.leftSqueezeActive = false;
+    return Expect(
+        !binding.TryComputeSupportedWeaponSteering(
+            steeringInput,
+            steering),
+        "current squeeze-up retained stale steering");
+}
+
+bool SoldierSteeringFrameUsesTrackedGripAndRejectsPistol() noexcept
+{
+    bfvr::BFSoldierOffHandSupportBinding binding;
+    bfvr::BFSoldierOffHandSupportInput support = {};
+    support.bindingId = 19;
+    support.timeSeconds = 1.0;
+    support.squeezeValue = 1.0F;
+    support.sessionFocused = true;
+    support.leftGripTracked = true;
+    support.leftSqueezeActive = true;
+    support.mode =
+        bfvr::BFSoldierOffHandSupportMode::AuthoredHandSpan;
+    support.leftHandFromRightHand =
+        Translation(0.0F, 0.0F, 0.40F);
+    support.controllerRightHandWorld =
+        Translation(2.0F, 1.0F, -3.0F);
+    support.inverseSoldierWorld =
+        Translation(-2.0F, -1.0F, 3.0F);
+    support.controllerLeftHandLocal =
+        Translation(0.05F, 0.0F, 0.40F);
+    static_cast<void>(binding.Update(support));
+    support.timeSeconds = 1.05;
+    if (!binding.Update(support).supported)
+    {
+        return Expect(
+            false,
+            "authored frame binding did not acquire");
+    }
+
+    bfvr::BFSoldierOffHandWeaponSteeringInput input = {};
+    input.bindingId = support.bindingId;
+    input.sessionFocused = true;
+    input.leftGripTracked = true;
+    input.leftSqueezeActive = true;
+    input.mode = support.mode;
+    input.leftHand.squeezeValue = 1.0F;
+    input.leftHand.gripPose.orientationW = 1.0F;
+    input.leftHand.gripPose.positionX = 2.10F;
+    input.leftHand.gripPose.positionY = 1.0F;
+    input.leftHand.gripPose.positionZ = 2.60F;
+    input.soldierWorld = Translation(0.0F, 0.0F, 0.0F);
+    input.controllerGunWorld =
+        support.controllerRightHandWorld;
+    input.controllerRightHandWorld =
+        support.controllerRightHandWorld;
+    input.leftHandFromRightHand =
+        support.leftHandFromRightHand;
+    input.maximumSwingRadians = 0.60F;
+    const auto rifle =
+        bfvr::TryComputeBFSoldierOffHandWeaponSteering(
+            binding,
+            input);
+    if (!Expect(
+            rifle.has_value() &&
+                std::fabs(
+                    rifle->gunWorld.values[3][0] - 2.0F) <
+                    0.0001F,
+            "soldier steering frame did not preserve its pivot"))
+    {
+        return false;
+    }
+    input.mode =
+        bfvr::BFSoldierOffHandSupportMode::CapturedClose;
+    return Expect(
+        !bfvr::TryComputeBFSoldierOffHandWeaponSteering(
+             binding,
+             input).has_value(),
+        "soldier steering frame accepted pistol mode");
+}
+
+bool SteeringUsesFixedPivotAndBoundedSwing() noexcept
+{
+    constexpr float kPi = 3.14159265358979323846F;
+    const float maximumSwing = 35.0F * kPi / 180.0F;
+    const auto gun = Translation(2.0F, 1.0F, -3.0F);
+    const auto predicted =
+        Translation(2.0F, 1.0F, -2.6F);
+    const auto tracked =
+        Translation(2.4F, 1.0F, -3.0F);
+    const auto result =
+        bfvr::stereo::ComputeBoundedOffHandWeaponSteering(
+            gun,
+            predicted,
+            tracked,
+            maximumSwing,
+            1.0F);
+    if (!Expect(
+            result.has_value(),
+            "valid long support steering was rejected"))
+    {
+        return false;
+    }
+
+    const float sine = std::sin(maximumSwing);
+    const float cosine = std::cos(maximumSwing);
+    return Expect(
+               std::fabs(
+                   result->appliedSwingRadians -
+                   maximumSwing) < 0.0001F,
+               "large off-hand swing was not bounded") &&
+        Expect(
+            std::fabs(result->gunWorld.values[3][0] - 2.0F) <
+                    0.0001F &&
+                std::fabs(result->gunWorld.values[3][1] - 1.0F) <
+                    0.0001F &&
+                std::fabs(result->gunWorld.values[3][2] + 3.0F) <
+                    0.0001F,
+            "off-hand steering moved the right-grip pivot") &&
+        Expect(
+            std::fabs(result->gunWorld.values[2][0] - sine) <
+                    0.0001F &&
+                std::fabs(result->gunWorld.values[2][2] - cosine) <
+                    0.0001F,
+            "bounded row-vector swing used the wrong direction") &&
+        Expect(
+            std::fabs(
+                result->gunWorld.values[2][0] *
+                        result->gunWorld.values[2][0] +
+                    result->gunWorld.values[2][1] *
+                        result->gunWorld.values[2][1] +
+                    result->gunWorld.values[2][2] *
+                        result->gunWorld.values[2][2] -
+                    1.0F) < 0.0001F,
+            "off-hand steering introduced weapon scale");
+}
+
+bool SteeringIgnoresRadialMismatchAndRejectsDegeneracy() noexcept
+{
+    constexpr float kPi = 3.14159265358979323846F;
+    const float requested = 10.0F * kPi / 180.0F;
+    const auto gun = Translation(2.0F, 1.0F, -3.0F);
+    const auto predicted =
+        Translation(2.0F, 1.0F, -2.6F);
+    const auto tracked = Translation(
+        2.0F + 1.5F * std::sin(requested),
+        1.0F,
+        -3.0F + 1.5F * std::cos(requested));
+    const auto result =
+        bfvr::stereo::ComputeBoundedOffHandWeaponSteering(
+            gun,
+            predicted,
+            tracked,
+            35.0F * kPi / 180.0F,
+            1.0F);
+    if (!Expect(
+            result.has_value() &&
+                std::fabs(
+                    result->appliedSwingRadians -
+                    requested) < 0.0001F,
+            "radial mismatch altered a valid support direction"))
+    {
+        return false;
+    }
+
+    const auto collapsed =
+        bfvr::stereo::ComputeBoundedOffHandWeaponSteering(
+            gun,
+            predicted,
+            gun,
+            35.0F * kPi / 180.0F,
+            1.0F);
+    const auto opposite = Translation(2.0F, 1.0F, -3.4F);
+    const auto ambiguous =
+        bfvr::stereo::ComputeBoundedOffHandWeaponSteering(
+            gun,
+            predicted,
+            opposite,
+            35.0F * kPi / 180.0F,
+            1.0F);
+    return Expect(
+               !collapsed.has_value(),
+               "collapsed tracked support span was accepted") &&
+        Expect(
+            !ambiguous.has_value(),
+            "ambiguous opposite support direction was accepted");
+}
+
+bool AcquireAndReleaseWithHysteresis() noexcept
+{
+    OffHandSupportPolicy policy;
+    if (!Expect(
+            policy.Update(ValidSample(1.0, 0.10F)).state ==
+                OffHandSupportState::Candidate,
+            "near authored socket did not enter Candidate"))
+    {
+        return false;
+    }
+    if (!Expect(
+            policy.Update(ValidSample(1.03, 0.10F)).state ==
+                OffHandSupportState::Candidate,
+            "Candidate acquired before the hold interval"))
+    {
+        return false;
+    }
+    const auto acquired = policy.Update(ValidSample(1.05, 0.10F));
+    if (!Expect(
+            acquired.state == OffHandSupportState::Supported &&
+                acquired.enteredSupport,
+            "stable near grip did not enter Supported"))
+    {
+        return false;
+    }
+    if (!Expect(
+            policy.Update(ValidSample(1.06, 0.17F)).state ==
+                OffHandSupportState::Supported,
+            "support did not retain inside the release radius"))
+    {
+        return false;
+    }
+    const auto released = policy.Update(ValidSample(1.07, 0.21F));
+    return Expect(
+        released.state == OffHandSupportState::Free &&
+            released.exitedSupport,
+        "support did not release outside the hysteresis radius");
+}
+
+bool RejectsUnsafeInputs() noexcept
+{
+    OffHandSupportPolicy policy;
+    auto sample = ValidSample(1.0, 0.10F);
+    sample.leftGripHeld = false;
+    if (!Expect(
+            policy.Update(sample).state == OffHandSupportState::Free,
+            "unheld grip became a support candidate"))
+    {
+        return false;
+    }
+
+    sample = ValidSample(1.1, 0.10F);
+    sample.leftGripTracked = false;
+    if (!Expect(
+            policy.Update(sample).state == OffHandSupportState::Free,
+            "untracked grip became a support candidate"))
+    {
+        return false;
+    }
+
+    sample = ValidSample(1.2, 0.10F);
+    sample.nativeLeftHandTargetActive = true;
+    if (!Expect(
+            policy.Update(sample).state == OffHandSupportState::Free,
+            "native left-hand target ownership was ignored"))
+    {
+        return false;
+    }
+
+    sample = ValidSample(
+        1.3,
+        std::numeric_limits<float>::quiet_NaN());
+    return Expect(
+        policy.Update(sample).state == OffHandSupportState::Free,
+        "non-finite support distance was accepted");
+}
+
+bool ReleasesOnTrackingOrBindingChange() noexcept
+{
+    OffHandSupportPolicy policy;
+    static_cast<void>(policy.Update(ValidSample(1.0, 0.10F)));
+    static_cast<void>(policy.Update(ValidSample(1.1, 0.10F)));
+    auto sample = ValidSample(1.2, 0.10F);
+    sample.sessionFocused = false;
+    const auto focusLost = policy.Update(sample);
+    if (!Expect(
+            focusLost.state == OffHandSupportState::Free &&
+                focusLost.exitedSupport,
+            "focus loss did not release support"))
+    {
+        return false;
+    }
+
+    static_cast<void>(policy.Update(ValidSample(2.0, 0.10F, 1)));
+    static_cast<void>(policy.Update(ValidSample(2.1, 0.10F, 1)));
+    const auto changed = policy.Update(ValidSample(2.2, 0.10F, 2));
+    return Expect(
+        changed.state == OffHandSupportState::Candidate &&
+            changed.exitedSupport,
+        "item/soldier binding change retained old support");
+}
+
+bool RequiresContinuousAcquisition() noexcept
+{
+    OffHandSupportPolicy policy;
+    static_cast<void>(policy.Update(ValidSample(1.0, 0.10F)));
+    if (!Expect(
+            policy.Update(ValidSample(1.02, 0.13F)).state ==
+                OffHandSupportState::Free,
+            "Candidate persisted outside the acquire radius"))
+    {
+        return false;
+    }
+    if (!Expect(
+            policy.Update(ValidSample(2.0, 0.10F)).state ==
+                OffHandSupportState::Candidate,
+            "second acquisition did not enter Candidate"))
+    {
+        return false;
+    }
+    if (!Expect(
+            policy.Update(ValidSample(1.0, 0.10F)).state ==
+                OffHandSupportState::Candidate,
+            "backward time did not safely restart Candidate"))
+    {
+        return false;
+    }
+    return Expect(
+        policy.Update(ValidSample(1.03, 0.10F)).state ==
+            OffHandSupportState::Candidate,
+        "restarted Candidate reused elapsed time from the prior clock");
+}
+
+} // namespace
+
+int main()
+{
+    const bool passed =
+        ReconstructsAuthoredVisualSocket() &&
+        CapturedClosePoseIsNoJumpAndFollowsRightHand() &&
+        CloseBindingCapturesAndIgnoresLeftNoise() &&
+        AuthoredBindingAllowsOnlyCurrentSupportedSteering() &&
+        SoldierSteeringFrameUsesTrackedGripAndRejectsPistol() &&
+        SteeringUsesFixedPivotAndBoundedSwing() &&
+        SteeringIgnoresRadialMismatchAndRejectsDegeneracy() &&
+        AcquireAndReleaseWithHysteresis() &&
+        RejectsUnsafeInputs() &&
+        ReleasesOnTrackingOrBindingChange() &&
+        RequiresContinuousAcquisition();
+    if (passed)
+    {
+        std::puts("Off-hand support policy tests passed.");
+        return 0;
+    }
+    return 1;
+}
