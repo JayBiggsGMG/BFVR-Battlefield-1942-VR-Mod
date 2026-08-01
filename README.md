@@ -92,15 +92,24 @@ following one-pass infantry layout for a normal local/offline play test:
 - Right stick: analogue smooth turn left-right; push up once to jump/action,
   down once to go prone.
 - Right trigger / grip: fire / alt-fire.
-- Right A / B: jump-action / reload.
-- Left X / Y / grip: use (hold) / crouch (hold) / prone (press once).
+- Right A: dedicated Quick Menu hold; it never submits jump/action. Hold A to
+  show the stabilized 0.266 m right-hand panel, point with the right aim ray,
+  and release A to choose Escape, Enter, 1-6, or F9-F12. Releasing off-panel
+  or losing focus/tracking cancels. Its authored stack is background, selected
+  hover, text, then the frame as the final/top layer.
+- Right B: reload.
+- Left X / Y / grip: use (hold) / crouch (hold) / proximity-gated weapon
+  support.
 - Both sticks: a dead-zone-remapped analogue response curve; small deflections
   move/turn gently and full deflection reaches full native axis input.
 
-Weapon cycling, map/menu, and the requested left-stick-click spawn-menu action
-are deliberately not claimed in this build. The current local player-frame
-route cannot dispatch those high/global actions; BFVR is recovering their
-separate native GameInput boundary rather than faking them with Windows input.
+While the Quick Menu is open, controller fire, alt-fire, stick-up/down actions,
+and face-button gameplay actions are suppressed; locomotion and horizontal
+turning remain live. The x64 presenter emits one scan-code down/up pair only on
+A release with a valid hover and only while BF1942 is the foreground process.
+The number keys retain BF1942's native context-sensitive weapon/vehicle-seat
+behavior, while Enter opens deployment, F9-F12 select cameras, and Escape opens
+the native main menu. Mouse and keyboard remain available.
 
 Controller pose no longer writes BF1942 mouse-look; deliberate right-stick
 turn and ordinary keyboard/mouse look remain live. The opt-in weapon path uses
@@ -251,10 +260,20 @@ dimensions; set `BFVR_OPENXR_WORLD_RENDER_SCALE=0.50..1.25` before launch for
 an explicit diagnostic override.
 
 The x64 presenter covers the translated BF1942 client with a BFVR-owned
-desktop preview: one aspect-fit left-eye image plus BFVR's UI texture, rather
-than the underlying flat game HUD/arms. It presents each accepted BFVR source
-frame with a non-blocking desktop present; it is not a runtime mirror or an
-extra headset pass. Set `BFVR_DESKTOP_MIRROR=0` before launch to opt out.
+desktop preview: a centre-cropped right-eye image plus BFVR's UI texture,
+rather than the underlying flat game HUD/arms. Its swapchain matches the
+current BF1942 client resolution and is recreated if that resolution changes;
+there is no 1280x720 intermediate upscale. It presents each accepted BFVR
+source frame with a non-blocking desktop present. This is a small D3D11
+composite pass over the same accepted eye/UI textures, not an OpenXR runtime
+compositor mirror or an extra game/stereo render. Set `BFVR_DESKTOP_MIRROR=0`
+before launch to opt out.
+Because OpenXR does not provide a portable compositor-mirror contract, BFVR
+also reproduces its separately submitted Quick Menu and cursor layers in this
+preview. Their LOCAL-space poses are projected through the current right-eye
+pose/FOV and the same centre crop, using the exact hover-specific art textures.
+The preview remains source-driven normally; it refreshes each OpenXR frame only
+while the Quick Menu is visible and once after release to clear it.
 World FXAA remains enabled by default, as in the owner-accepted visual path;
 set `BFVR_OPENXR_FXAA=0` only for a deliberate measured A/B.
 

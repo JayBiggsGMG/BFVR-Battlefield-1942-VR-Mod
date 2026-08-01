@@ -33,13 +33,18 @@ if(BFVR_PRESENTER_ONLY)
 
   add_executable(BFVRPresenter
     client/MainMenuOverlay.cpp
+    client/QuickMenuArt.cpp
     presenter/BFVRPresenter.cpp
     presenter/DesktopMirror.cpp
     presenter/D3D11MainMenuOverlay.cpp
     presenter/D3D11TextureScaler.cpp
     presenter/SharedControlChannel.cpp
     presenter/SharedTextureConsumer.cpp
+    openxr/OpenXRQuickMenu.cpp
     openxr/OpenXRPresentation.cpp
+    stereo/QuickMenuInteraction.cpp
+    stereo/QuickMenuMirrorMath.cpp
+    stereo/UiPointerMath.cpp
   )
   add_executable(BFVRSharedTextureConsumerProbe
     client/MainMenuOverlay.cpp
@@ -79,6 +84,22 @@ if(BFVR_PRESENTER_ONLY)
       "${CMAKE_CURRENT_SOURCE_DIR}/../assets/BackToGame_text.png"
       "${CMAKE_CURRENT_SOURCE_DIR}/../assets/BackToGame_BorderFrame.png"
       "${CMAKE_CURRENT_SOURCE_DIR}/../assets/BackToGame_BorderFrameHover.png"
+      "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_bg.png"
+      "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_menuhover.png"
+      "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_deployhover.png"
+      "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_1hover.png"
+      "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_2hover.png"
+      "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_3hover.png"
+      "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_4hover.png"
+      "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_5hover.png"
+      "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_6hover.png"
+      "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_F9hover.png"
+      "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_F10hover.png"
+      "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_F11hover.png"
+      "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_F12hover.png"
+      "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_frame.png"
+      "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_text.png"
+      "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_Cursor.png"
         "$<TARGET_FILE_DIR:${target}>/assets")
   endforeach()
   return()
@@ -187,6 +208,8 @@ add_library(BFVRStereoMath STATIC
   stereo/D3D8WeaponDrawPolicy.cpp
   stereo/OffHandSupportPolicy.cpp
   stereo/OffHandWeaponSteeringMath.cpp
+  stereo/QuickMenuInteraction.cpp
+  stereo/QuickMenuMirrorMath.cpp
   stereo/WeaponMotionPolicy.cpp
   stereo/WeaponFireAimMath.cpp
   stereo/StereoMath.cpp
@@ -200,8 +223,10 @@ add_executable(BFVRLoader
 )
 
 add_executable(BFVROpenXRProbe
+  client/QuickMenuArt.cpp
   openxr/BFVROpenXRProbe.cpp
   openxr/OpenXRBootstrap.cpp
+  openxr/OpenXRQuickMenu.cpp
   openxr/OpenXRPresentation.cpp
 )
 
@@ -250,11 +275,16 @@ add_executable(BFVRMainMenuOverlayTests
   client/MainMenuOverlayTests.cpp
 )
 
+add_executable(BFVRQuickMenuTests
+  client/QuickMenuArt.cpp
+  stereo/QuickMenuTests.cpp
+)
+
 add_executable(BFVRRfaInspect
   tools/RfaInspect.cpp
 )
 
-foreach(target BFVRClient BFVRD3D8To9FlatClient BFVRLoader BFVROpenXRProbe BFVRSharedTextureProducerProbe BFVRD3D8To9SharedSurfaceProbe BFVRStereoMath BFVRStereoMathTests BFVRWeaponFireAimMathTests BFVROffHandSupportPolicyTests BFVRArmPoleVectorMathTests BFVRMainMenuOverlayTests BFVRRfaInspect)
+foreach(target BFVRClient BFVRD3D8To9FlatClient BFVRLoader BFVROpenXRProbe BFVRSharedTextureProducerProbe BFVRD3D8To9SharedSurfaceProbe BFVRStereoMath BFVRStereoMathTests BFVRWeaponFireAimMathTests BFVROffHandSupportPolicyTests BFVRArmPoleVectorMathTests BFVRMainMenuOverlayTests BFVRQuickMenuTests BFVRRfaInspect)
   target_compile_definitions(${target} PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
   set_property(TARGET ${target} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
   if(MSVC)
@@ -266,7 +296,8 @@ target_link_libraries(BFVRClient PRIVATE
   kernel32 advapi32 ole32 user32 windowscodecs)
 target_link_libraries(BFVRD3D8To9FlatClient PRIVATE kernel32)
 target_link_libraries(BFVRLoader PRIVATE kernel32)
-target_link_libraries(BFVROpenXRProbe PRIVATE kernel32 d3d11 dxgi)
+target_link_libraries(BFVROpenXRProbe PRIVATE
+  kernel32 ole32 windowscodecs d3d11 dxgi BFVRStereoMath)
 target_link_libraries(BFVRSharedTextureProducerProbe PRIVATE kernel32)
 target_link_libraries(BFVRD3D8To9SharedSurfaceProbe PRIVATE kernel32 user32)
 target_include_directories(BFVRSharedTextureProducerProbe PRIVATE
@@ -285,7 +316,11 @@ target_link_libraries(BFVROffHandSupportPolicyTests PRIVATE BFVRStereoMath)
 target_link_libraries(BFVRArmPoleVectorMathTests PRIVATE BFVRStereoMath)
 target_link_libraries(BFVRMainMenuOverlayTests PRIVATE
   ole32 user32 windowscodecs)
+target_link_libraries(BFVRQuickMenuTests PRIVATE
+  BFVRStereoMath ole32 user32 windowscodecs)
 target_include_directories(BFVRMainMenuOverlayTests PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}")
+target_include_directories(BFVRQuickMenuTests PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}")
 
 include(CTest)
@@ -303,6 +338,10 @@ if(BUILD_TESTING)
   add_test(
     NAME BFVRMainMenuOverlayTests
     COMMAND BFVRMainMenuOverlayTests
+      "${CMAKE_CURRENT_SOURCE_DIR}/../assets")
+  add_test(
+    NAME BFVRQuickMenuTests
+    COMMAND BFVRQuickMenuTests
       "${CMAKE_CURRENT_SOURCE_DIR}/../assets")
 endif()
 
@@ -328,6 +367,22 @@ add_custom_command(TARGET BFVRClient POST_BUILD
     "${CMAKE_CURRENT_SOURCE_DIR}/../assets/BackToGame_text.png"
     "${CMAKE_CURRENT_SOURCE_DIR}/../assets/BackToGame_BorderFrame.png"
     "${CMAKE_CURRENT_SOURCE_DIR}/../assets/BackToGame_BorderFrameHover.png"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_bg.png"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_menuhover.png"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_deployhover.png"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_1hover.png"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_2hover.png"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_3hover.png"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_4hover.png"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_5hover.png"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_6hover.png"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_F9hover.png"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_F10hover.png"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_F11hover.png"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_F12hover.png"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_frame.png"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_text.png"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_Cursor.png"
     "$<TARGET_FILE_DIR:BFVRClient>/assets")
 
 target_include_directories(BFVRClient PRIVATE

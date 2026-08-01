@@ -188,6 +188,74 @@ DWORD MakeControllerButtons(const bfvr::OpenXRControllerHandState& hand)
     return buttons;
 }
 
+UINT QuickMenuVirtualKey(
+    bfvr::stereo::QuickMenuSelection selection) noexcept
+{
+    using bfvr::stereo::QuickMenuSelection;
+    switch (selection)
+    {
+    case QuickMenuSelection::MainMenu: return VK_ESCAPE;
+    case QuickMenuSelection::Deploy: return VK_RETURN;
+    case QuickMenuSelection::Weapon1: return '1';
+    case QuickMenuSelection::Weapon2: return '2';
+    case QuickMenuSelection::Weapon3: return '3';
+    case QuickMenuSelection::Weapon4: return '4';
+    case QuickMenuSelection::Weapon5: return '5';
+    case QuickMenuSelection::Weapon6: return '6';
+    case QuickMenuSelection::CameraF9: return VK_F9;
+    case QuickMenuSelection::CameraF10: return VK_F10;
+    case QuickMenuSelection::CameraF11: return VK_F11;
+    case QuickMenuSelection::CameraF12: return VK_F12;
+    default: return 0;
+    }
+}
+
+bool SendQuickMenuKeyPress(
+    DWORD gameProcessId,
+    bfvr::stereo::QuickMenuSelection selection,
+    DWORD& errorCode) noexcept
+{
+    errorCode = ERROR_SUCCESS;
+    const UINT virtualKey = QuickMenuVirtualKey(selection);
+    const HWND foregroundWindow = GetForegroundWindow();
+    DWORD foregroundProcessId = 0;
+    if (virtualKey == 0 || foregroundWindow == nullptr ||
+        GetWindowThreadProcessId(
+            foregroundWindow,
+            &foregroundProcessId) == 0 ||
+        foregroundProcessId != gameProcessId)
+    {
+        errorCode = ERROR_ACCESS_DENIED;
+        return false;
+    }
+
+    const UINT scanCode = MapVirtualKeyW(virtualKey, MAPVK_VK_TO_VSC);
+    std::array<INPUT, 2> inputs = {};
+    for (INPUT& input : inputs)
+    {
+        input.type = INPUT_KEYBOARD;
+        if (scanCode != 0)
+        {
+            input.ki.wScan = static_cast<WORD>(scanCode);
+            input.ki.dwFlags = KEYEVENTF_SCANCODE;
+        }
+        else
+        {
+            input.ki.wVk = static_cast<WORD>(virtualKey);
+        }
+    }
+    inputs[1].ki.dwFlags |= KEYEVENTF_KEYUP;
+    if (SendInput(
+            static_cast<UINT>(inputs.size()),
+            inputs.data(),
+            sizeof(INPUT)) != static_cast<UINT>(inputs.size()))
+    {
+        errorCode = GetLastError();
+        return false;
+    }
+    return true;
+}
+
 void PublishControllerSample(
     bfvr::shared::ControlBlock& block,
     LONG sequence,
@@ -413,6 +481,8 @@ int RunPresenter(
     LONG desktopMirrorCount = 0;
     LONG openXrBeginCount = 0;
     LONG openXrSubmitOrEndCount = 0;
+    bool desktopMirrorSourceDirty = false;
+    bool quickMenuWasVisibleInMirror = false;
     auto consumeSequence = [&](LONG availableSequence)
     {
         // The producer publishes these pixels/metadata before frameSequence
@@ -430,11 +500,7 @@ int RunPresenter(
         totalSourceConsumeQpcTicks +=
             ReadPerformanceCounter() - consumeStarted;
         ++sourceConsumeCount;
-        const std::int64_t mirrorStarted = ReadPerformanceCounter();
-        desktopMirror.Render(consumer.GetLocalTextures());
-        totalDesktopMirrorQpcTicks +=
-            ReadPerformanceCounter() - mirrorStarted;
-        ++desktopMirrorCount;
+        desktopMirrorSourceDirty = true;
         // The x86 producer publishes placement before frameSequence. Pair the
         // payload with the just-consumed frame so the OpenXR panel and the
         // client-side controller ray always use one menu anchor.
@@ -503,20 +569,88 @@ int RunPresenter(
             ? &acceptedUiWorldAnchor
             : nullptr;
     };
-    const auto submitFrame = [&]()
+    const auto dispatchQuickMenuCommand = [&]()
     {
-        const std::int64_t submitStarted = ReadPerformanceCounter();
-        const bool submitted = presentation.SubmitFrame(
-            consumer.GetLocalTextures(),
-            acceptedUiReferenceMode,
-            currentUiWorldAnchor());
-        totalOpenXrSubmitOrEndQpcTicks +=
-            ReadPerformanceCounter() - submitStarted;
-        ++openXrSubmitOrEndCount;
-        return submitted;
+        const bfvr::stereo::QuickMenuSelection selection =
+            presentation.TakeQuickMenuSelection();
+        if (selection == bfvr::stereo::QuickMenuSelection::None)
+        {
+            return;
+        }
+        if (!runtimeTimedProducer)
+        {
+            fwprintf(
+                g_output,
+                L"[PRESENTER] Offline transport ignored Quick Menu release command %s.\n",
+                bfvr::stereo::QuickMenuSelectionName(selection));
+            fflush(g_output);
+            return;
+        }
+        DWORD errorCode = ERROR_SUCCESS;
+        const bool sent = SendQuickMenuKeyPress(
+            block->producerProcessId,
+            selection,
+            errorCode);
+        if (sent)
+        {
+            fwprintf(
+                g_output,
+                L"[PRESENTER] Quick Menu released %s and sent one foreground BF1942 scan-code down/up pair.\n",
+                bfvr::stereo::QuickMenuSelectionName(selection));
+        }
+        else
+        {
+            fwprintf(
+                g_output,
+                L"[PRESENTER] Quick Menu released %s but safely suppressed its key because BF1942 was not foreground or SendInput failed (error %lu).\n",
+                bfvr::stereo::QuickMenuSelectionName(selection),
+                static_cast<unsigned long>(errorCode));
+        }
+        fflush(g_output);
     };
-    const auto endFrame = [&](const bfvr::OpenXRPresentationTextures& textures)
+    const auto beginFrame = [&](bfvr::OpenXRPresentationFrameState& frame)
     {
+        const std::int64_t beginStarted = ReadPerformanceCounter();
+        const bool began = presentation.BeginFrame(frame);
+        dispatchQuickMenuCommand();
+        totalOpenXrBeginQpcTicks +=
+            ReadPerformanceCounter() - beginStarted;
+        ++openXrBeginCount;
+        return began;
+    };
+    const auto renderDesktopMirror = [&] (
+        const bfvr::OpenXRPresentationFrameState& frame)
+    {
+        bfvr::OpenXRQuickMenuMirrorState quickMenu = {};
+        const bool quickMenuVisible =
+            presentation.GetQuickMenuMirrorState(quickMenu);
+        if (!desktopMirrorSourceDirty && !quickMenuVisible &&
+            !quickMenuWasVisibleInMirror)
+        {
+            return;
+        }
+        const bfvr::OpenXRPresentationView* const rightEye = frame.viewsValid
+            ? &frame.views[1]
+            : nullptr;
+        const std::int64_t mirrorStarted = ReadPerformanceCounter();
+        desktopMirror.Render(
+            consumer.GetLocalTextures(),
+            rightEye,
+            quickMenuVisible ? &quickMenu : nullptr);
+        totalDesktopMirrorQpcTicks +=
+            ReadPerformanceCounter() - mirrorStarted;
+        ++desktopMirrorCount;
+        desktopMirrorSourceDirty = false;
+        quickMenuWasVisibleInMirror = quickMenuVisible;
+    };
+    const auto endFrame = [&] (
+        const bfvr::OpenXRPresentationTextures& textures,
+        const bfvr::OpenXRPresentationFrameState& frame)
+    {
+        if (textures.rightWorld != nullptr && textures.ref2Ui != nullptr)
+        {
+            renderDesktopMirror(frame);
+        }
         const std::int64_t endStarted = ReadPerformanceCounter();
         const bool ended = presentation.EndFrame(
             textures,
@@ -527,14 +661,11 @@ int RunPresenter(
         ++openXrSubmitOrEndCount;
         return ended;
     };
-    const auto beginFrame = [&](bfvr::OpenXRPresentationFrameState& frame)
+    const auto submitFrame = [&]()
     {
-        const std::int64_t beginStarted = ReadPerformanceCounter();
-        const bool began = presentation.BeginFrame(frame);
-        totalOpenXrBeginQpcTicks +=
-            ReadPerformanceCounter() - beginStarted;
-        ++openXrBeginCount;
-        return began;
+        bfvr::OpenXRPresentationFrameState frame = {};
+        return beginFrame(frame) &&
+            endFrame(consumer.GetLocalTextures(), frame);
     };
     const DWORD startedAt = GetTickCount();
     while ((runUntilStopped ||
@@ -645,7 +776,7 @@ int RunPresenter(
             }
             if (!frame.shouldRender || !frame.viewsValid)
             {
-                endFrame({});
+                endFrame({}, frame);
                 continue;
             }
             PublishRenderRequest(*block, readySequence, frame);
@@ -679,8 +810,8 @@ int RunPresenter(
                 // of holding xrBeginFrame open. The matching source remains
                 // outstanding and is acknowledged when BF1942 renders again.
                 const bool submittedFallback = haveFrame
-                    ? endFrame(consumer.GetLocalTextures())
-                    : endFrame({});
+                    ? endFrame(consumer.GetLocalTextures(), frame)
+                    : endFrame({}, frame);
                 if (haveFrame && !submittedFallback)
                 {
                     healthy = false;
@@ -704,7 +835,7 @@ int RunPresenter(
                 continue;
             }
             if (!consumeSequence(availableSequence) ||
-                !endFrame(consumer.GetLocalTextures()))
+                !endFrame(consumer.GetLocalTextures(), frame))
             {
                 healthy = false;
                 break;
@@ -762,7 +893,7 @@ int RunPresenter(
         };
         fwprintf(
             g_output,
-            L"[PRESENTER] Stage timing: sourceConsume=%.3f ms/source (n=%ld) desktopMirror=%.3f ms/source (n=%ld) xrBegin=%.3f ms/call (n=%ld) xrSubmitOrEnd=%.3f ms/call (n=%ld).\n",
+            L"[PRESENTER] Stage timing: sourceConsume=%.3f ms/source (n=%ld) desktopMirror=%.3f ms/render (n=%ld) xrBegin=%.3f ms/call (n=%ld) xrSubmitOrEnd=%.3f ms/call (n=%ld).\n",
             averageMilliseconds(totalSourceConsumeQpcTicks, sourceConsumeCount),
             sourceConsumeCount,
             averageMilliseconds(totalDesktopMirrorQpcTicks, desktopMirrorCount),

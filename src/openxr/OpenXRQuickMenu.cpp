@@ -1,0 +1,599 @@
+#include "openxr/OpenXRQuickMenu.h"
+
+#include <algorithm>
+#include <array>
+#include <cstdarg>
+#include <cwchar>
+#include <utility>
+
+namespace
+{
+template <typename T>
+void ReleaseInterface(T*& value) noexcept
+{
+    if (value != nullptr)
+    {
+        value->Release();
+        value = nullptr;
+    }
+}
+
+std::wstring JoinPath(
+    const wchar_t* directory,
+    const wchar_t* child)
+{
+    if (directory == nullptr || directory[0] == L'\0' || child == nullptr)
+    {
+        return {};
+    }
+    std::wstring result = directory;
+    if (result.back() != L'\\' && result.back() != L'/')
+    {
+        result.push_back(L'\\');
+    }
+    result.append(child);
+    return result;
+}
+
+bfvr::stereo::Pose ToPose(
+    const bfvr::OpenXRPresentationPose& source) noexcept
+{
+    return {
+        {source.positionX, source.positionY, source.positionZ},
+        {
+            source.orientationX,
+            source.orientationY,
+            source.orientationZ,
+            source.orientationW}};
+}
+
+XrPosef ToXrPose(const bfvr::stereo::Pose& source) noexcept
+{
+    XrPosef result = {};
+    result.orientation = {
+        source.orientation.x,
+        source.orientation.y,
+        source.orientation.z,
+        source.orientation.w};
+    result.position = {
+        source.position.x,
+        source.position.y,
+        source.position.z};
+    return result;
+}
+
+bfvr::OpenXRPresentationPose ToPresentationPose(
+    const bfvr::stereo::Pose& source) noexcept
+{
+    bfvr::OpenXRPresentationPose result = {};
+    result.orientationX = source.orientation.x;
+    result.orientationY = source.orientation.y;
+    result.orientationZ = source.orientation.z;
+    result.orientationW = source.orientation.w;
+    result.positionX = source.position.x;
+    result.positionY = source.position.y;
+    result.positionZ = source.position.z;
+    return result;
+}
+
+bool IsBgraFormat(DXGI_FORMAT format) noexcept
+{
+    return format == DXGI_FORMAT_B8G8R8A8_UNORM ||
+        format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
+}
+
+bool IsRgbaFormat(DXGI_FORMAT format) noexcept
+{
+    return format == DXGI_FORMAT_R8G8B8A8_UNORM ||
+        format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
+}
+
+std::uint32_t SwapRedBlue(std::uint32_t bgra) noexcept
+{
+    return (bgra & 0xFF00FF00U) |
+        ((bgra & 0x000000FFU) << 16U) |
+        ((bgra & 0x00FF0000U) >> 16U);
+}
+} // namespace
+
+namespace bfvr
+{
+
+OpenXRQuickMenu::~OpenXRQuickMenu()
+{
+    Shutdown();
+}
+
+bool OpenXRQuickMenu::Initialize(
+    const wchar_t* payloadDirectory,
+    XrSession session,
+    DXGI_FORMAT swapchainFormat,
+    ID3D11Device* device,
+    ID3D11DeviceContext* context,
+    const OpenXRQuickMenuApi& api,
+    OpenXRLogCallback logCallback,
+    void* logContext)
+{
+    Shutdown();
+    logCallback_ = logCallback;
+    logContext_ = logContext;
+    if (payloadDirectory == nullptr || session == XR_NULL_HANDLE ||
+        device == nullptr || context == nullptr ||
+        (!IsBgraFormat(swapchainFormat) && !IsRgbaFormat(swapchainFormat)) ||
+        api.createSwapchain == nullptr || api.destroySwapchain == nullptr ||
+        api.enumerateSwapchainImages == nullptr ||
+        api.acquireSwapchainImage == nullptr ||
+        api.waitSwapchainImage == nullptr ||
+        api.releaseSwapchainImage == nullptr)
+    {
+        WriteLog(
+            L"Quick Menu received incomplete OpenXR/D3D11 initialization state.");
+        return false;
+    }
+    api_ = api;
+    session_ = session;
+    swapchainFormat_ = swapchainFormat;
+    device_ = device;
+    device_->AddRef();
+    context_ = context;
+    context_->AddRef();
+
+    QuickMenuArt art;
+    const std::wstring assetsDirectory = JoinPath(
+        payloadDirectory,
+        L"assets");
+    if (!art.InitializeFromDirectory(
+            assetsDirectory,
+            logCallback_,
+            logContext_))
+    {
+        Shutdown();
+        return false;
+    }
+
+    bool resourcesReady = true;
+    for (std::size_t index = 0;
+         resourcesReady && index < menuSources_.size();
+         ++index)
+    {
+        std::vector<std::uint32_t> pixels;
+        UINT width = 0;
+        UINT height = 0;
+        resourcesReady = art.CopyMenuPixels(
+                static_cast<stereo::QuickMenuSelection>(index),
+                pixels,
+                width,
+                height) &&
+            CreateSourceTexture(
+                pixels,
+                width,
+                height,
+                &menuSources_[index]);
+    }
+    std::vector<std::uint32_t> cursorPixels;
+    UINT cursorWidth = 0;
+    UINT cursorHeight = 0;
+    resourcesReady = resourcesReady &&
+        art.CopyCursorPixels(
+            cursorPixels,
+            cursorWidth,
+            cursorHeight) &&
+        CreateSourceTexture(
+            cursorPixels,
+            cursorWidth,
+            cursorHeight,
+            &cursorSource_) &&
+        CreateSwapchain(
+            menuSwapchain_,
+            stereo::kQuickMenuTextureSize,
+            stereo::kQuickMenuTextureSize) &&
+        CreateSwapchain(cursorSwapchain_, cursorWidth, cursorHeight);
+    art.Reset();
+    if (!resourcesReady || !IsReady())
+    {
+        WriteLog(L"Quick Menu could not create its D3D11/OpenXR resources.");
+        Shutdown();
+        return false;
+    }
+    WriteLog(
+        L"Quick Menu OpenXR resources are ready: menu=%ux%u cursor=%ux%u panel=%.2fx%.2f m. Right A is the dedicated hold action.",
+        menuSwapchain_.width,
+        menuSwapchain_.height,
+        cursorSwapchain_.width,
+        cursorSwapchain_.height,
+        stereo::kQuickMenuWidthMeters,
+        stereo::kQuickMenuHeightMeters);
+    return true;
+}
+
+void OpenXRQuickMenu::Update(
+    const OpenXRPresentationFrameState& frame) noexcept
+{
+    stereo::QuickMenuFrameInput input = {};
+    input.predictedDisplayTime = frame.predictedDisplayTime;
+    input.sessionFocused = frame.controllerInput.sessionFocused;
+    input.shouldRender = frame.shouldRender;
+    input.headTracked = frame.headPoseValid && frame.headPoseTracked;
+    input.headPose = ToPose(frame.headPose);
+    const OpenXRControllerHandState& right = frame.controllerInput.hands[1];
+    input.rightPrimaryHeld = right.primaryPressed;
+    input.rightGripTracked = right.gripActive &&
+        right.gripPositionValid && right.gripPositionTracked;
+    input.rightAimTracked = right.aimActive &&
+        right.aimPositionValid && right.aimOrientationValid &&
+        right.aimPositionTracked && right.aimOrientationTracked;
+    input.rightGripPose = ToPose(right.gripPose);
+    input.rightAimPose = ToPose(right.aimPose);
+    interaction_.Update(input);
+}
+
+std::size_t OpenXRQuickMenu::AppendLayers(
+    XrSpace localSpace,
+    const XrCompositionLayerBaseHeader** destination,
+    std::size_t capacity)
+{
+    const stereo::QuickMenuInteractionSnapshot state =
+        interaction_.Snapshot();
+    if (!IsReady() || !state.visible || localSpace == XR_NULL_HANDLE ||
+        destination == nullptr || capacity == 0)
+    {
+        return 0;
+    }
+    const std::size_t selectionIndex =
+        static_cast<std::size_t>(state.hovered);
+    if (selectionIndex >= menuSources_.size() ||
+        !CopyToSwapchain(
+            menuSwapchain_,
+            menuSources_[selectionIndex],
+            L"Quick Menu"))
+    {
+        return 0;
+    }
+
+    menuLayer_ = {XR_TYPE_COMPOSITION_LAYER_QUAD};
+    menuLayer_.layerFlags =
+        XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+    menuLayer_.space = localSpace;
+    menuLayer_.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+    menuLayer_.subImage.swapchain = menuSwapchain_.handle;
+    menuLayer_.subImage.imageRect.extent = {
+        static_cast<std::int32_t>(menuSwapchain_.width),
+        static_cast<std::int32_t>(menuSwapchain_.height)};
+    menuLayer_.pose = ToXrPose(state.panelPose);
+    menuLayer_.size = {
+        stereo::kQuickMenuWidthMeters,
+        stereo::kQuickMenuHeightMeters};
+    destination[0] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(
+        &menuLayer_);
+    std::size_t appended = 1;
+
+    if (state.pointerVisible && capacity >= 2 &&
+        CopyToSwapchain(
+            cursorSwapchain_,
+            cursorSource_,
+            L"Quick Menu cursor"))
+    {
+        const float cursorWidthMeters = stereo::kQuickMenuWidthMeters *
+            static_cast<float>(cursorSwapchain_.width) /
+            static_cast<float>(menuSwapchain_.width);
+        const float cursorHeightMeters = stereo::kQuickMenuHeightMeters *
+            static_cast<float>(cursorSwapchain_.height) /
+            static_cast<float>(menuSwapchain_.height);
+        const stereo::Pose cursorPose = stereo::MakeQuickMenuCursorPose(
+            state.panelPose,
+            state.pointerU,
+            state.pointerV,
+            cursorWidthMeters,
+            cursorHeightMeters);
+        cursorLayer_ = {XR_TYPE_COMPOSITION_LAYER_QUAD};
+        cursorLayer_.layerFlags =
+            XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+        cursorLayer_.space = localSpace;
+        cursorLayer_.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+        cursorLayer_.subImage.swapchain = cursorSwapchain_.handle;
+        cursorLayer_.subImage.imageRect.extent = {
+            static_cast<std::int32_t>(cursorSwapchain_.width),
+            static_cast<std::int32_t>(cursorSwapchain_.height)};
+        cursorLayer_.pose = ToXrPose(cursorPose);
+        cursorLayer_.size = {cursorWidthMeters, cursorHeightMeters};
+        destination[appended++] =
+            reinterpret_cast<const XrCompositionLayerBaseHeader*>(
+                &cursorLayer_);
+    }
+
+    if (!firstVisibleFrameLogged_)
+    {
+        firstVisibleFrameLogged_ = true;
+        WriteLog(
+            L"Quick Menu submitted its first stabilized right-hand frame with hover=%s pointer=%d.",
+            stereo::QuickMenuSelectionName(state.hovered),
+            state.pointerVisible ? 1 : 0);
+    }
+    return appended;
+}
+
+stereo::QuickMenuSelection
+OpenXRQuickMenu::TakeReleasedSelection() noexcept
+{
+    return interaction_.TakeReleasedSelection();
+}
+
+bool OpenXRQuickMenu::GetMirrorState(
+    OpenXRQuickMenuMirrorState& state) const noexcept
+{
+    state = {};
+    const stereo::QuickMenuInteractionSnapshot snapshot =
+        interaction_.Snapshot();
+    const std::size_t selectionIndex =
+        static_cast<std::size_t>(snapshot.hovered);
+    if (!IsReady() || !snapshot.visible ||
+        selectionIndex >= menuSources_.size())
+    {
+        return false;
+    }
+
+    state.visible = true;
+    state.pointerVisible = snapshot.pointerVisible;
+    state.hovered = snapshot.hovered;
+    state.panelPose = ToPresentationPose(snapshot.panelPose);
+    state.panelWidthMeters = stereo::kQuickMenuWidthMeters;
+    state.panelHeightMeters = stereo::kQuickMenuHeightMeters;
+    state.menuTexture = menuSources_[selectionIndex];
+    if (snapshot.pointerVisible && cursorSource_ != nullptr &&
+        menuSwapchain_.width != 0 && menuSwapchain_.height != 0)
+    {
+        state.cursorWidthMeters = stereo::kQuickMenuWidthMeters *
+            static_cast<float>(cursorSwapchain_.width) /
+            static_cast<float>(menuSwapchain_.width);
+        state.cursorHeightMeters = stereo::kQuickMenuHeightMeters *
+            static_cast<float>(cursorSwapchain_.height) /
+            static_cast<float>(menuSwapchain_.height);
+        state.cursorPose = ToPresentationPose(
+            stereo::MakeQuickMenuCursorPose(
+                snapshot.panelPose,
+                snapshot.pointerU,
+                snapshot.pointerV,
+                state.cursorWidthMeters,
+                state.cursorHeightMeters));
+        state.cursorTexture = cursorSource_;
+    }
+    return true;
+}
+
+bool OpenXRQuickMenu::IsReady() const noexcept
+{
+    return session_ != XR_NULL_HANDLE && device_ != nullptr &&
+        context_ != nullptr && menuSwapchain_.handle != XR_NULL_HANDLE &&
+        cursorSwapchain_.handle != XR_NULL_HANDLE &&
+        cursorSource_ != nullptr &&
+        std::all_of(
+            menuSources_.begin(),
+            menuSources_.end(),
+            [](ID3D11Texture2D* texture) { return texture != nullptr; });
+}
+
+void OpenXRQuickMenu::Shutdown()
+{
+    interaction_.Reset();
+    DestroySwapchain(cursorSwapchain_);
+    DestroySwapchain(menuSwapchain_);
+    ReleaseInterface(cursorSource_);
+    for (ID3D11Texture2D*& source : menuSources_)
+    {
+        ReleaseInterface(source);
+    }
+    ReleaseInterface(context_);
+    ReleaseInterface(device_);
+    api_ = {};
+    session_ = XR_NULL_HANDLE;
+    swapchainFormat_ = DXGI_FORMAT_UNKNOWN;
+    menuLayer_ = {XR_TYPE_COMPOSITION_LAYER_QUAD};
+    cursorLayer_ = {XR_TYPE_COMPOSITION_LAYER_QUAD};
+    firstVisibleFrameLogged_ = false;
+    logCallback_ = nullptr;
+    logContext_ = nullptr;
+}
+
+bool OpenXRQuickMenu::CreateSwapchain(
+    Swapchain& swapchain,
+    UINT width,
+    UINT height)
+{
+    XrSwapchainCreateInfo createInfo{XR_TYPE_SWAPCHAIN_CREATE_INFO};
+    createInfo.usageFlags = XR_SWAPCHAIN_USAGE_SAMPLED_BIT |
+        XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT;
+    createInfo.format = static_cast<std::int64_t>(swapchainFormat_);
+    createInfo.sampleCount = 1;
+    createInfo.width = width;
+    createInfo.height = height;
+    createInfo.faceCount = 1;
+    createInfo.arraySize = 1;
+    createInfo.mipCount = 1;
+    XrResult result = api_.createSwapchain(
+        session_,
+        &createInfo,
+        &swapchain.handle);
+    if (XR_FAILED(result) || swapchain.handle == XR_NULL_HANDLE)
+    {
+        WriteLog(
+            L"Quick Menu swapchain creation failed for %ux%u (result=%ld).",
+            width,
+            height,
+            static_cast<long>(result));
+        return false;
+    }
+    uint32_t imageCount = 0;
+    result = api_.enumerateSwapchainImages(
+        swapchain.handle,
+        0,
+        &imageCount,
+        nullptr);
+    if (XR_FAILED(result) || imageCount == 0)
+    {
+        WriteLog(
+            L"Quick Menu swapchain image count query failed (result=%ld).",
+            static_cast<long>(result));
+        return false;
+    }
+    swapchain.images.resize(imageCount);
+    for (XrSwapchainImageD3D11KHR& image : swapchain.images)
+    {
+        image.type = XR_TYPE_SWAPCHAIN_IMAGE_D3D11_KHR;
+        image.next = nullptr;
+    }
+    result = api_.enumerateSwapchainImages(
+        swapchain.handle,
+        imageCount,
+        &imageCount,
+        reinterpret_cast<XrSwapchainImageBaseHeader*>(
+            swapchain.images.data()));
+    if (XR_FAILED(result))
+    {
+        WriteLog(
+            L"Quick Menu swapchain image enumeration failed (result=%ld).",
+            static_cast<long>(result));
+        return false;
+    }
+    swapchain.width = width;
+    swapchain.height = height;
+    return true;
+}
+
+bool OpenXRQuickMenu::CreateSourceTexture(
+    const std::vector<std::uint32_t>& bgraPixels,
+    UINT width,
+    UINT height,
+    ID3D11Texture2D** texture)
+{
+    if (texture == nullptr || width == 0 || height == 0 ||
+        bgraPixels.size() != static_cast<std::size_t>(width) * height)
+    {
+        return false;
+    }
+    std::vector<std::uint32_t> rgbaPixels;
+    const std::uint32_t* source = bgraPixels.data();
+    if (IsRgbaFormat(swapchainFormat_))
+    {
+        rgbaPixels.resize(bgraPixels.size());
+        std::transform(
+            bgraPixels.begin(),
+            bgraPixels.end(),
+            rgbaPixels.begin(),
+            SwapRedBlue);
+        source = rgbaPixels.data();
+    }
+    D3D11_TEXTURE2D_DESC description = {};
+    description.Width = width;
+    description.Height = height;
+    description.MipLevels = 1;
+    description.ArraySize = 1;
+    description.Format = swapchainFormat_;
+    description.SampleDesc.Count = 1;
+    description.Usage = D3D11_USAGE_IMMUTABLE;
+    description.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+    const D3D11_SUBRESOURCE_DATA data = {
+        source,
+        width * sizeof(std::uint32_t),
+        0};
+    return SUCCEEDED(device_->CreateTexture2D(
+        &description,
+        &data,
+        texture)) && *texture != nullptr;
+}
+
+bool OpenXRQuickMenu::CopyToSwapchain(
+    Swapchain& target,
+    ID3D11Texture2D* source,
+    const wchar_t* label)
+{
+    if (source == nullptr || target.handle == XR_NULL_HANDLE)
+    {
+        return false;
+    }
+    D3D11_TEXTURE2D_DESC description = {};
+    source->GetDesc(&description);
+    if (description.Width != target.width ||
+        description.Height != target.height ||
+        description.Format != swapchainFormat_)
+    {
+        return false;
+    }
+
+    uint32_t imageIndex = 0;
+    XrSwapchainImageAcquireInfo acquireInfo{
+        XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
+    XrResult result = api_.acquireSwapchainImage(
+        target.handle,
+        &acquireInfo,
+        &imageIndex);
+    if (XR_FAILED(result) || imageIndex >= target.images.size())
+    {
+        WriteLog(
+            L"Quick Menu could not acquire its %s image (result=%ld).",
+            label,
+            static_cast<long>(result));
+        return false;
+    }
+    XrSwapchainImageWaitInfo waitInfo{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
+    waitInfo.timeout = XR_INFINITE_DURATION;
+    result = api_.waitSwapchainImage(target.handle, &waitInfo);
+    ID3D11Texture2D* const destination =
+        imageIndex < target.images.size()
+        ? target.images[imageIndex].texture
+        : nullptr;
+    if (XR_SUCCEEDED(result) && destination != nullptr)
+    {
+        context_->CopyResource(destination, source);
+    }
+    else
+    {
+        WriteLog(
+            L"Quick Menu could not wait for its %s image (result=%ld).",
+            label,
+            static_cast<long>(result));
+    }
+    XrSwapchainImageReleaseInfo releaseInfo{
+        XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
+    const XrResult releaseResult = api_.releaseSwapchainImage(
+        target.handle,
+        &releaseInfo);
+    if (XR_FAILED(releaseResult))
+    {
+        WriteLog(
+            L"Quick Menu could not release its %s image (result=%ld).",
+            label,
+            static_cast<long>(releaseResult));
+    }
+    return XR_SUCCEEDED(result) && destination != nullptr &&
+        XR_SUCCEEDED(releaseResult);
+}
+
+void OpenXRQuickMenu::DestroySwapchain(Swapchain& swapchain) noexcept
+{
+    if (swapchain.handle != XR_NULL_HANDLE && api_.destroySwapchain != nullptr)
+    {
+        api_.destroySwapchain(swapchain.handle);
+    }
+    swapchain = {};
+}
+
+void OpenXRQuickMenu::WriteLog(const wchar_t* format, ...) const
+{
+    if (logCallback_ == nullptr || format == nullptr)
+    {
+        return;
+    }
+    std::array<wchar_t, 1200> message = {};
+    va_list arguments;
+    va_start(arguments, format);
+    _vsnwprintf_s(
+        message.data(),
+        message.size(),
+        _TRUNCATE,
+        format,
+        arguments);
+    va_end(arguments);
+    logCallback_(logContext_, message.data());
+}
+
+} // namespace bfvr

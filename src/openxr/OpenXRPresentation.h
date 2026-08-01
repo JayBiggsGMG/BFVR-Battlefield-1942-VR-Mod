@@ -1,5 +1,7 @@
 #pragma once
 
+#include "stereo/QuickMenuInteraction.h"
+
 #include <d3d11.h>
 
 #include <array>
@@ -107,6 +109,26 @@ struct OpenXRPresentationFrameState
     OpenXRControllerInputState controllerInput = {};
 };
 
+// Borrowed x64-only visual state for reproducing the separately submitted
+// Quick Menu composition layers in BFVR's presenter-owned desktop preview.
+// Texture pointers remain owned by OpenXRQuickMenu and are valid only until
+// the presentation shuts down.
+struct OpenXRQuickMenuMirrorState
+{
+    bool visible = false;
+    bool pointerVisible = false;
+    stereo::QuickMenuSelection hovered =
+        stereo::QuickMenuSelection::None;
+    OpenXRPresentationPose panelPose = {};
+    OpenXRPresentationPose cursorPose = {};
+    float panelWidthMeters = 0.0F;
+    float panelHeightMeters = 0.0F;
+    float cursorWidthMeters = 0.0F;
+    float cursorHeightMeters = 0.0F;
+    ID3D11Texture2D* menuTexture = nullptr;
+    ID3D11Texture2D* cursorTexture = nullptr;
+};
+
 struct OpenXRPresentationTextureRequirements
 {
     UINT leftWorldWidth = 0;
@@ -179,6 +201,16 @@ public:
         OpenXRUiReferenceMode uiReferenceMode =
             OpenXRUiReferenceMode::HeadLocked,
         const OpenXRPresentationPose* worldUiAnchor = nullptr);
+
+    // Returns and clears one selection produced by releasing the dedicated
+    // right-controller A hold. Rendering never dispatches keyboard input.
+    [[nodiscard]] stereo::QuickMenuSelection
+    TakeQuickMenuSelection() noexcept;
+
+    // Returns the current separately submitted menu/cursor state for the
+    // right-eye desktop preview. The returned textures are borrowed.
+    [[nodiscard]] bool GetQuickMenuMirrorState(
+        OpenXRQuickMenuMirrorState& state) const noexcept;
 
     [[nodiscard]] bool IsInitialized() const noexcept;
     [[nodiscard]] bool IsSessionRunning() const noexcept;

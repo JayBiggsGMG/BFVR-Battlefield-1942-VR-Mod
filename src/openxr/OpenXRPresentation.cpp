@@ -8,6 +8,8 @@
 #include <openxr/openxr.h>
 #include <openxr/openxr_platform.h>
 
+#include "openxr/OpenXRQuickMenu.h"
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -1714,6 +1716,7 @@ public:
             publicFrameState.controllerInput);
         if (!pendingFrameState.shouldRender)
         {
+            quickMenu.Update(publicFrameState);
             return true;
         }
 
@@ -1751,6 +1754,7 @@ public:
             publicFrameState.headPose.positionY = headLocation.pose.position.y;
             publicFrameState.headPose.positionZ = headLocation.pose.position.z;
         }
+        quickMenu.Update(publicFrameState);
 
         XrViewState viewState{XR_TYPE_VIEW_STATE};
         uint32_t viewCount = 0;
@@ -1818,7 +1822,7 @@ public:
         std::array<XrCompositionLayerProjectionView, 2> projectionViews = {};
         XrCompositionLayerQuad quadLayer{XR_TYPE_COMPOSITION_LAYER_QUAD};
         XrCompositionLayerCylinderKHR cylinderLayer{XR_TYPE_COMPOSITION_LAYER_CYLINDER_KHR};
-        std::array<const XrCompositionLayerBaseHeader*, 2> layers = {};
+        std::array<const XrCompositionLayerBaseHeader*, 4> layers = {};
         uint32_t layerCount = 0;
         bool copiedImages = false;
         if (pendingFrameState.shouldRender && pendingViewsValid)
@@ -1938,6 +1942,11 @@ public:
                         static_cast<float>(uiSwapchain.width);
                     layers[layerCount++] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&quadLayer);
                 }
+                layerCount += static_cast<uint32_t>(
+                    quickMenu.AppendLayers(
+                        localSpace,
+                        layers.data() + layerCount,
+                        layers.size() - layerCount));
                 haveLayers = true;
             }
         }
@@ -2069,6 +2078,7 @@ public:
         }
         StopSessionForShutdown();
 
+        quickMenu.Shutdown();
         DestroyControllerInput();
 
         if (viewSpace != XR_NULL_HANDLE && api.destroySpace != nullptr)
@@ -2156,6 +2166,7 @@ public:
     XrEnvironmentBlendMode blendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
     std::array<Swapchain, 2> eyeSwapchains = {};
     Swapchain uiSwapchain = {};
+    OpenXRQuickMenu quickMenu = {};
     OpenXRPresentationConfiguration configuration = {};
     OpenXRUiLayerMode activeUiLayerMode = OpenXRUiLayerMode::Quad;
     OpenXRPresentationTextureRequirements textureRequirements = {};
@@ -2354,6 +2365,26 @@ bool OpenXRPresentation::Initialize(
         impl_->WriteLog(
             L"OpenXR controller input is unavailable; presentation remains active and game input remains unchanged.");
     }
+    const OpenXRQuickMenuApi quickMenuApi = {
+        impl_->api.createSwapchain,
+        impl_->api.destroySwapchain,
+        impl_->api.enumerateSwapchainImages,
+        impl_->api.acquireSwapchainImage,
+        impl_->api.waitSwapchainImage,
+        impl_->api.releaseSwapchainImage};
+    if (!impl_->quickMenu.Initialize(
+            payloadDirectory,
+            impl_->session,
+            impl_->swapchainFormat,
+            impl_->device,
+            impl_->context,
+            quickMenuApi,
+            logCallback,
+            logContext))
+    {
+        impl_->WriteLog(
+            L"Quick Menu resources are unavailable; OpenXR world/HUD presentation remains active and right A still submits no native jump/action input.");
+    }
 
     impl_->initialized = true;
     impl_->WriteLog(L"OpenXR presentation initialized; awaiting session READY before it submits frames.");
@@ -2386,6 +2417,21 @@ bool OpenXRPresentation::EndFrame(
 {
     return impl_ != nullptr &&
         impl_->EndFrame(textures, uiReferenceMode, worldUiAnchor);
+}
+
+stereo::QuickMenuSelection
+OpenXRPresentation::TakeQuickMenuSelection() noexcept
+{
+    return impl_ == nullptr
+        ? stereo::QuickMenuSelection::None
+        : impl_->quickMenu.TakeReleasedSelection();
+}
+
+bool OpenXRPresentation::GetQuickMenuMirrorState(
+    OpenXRQuickMenuMirrorState& state) const noexcept
+{
+    state = {};
+    return impl_ != nullptr && impl_->quickMenu.GetMirrorState(state);
 }
 
 bool OpenXRPresentation::IsInitialized() const noexcept

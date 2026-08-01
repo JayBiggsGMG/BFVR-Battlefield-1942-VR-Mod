@@ -1,5 +1,7 @@
 #include "presenter/DesktopMirror.h"
 
+#include "stereo/QuickMenuMirrorMath.h"
+
 #include <d3dcompiler.h>
 
 #include <algorithm>
@@ -10,8 +12,6 @@
 namespace
 {
 constexpr wchar_t kWindowClassName[] = L"BFVRDesktopMirrorCanvas";
-constexpr UINT kMaximumBufferWidth = 1280;
-constexpr UINT kMaximumBufferHeight = 720;
 
 constexpr char kVertexShaderSource[] = R"(
 struct VertexOutput
@@ -57,6 +57,86 @@ float4 main(float4 position : SV_Position, float2 texcoord : TEXCOORD0) : SV_Tar
     return float4(LinearToSrgb(lerp(world.rgb, ui.rgb, saturate(ui.a))), 1.0);
 }
 )";
+
+constexpr char kQuickMenuVertexShaderSource[] = R"(
+cbuffer QuickMenuConfiguration : register(b0)
+{
+    float4 clipPositions[4];
+    float convertFromLinear;
+    float3 configurationPadding;
+};
+
+struct VertexOutput
+{
+    float4 position : SV_Position;
+    float2 texcoord : TEXCOORD0;
+};
+
+VertexOutput main(uint vertexId : SV_VertexID)
+{
+    VertexOutput output;
+    output.position = clipPositions[vertexId];
+    output.texcoord = vertexId == 0 ? float2(0.0, 1.0) :
+        vertexId == 1 ? float2(0.0, 0.0) :
+        vertexId == 2 ? float2(1.0, 1.0) : float2(1.0, 0.0);
+    return output;
+}
+)";
+
+constexpr char kQuickMenuPixelShaderSource[] = R"(
+Texture2D quickMenuTexture : register(t0);
+SamplerState sourceSampler : register(s0);
+cbuffer QuickMenuConfiguration : register(b0)
+{
+    float4 clipPositions[4];
+    float convertFromLinear;
+    float3 configurationPadding;
+};
+
+float3 LinearToSrgb(float3 color)
+{
+    const float3 low = color * 12.92;
+    const float3 high = 1.055 * pow(max(color, 0.0), 1.0 / 2.4) - 0.055;
+    return lerp(high, low, step(color, 0.0031308));
+}
+
+float4 main(float4 position : SV_Position, float2 texcoord : TEXCOORD0) : SV_Target
+{
+    const float4 color = quickMenuTexture.Sample(sourceSampler, texcoord);
+    const float3 encoded = lerp(
+        color.rgb,
+        LinearToSrgb(color.rgb),
+        convertFromLinear);
+    return float4(encoded, color.a);
+}
+)";
+
+struct QuickMenuDrawConfiguration
+{
+    float clipPositions[4][4] = {};
+    float convertFromLinear = 0.0F;
+    float padding[3] = {};
+};
+
+static_assert(sizeof(QuickMenuDrawConfiguration) % 16 == 0);
+
+bfvr::stereo::Pose ToStereoPose(
+    const bfvr::OpenXRPresentationPose& source) noexcept
+{
+    return {
+        {source.positionX, source.positionY, source.positionZ},
+        {
+            source.orientationX,
+            source.orientationY,
+            source.orientationZ,
+            source.orientationW}};
+}
+
+bool IsSrgbFormat(DXGI_FORMAT format) noexcept
+{
+    return format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB ||
+        format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
+}
 
 bool ReadDesktopMirrorEnabled()
 {
@@ -134,7 +214,7 @@ bool DesktopMirror::Initialize(
     context_->AddRef();
     producerProcessId_ = producerProcessId;
     initialized_ = true;
-    WriteLog(L"Desktop mirror is enabled; it will cover the BF1942 client with a widescreen centre-cropped left-eye-plus-UI preview when the game window is available.");
+    WriteLog(L"Desktop mirror is enabled; it will cover the BF1942 client at its native client resolution with a widescreen centre-cropped right-eye-plus-UI preview when the game window is available.");
     return true;
 }
 
@@ -148,9 +228,12 @@ void DesktopMirror::PumpMessages()
     }
 }
 
-void DesktopMirror::Render(const OpenXRPresentationTextures& textures)
+void DesktopMirror::Render(
+    const OpenXRPresentationTextures& textures,
+    const OpenXRPresentationView* rightEyeView,
+    const OpenXRQuickMenuMirrorState* quickMenu)
 {
-    if (!initialized_ || permanentlyDisabled_ || textures.leftWorld == nullptr ||
+    if (!initialized_ || permanentlyDisabled_ || textures.rightWorld == nullptr ||
         textures.ref2Ui == nullptr)
     {
         return;
@@ -162,7 +245,7 @@ void DesktopMirror::Render(const OpenXRPresentationTextures& textures)
     }
 
     D3D11_TEXTURE2D_DESC sourceDescription = {};
-    textures.leftWorld->GetDesc(&sourceDescription);
+    textures.rightWorld->GetDesc(&sourceDescription);
     if (sourceDescription.Width == 0 || sourceDescription.Height == 0 ||
         bufferWidth_ == 0 || bufferHeight_ == 0)
     {
@@ -209,6 +292,55 @@ void DesktopMirror::Render(const OpenXRPresentationTextures& textures)
     context_->Draw(3, 0);
     const std::array<ID3D11ShaderResourceView*, 2> cleared = {nullptr, nullptr};
     context_->PSSetShaderResources(0, static_cast<UINT>(cleared.size()), cleared.data());
+
+    if (rightEyeView != nullptr && quickMenu != nullptr &&
+        quickMenu->visible && quickMenu->menuTexture != nullptr &&
+        EnsureQuickMenuViews(*quickMenu))
+    {
+        const float blendFactor[4] = {};
+        context_->OMSetBlendState(
+            quickMenuBlendState_,
+            blendFactor,
+            0xFFFFFFFFU);
+        D3D11_TEXTURE2D_DESC menuDescription = {};
+        quickMenu->menuTexture->GetDesc(&menuDescription);
+        const bool menuDrawn = DrawQuickMenuQuad(
+            quickMenu->panelPose,
+            quickMenu->panelWidthMeters,
+            quickMenu->panelHeightMeters,
+            quickMenuView_,
+            IsSrgbFormat(menuDescription.Format),
+            *rightEyeView,
+            crop.sourceScale,
+            crop.sourceOffset);
+        if (quickMenu->pointerVisible &&
+            quickMenuCursorView_ != nullptr &&
+            quickMenu->cursorTexture != nullptr)
+        {
+            D3D11_TEXTURE2D_DESC cursorDescription = {};
+            quickMenu->cursorTexture->GetDesc(&cursorDescription);
+            DrawQuickMenuQuad(
+                quickMenu->cursorPose,
+                quickMenu->cursorWidthMeters,
+                quickMenu->cursorHeightMeters,
+                quickMenuCursorView_,
+                IsSrgbFormat(cursorDescription.Format),
+                *rightEyeView,
+                crop.sourceScale,
+                crop.sourceOffset);
+        }
+        if (menuDrawn && !firstQuickMenuMirroredLogged_)
+        {
+            firstQuickMenuMirroredLogged_ = true;
+            WriteLog(L"Desktop mirror composited its first Quick Menu frame through the current right-eye pose/FOV and centre crop.");
+        }
+        else if (!menuDrawn && !quickMenuMirrorFailureReported_)
+        {
+            quickMenuMirrorFailureReported_ = true;
+            WriteLog(L"Desktop mirror could not project the current Quick Menu pose; the headset menu and ordinary right-eye preview remain active.");
+        }
+        context_->OMSetBlendState(nullptr, blendFactor, 0xFFFFFFFFU);
+    }
     context_->OMSetRenderTargets(0, nullptr, nullptr);
 
     const HRESULT result = swapchain_->Present(0, DXGI_PRESENT_DO_NOT_WAIT);
@@ -220,6 +352,7 @@ void DesktopMirror::Render(const OpenXRPresentationTextures& textures)
 
 void DesktopMirror::Shutdown()
 {
+    ReleaseQuickMenuViews();
     ReleaseSourceViews();
     ReleaseSwapchain();
     if (window_ != nullptr)
@@ -237,6 +370,26 @@ void DesktopMirror::Shutdown()
         cropConfiguration_->Release();
         cropConfiguration_ = nullptr;
     }
+    if (quickMenuBlendState_ != nullptr)
+    {
+        quickMenuBlendState_->Release();
+        quickMenuBlendState_ = nullptr;
+    }
+    if (quickMenuConfiguration_ != nullptr)
+    {
+        quickMenuConfiguration_->Release();
+        quickMenuConfiguration_ = nullptr;
+    }
+    if (quickMenuPixelShader_ != nullptr)
+    {
+        quickMenuPixelShader_->Release();
+        quickMenuPixelShader_ = nullptr;
+    }
+    if (quickMenuVertexShader_ != nullptr)
+    {
+        quickMenuVertexShader_->Release();
+        quickMenuVertexShader_ = nullptr;
+    }
     if (pixelShader_ != nullptr)
     {
         pixelShader_->Release();
@@ -253,6 +406,8 @@ void DesktopMirror::Shutdown()
     producerProcessId_ = 0;
     initialized_ = false;
     permanentlyDisabled_ = false;
+    quickMenuMirrorFailureReported_ = false;
+    firstQuickMenuMirroredLogged_ = false;
     if (context_ != nullptr)
     {
         context_->Release();
@@ -353,19 +508,27 @@ bool DesktopMirror::EnsureWindow()
 
 bool DesktopMirror::EnsureSwapchain()
 {
-    if (swapchain_ != nullptr && targetView_ != nullptr)
-    {
-        return true;
-    }
     RECT rectangle = {};
     if (!GetClientRect(parentWindow_, &rectangle))
     {
         return false;
     }
-    const UINT parentWidth = static_cast<UINT>(std::max<LONG>(rectangle.right, 1));
-    const UINT parentHeight = static_cast<UINT>(std::max<LONG>(rectangle.bottom, 1));
-    bufferWidth_ = std::min(parentWidth, kMaximumBufferWidth);
-    bufferHeight_ = std::min(parentHeight, kMaximumBufferHeight);
+    const UINT parentWidth = static_cast<UINT>(
+        std::max<LONG>(rectangle.right - rectangle.left, 1));
+    const UINT parentHeight = static_cast<UINT>(
+        std::max<LONG>(rectangle.bottom - rectangle.top, 1));
+    if (swapchain_ != nullptr && targetView_ != nullptr &&
+        bufferWidth_ == parentWidth && bufferHeight_ == parentHeight)
+    {
+        return true;
+    }
+
+    // Render at the BF1942 client size rather than into a smaller buffer that
+    // DXGI subsequently stretches. Recreate only when the client size changes;
+    // ordinary frames continue to reuse the existing flip-model swapchain.
+    ReleaseSwapchain();
+    bufferWidth_ = parentWidth;
+    bufferHeight_ = parentHeight;
 
     IDXGIDevice* dxgiDevice = nullptr;
     IDXGIAdapter* adapter = nullptr;
@@ -434,14 +597,14 @@ bool DesktopMirror::EnsureSwapchain()
 
 bool DesktopMirror::EnsureSourceViews(const OpenXRPresentationTextures& textures)
 {
-    if (worldTexture_ == textures.leftWorld && uiTexture_ == textures.ref2Ui &&
+    if (worldTexture_ == textures.rightWorld && uiTexture_ == textures.ref2Ui &&
         worldView_ != nullptr && uiView_ != nullptr)
     {
         return true;
     }
     ReleaseSourceViews();
     HRESULT result = device_->CreateShaderResourceView(
-        textures.leftWorld, nullptr, &worldView_);
+        textures.rightWorld, nullptr, &worldView_);
     if (SUCCEEDED(result))
     {
         result = device_->CreateShaderResourceView(textures.ref2Ui, nullptr, &uiView_);
@@ -452,20 +615,134 @@ bool DesktopMirror::EnsureSourceViews(const OpenXRPresentationTextures& textures
         Disable(L"Desktop mirror could not create its source views; the headset presentation remains active.");
         return false;
     }
-    worldTexture_ = textures.leftWorld;
+    worldTexture_ = textures.rightWorld;
     uiTexture_ = textures.ref2Ui;
+    return true;
+}
+
+bool DesktopMirror::EnsureQuickMenuViews(
+    const OpenXRQuickMenuMirrorState& quickMenu)
+{
+    if (quickMenuTexture_ == quickMenu.menuTexture &&
+        quickMenuCursorTexture_ == quickMenu.cursorTexture &&
+        quickMenuView_ != nullptr &&
+        (!quickMenu.pointerVisible || quickMenuCursorView_ != nullptr))
+    {
+        return true;
+    }
+
+    ReleaseQuickMenuViews();
+    HRESULT result = quickMenu.menuTexture == nullptr
+        ? E_INVALIDARG
+        : device_->CreateShaderResourceView(
+            quickMenu.menuTexture,
+            nullptr,
+            &quickMenuView_);
+    if (SUCCEEDED(result) && quickMenu.cursorTexture != nullptr)
+    {
+        result = device_->CreateShaderResourceView(
+            quickMenu.cursorTexture,
+            nullptr,
+            &quickMenuCursorView_);
+    }
+    if (FAILED(result))
+    {
+        ReleaseQuickMenuViews();
+        if (!quickMenuMirrorFailureReported_)
+        {
+            quickMenuMirrorFailureReported_ = true;
+            WriteLog(L"Desktop mirror could not create Quick Menu source views; the headset menu and ordinary right-eye preview remain active.");
+        }
+        return false;
+    }
+    quickMenuTexture_ = quickMenu.menuTexture;
+    quickMenuCursorTexture_ = quickMenu.cursorTexture;
+    return true;
+}
+
+bool DesktopMirror::DrawQuickMenuQuad(
+    const OpenXRPresentationPose& pose,
+    float widthMeters,
+    float heightMeters,
+    ID3D11ShaderResourceView* textureView,
+    bool sourceIsSrgb,
+    const OpenXRPresentationView& rightEyeView,
+    const float sourceScale[2],
+    const float sourceOffset[2])
+{
+    if (textureView == nullptr || sourceScale == nullptr ||
+        sourceOffset == nullptr)
+    {
+        return false;
+    }
+    stereo::QuickMenuMirrorView eye = {};
+    eye.pose = ToStereoPose(rightEyeView.pose);
+    eye.angleLeft = rightEyeView.fov.angleLeft;
+    eye.angleRight = rightEyeView.fov.angleRight;
+    eye.angleUp = rightEyeView.fov.angleUp;
+    eye.angleDown = rightEyeView.fov.angleDown;
+    const stereo::QuickMenuMirrorCrop crop = {
+        sourceScale[0],
+        sourceScale[1],
+        sourceOffset[0],
+        sourceOffset[1]};
+    std::array<stereo::QuickMenuMirrorVertex, 4> vertices = {};
+    if (!stereo::ProjectQuickMenuQuadToMirror(
+            ToStereoPose(pose),
+            widthMeters,
+            heightMeters,
+            eye,
+            crop,
+            vertices))
+    {
+        return false;
+    }
+
+    QuickMenuDrawConfiguration configuration = {};
+    for (std::size_t index = 0; index < vertices.size(); ++index)
+    {
+        configuration.clipPositions[index][0] = vertices[index].clipX;
+        configuration.clipPositions[index][1] = vertices[index].clipY;
+        configuration.clipPositions[index][2] = vertices[index].clipZ;
+        configuration.clipPositions[index][3] = vertices[index].clipW;
+    }
+    configuration.convertFromLinear = sourceIsSrgb ? 1.0F : 0.0F;
+    context_->UpdateSubresource(
+        quickMenuConfiguration_,
+        0,
+        nullptr,
+        &configuration,
+        0,
+        0);
+    context_->IASetInputLayout(nullptr);
+    context_->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
+    context_->VSSetShader(quickMenuVertexShader_, nullptr, 0);
+    context_->VSSetConstantBuffers(0, 1, &quickMenuConfiguration_);
+    context_->PSSetShader(quickMenuPixelShader_, nullptr, 0);
+    context_->PSSetConstantBuffers(0, 1, &quickMenuConfiguration_);
+    context_->PSSetSamplers(0, 1, &sampler_);
+    context_->PSSetShaderResources(0, 1, &textureView);
+    context_->Draw(4, 0);
+    ID3D11ShaderResourceView* nullView = nullptr;
+    context_->PSSetShaderResources(0, 1, &nullView);
     return true;
 }
 
 bool DesktopMirror::CreatePipeline()
 {
-    if (vertexShader_ != nullptr && pixelShader_ != nullptr && sampler_ != nullptr &&
-        cropConfiguration_ != nullptr)
+    if (vertexShader_ != nullptr && pixelShader_ != nullptr &&
+        quickMenuVertexShader_ != nullptr &&
+        quickMenuPixelShader_ != nullptr && sampler_ != nullptr &&
+        cropConfiguration_ != nullptr &&
+        quickMenuConfiguration_ != nullptr &&
+        quickMenuBlendState_ != nullptr)
     {
         return true;
     }
     ID3DBlob* vertexBytecode = nullptr;
     ID3DBlob* pixelBytecode = nullptr;
+    ID3DBlob* quickMenuVertexBytecode = nullptr;
+    ID3DBlob* quickMenuPixelBytecode = nullptr;
     HRESULT result = E_FAIL;
     if (CompileShader(kVertexShaderSource, "vs_4_0", &vertexBytecode))
     {
@@ -473,11 +750,44 @@ bool DesktopMirror::CreatePipeline()
             vertexBytecode->GetBufferPointer(), vertexBytecode->GetBufferSize(),
             nullptr, &vertexShader_);
     }
-    if (SUCCEEDED(result) && CompileShader(kPixelShaderSource, "ps_4_0", &pixelBytecode))
+    if (SUCCEEDED(result))
     {
-        result = device_->CreatePixelShader(
-            pixelBytecode->GetBufferPointer(), pixelBytecode->GetBufferSize(),
-            nullptr, &pixelShader_);
+        result = CompileShader(
+            kPixelShaderSource,
+            "ps_4_0",
+            &pixelBytecode)
+            ? device_->CreatePixelShader(
+                pixelBytecode->GetBufferPointer(),
+                pixelBytecode->GetBufferSize(),
+                nullptr,
+                &pixelShader_)
+            : E_FAIL;
+    }
+    if (SUCCEEDED(result))
+    {
+        result = CompileShader(
+            kQuickMenuVertexShaderSource,
+            "vs_4_0",
+            &quickMenuVertexBytecode)
+            ? device_->CreateVertexShader(
+                quickMenuVertexBytecode->GetBufferPointer(),
+                quickMenuVertexBytecode->GetBufferSize(),
+                nullptr,
+                &quickMenuVertexShader_)
+            : E_FAIL;
+    }
+    if (SUCCEEDED(result))
+    {
+        result = CompileShader(
+            kQuickMenuPixelShaderSource,
+            "ps_4_0",
+            &quickMenuPixelBytecode)
+            ? device_->CreatePixelShader(
+                quickMenuPixelBytecode->GetBufferPointer(),
+                quickMenuPixelBytecode->GetBufferSize(),
+                nullptr,
+                &quickMenuPixelShader_)
+            : E_FAIL;
     }
     if (SUCCEEDED(result))
     {
@@ -496,6 +806,42 @@ bool DesktopMirror::CreatePipeline()
         description.Usage = D3D11_USAGE_DEFAULT;
         description.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
         result = device_->CreateBuffer(&description, nullptr, &cropConfiguration_);
+    }
+    if (SUCCEEDED(result))
+    {
+        D3D11_BUFFER_DESC description = {};
+        description.ByteWidth = sizeof(QuickMenuDrawConfiguration);
+        description.Usage = D3D11_USAGE_DEFAULT;
+        description.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+        result = device_->CreateBuffer(
+            &description,
+            nullptr,
+            &quickMenuConfiguration_);
+    }
+    if (SUCCEEDED(result))
+    {
+        D3D11_BLEND_DESC description = {};
+        D3D11_RENDER_TARGET_BLEND_DESC& target =
+            description.RenderTarget[0];
+        target.BlendEnable = TRUE;
+        target.SrcBlend = D3D11_BLEND_ONE;
+        target.DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
+        target.BlendOp = D3D11_BLEND_OP_ADD;
+        target.SrcBlendAlpha = D3D11_BLEND_ONE;
+        target.DestBlendAlpha = D3D11_BLEND_INV_SRC_ALPHA;
+        target.BlendOpAlpha = D3D11_BLEND_OP_ADD;
+        target.RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+        result = device_->CreateBlendState(
+            &description,
+            &quickMenuBlendState_);
+    }
+    if (quickMenuPixelBytecode != nullptr)
+    {
+        quickMenuPixelBytecode->Release();
+    }
+    if (quickMenuVertexBytecode != nullptr)
+    {
+        quickMenuVertexBytecode->Release();
     }
     if (pixelBytecode != nullptr)
     {
@@ -540,6 +886,22 @@ void DesktopMirror::ReleaseSourceViews()
     }
     worldTexture_ = nullptr;
     uiTexture_ = nullptr;
+}
+
+void DesktopMirror::ReleaseQuickMenuViews()
+{
+    if (quickMenuCursorView_ != nullptr)
+    {
+        quickMenuCursorView_->Release();
+        quickMenuCursorView_ = nullptr;
+    }
+    if (quickMenuView_ != nullptr)
+    {
+        quickMenuView_->Release();
+        quickMenuView_ = nullptr;
+    }
+    quickMenuTexture_ = nullptr;
+    quickMenuCursorTexture_ = nullptr;
 }
 
 void DesktopMirror::ReleaseSwapchain()

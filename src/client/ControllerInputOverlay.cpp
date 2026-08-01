@@ -400,6 +400,9 @@ private:
         const bfvr::D3D8RuntimeControllerHand& left,
         const bfvr::D3D8RuntimeControllerHand& right) noexcept
     {
+        const bool quickMenuHeld = IsHandButtonPressed(
+            right,
+            bfvr::shared::kControllerHandButtonPrimary);
         if ((left.flags & bfvr::shared::kControllerHandFlagThumbstickActive) != 0)
         {
             // The active Infantry profile binds D/A to c_PIYaw and W/S to
@@ -448,8 +451,10 @@ private:
                 mouseLookEnabled = true;
             }
 
-            const int verticalDirection = ThumbstickDirection(right.thumbstickY);
-            if (verticalDirection != 0 &&
+            const int verticalDirection = quickMenuHeld
+                ? 0
+                : ThumbstickDirection(right.thumbstickY);
+            if (!quickMenuHeld && verticalDirection != 0 &&
                 verticalDirection != rightStickVerticalDirection)
             {
                 SetPulseInput(
@@ -468,6 +473,19 @@ private:
         if (mouseLookEnabled)
         {
             SetHeldInput(destination, kLogicalInputMouseLook, true);
+        }
+
+        // Right A belongs exclusively to the BFVR Quick Menu. During its
+        // hold, retain only locomotion and horizontal turning; all combat and
+        // face-button submissions remain absent from the native frame.
+        if (quickMenuHeld)
+        {
+            triggerHeld = false;
+            rightSqueezeHeld = false;
+            rightSecondaryWasDown = IsHandButtonPressed(
+                right,
+                bfvr::shared::kControllerHandButtonSecondary);
+            return;
         }
 
         const bool triggerActive =
@@ -505,12 +523,6 @@ private:
             destination,
             kLogicalInputCrouch,
             IsHandButtonPressed(left, bfvr::shared::kControllerHandButtonSecondary));
-        SetPulseInput(
-            destination,
-            kLogicalInputAction,
-            TakeRisingEdge(
-                IsHandButtonPressed(right, bfvr::shared::kControllerHandButtonPrimary),
-                rightPrimaryWasDown));
         SetPulseInput(
             destination,
             kLogicalInputReload,
@@ -573,7 +585,7 @@ private:
         if (InterlockedCompareExchange(&firstEligibleFrameLogged, 1, 0) == 0)
         {
             WriteLog(
-                L"Controller input overlay accepted its first fresh focused local frame. Layout: left stick move; right stick smooth-turn with up jump/action and down prone; right trigger fire; right grip alt-fire; A jump/action; B reload; X use; Y crouch; left grip is reserved exclusively for off-hand support and submits no gameplay action. Controller poses do not write native camera-look input. All values remain temporary native PlayerInput fields.");
+                L"Controller input overlay accepted its first fresh focused local frame. Layout: left stick move; right stick smooth-turn with up jump/action and down prone; right trigger fire; right grip alt-fire; A is dedicated exclusively to the hold/release Quick Menu and submits no jump/action; B reload; X use; Y crouch; left grip is reserved exclusively for off-hand support. While Quick Menu A is held, only locomotion and horizontal turning survive. Controller poses do not write native camera-look input. All values remain temporary native PlayerInput fields.");
         }
     }
 
@@ -621,7 +633,6 @@ private:
     {
         triggerHeld = false;
         rightSqueezeHeld = false;
-        rightPrimaryWasDown = false;
         rightSecondaryWasDown = false;
         rightStickVerticalDirection = 0;
     }
@@ -708,7 +719,6 @@ private:
     volatile LONG appliedFrames = 0;
     bool triggerHeld = false;
     bool rightSqueezeHeld = false;
-    bool rightPrimaryWasDown = false;
     bool rightSecondaryWasDown = false;
     int rightStickVerticalDirection = 0;
     bool ownsMinHook = false;
