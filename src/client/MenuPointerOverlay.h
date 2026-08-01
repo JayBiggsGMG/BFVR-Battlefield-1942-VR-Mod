@@ -20,6 +20,19 @@ void StartMenuPointerOverlay(
 void StopMenuPointerOverlay();
 [[nodiscard]] bool IsMenuPointerOverlayActive() noexcept;
 
+struct MainMenuOverlayInteractionState
+{
+    bool visible = false;
+    bool hovered = false;
+};
+
+// Snapshot produced by the native BfMenu input hook. Visibility is narrower
+// than IsMenuPointerOverlayActive: only BfMenu state 0 (the "Battlefield"
+// frontend) is admitted. Hover uses the same 800x600 rectangle as rendering.
+[[nodiscard]] MainMenuOverlayInteractionState
+GetMainMenuOverlayInteractionState() noexcept;
+void SetMainMenuOverlayAvailable(bool available) noexcept;
+
 // The D3D8 presentation thread owns the yaw-only LOCAL anchor for a visible
 // native menu. The input hook consumes the same pose so controller rays and
 // the OpenXR panel cannot diverge when comfort follow moves it.

@@ -91,6 +91,8 @@ struct D3D8RuntimeUiPlacement
     bool headLocked = true;
     bool worldAnchorValid = false;
     D3D8RuntimeView worldAnchor = {};
+    bool backToGameVisible = false;
+    bool backToGameHovered = false;
 };
 
 class D3D8SharedPresentationBridge

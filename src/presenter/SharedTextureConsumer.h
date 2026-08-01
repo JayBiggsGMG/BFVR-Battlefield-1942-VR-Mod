@@ -1,6 +1,7 @@
 #pragma once
 
 #include "openxr/OpenXRPresentation.h"
+#include "presenter/D3D11MainMenuOverlay.h"
 #include "presenter/D3D11TextureScaler.h"
 #include "presenter/SharedPresentationProtocol.h"
 
@@ -27,7 +28,7 @@ public:
         const PresentationRequirements& destinationRequirements,
         SharedTextureLogCallback logCallback,
         void* logContext);
-    bool ConsumeFrame();
+    bool ConsumeFrame(LONG frameOverlayFlags = 0);
     [[nodiscard]] OpenXRPresentationTextures GetLocalTextures() const noexcept;
     bool ReadCenterPixels(DWORD* pixels, std::size_t count);
     void Shutdown();
@@ -65,6 +66,7 @@ private:
     ID3D11Device* device_ = nullptr;
     ID3D11DeviceContext* context_ = nullptr;
     ID3D11Query* legacyCompletionQuery_ = nullptr;
+    D3D11MainMenuOverlay mainMenuOverlay_;
     D3D11TextureScaler scaler_;
     bool requiresLegacyCompletionWait_ = false;
     bool scalerRequired_ = false;

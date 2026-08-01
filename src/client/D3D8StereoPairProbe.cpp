@@ -5,6 +5,7 @@
 #include "client/D3D8RuntimePosePolicy.h"
 #include "client/ControllerInputOverlay.h"
 #include "client/CrosshairOverlay.h"
+#include "client/MainMenuOverlay.h"
 #include "client/MenuPointerOverlay.h"
 #include "client/StartupMenuPresentation.h"
 #include "client/D3D8WeaponMotionOverlay.h"
@@ -396,93 +397,7 @@ void AppendLog(const wchar_t* format, ...)
     g_callbacks.appendLog(message);
 }
 
-void LogWaterPassState(
-    void* device,
-    const DrawStateSnapshot& snapshot)
-{
-    if (g_methods.getRenderState == nullptr ||
-        g_methods.getTextureStageState == nullptr)
-    {
-        return;
-    }
-
-    const LONG passBit = snapshot.zWriteEnable != 0 ? 0x2 : 0x1;
-    if ((InterlockedOr(&g_loggedWaterPassStateMask, passBit) & passBit) != 0)
-    {
-        return;
-    }
-
-    DWORD sourceBlend = 0;
-    DWORD destinationBlend = 0;
-    DWORD textureFactor = 0;
-    const HRESULT sourceBlendResult = g_methods.getRenderState(
-        device,
-        kD3DRenderStateSourceBlend,
-        &sourceBlend);
-    const HRESULT destinationBlendResult = g_methods.getRenderState(
-        device,
-        kD3DRenderStateDestinationBlend,
-        &destinationBlend);
-    const HRESULT textureFactorResult = g_methods.getRenderState(
-        device,
-        kD3DRenderStateTextureFactor,
-        &textureFactor);
-
-    constexpr std::array<DWORD, 8> kWaterStageStates = {
-        1,  // D3DTSS_COLOROP
-        2,  // D3DTSS_COLORARG1
-        3,  // D3DTSS_COLORARG2
-        4,  // D3DTSS_ALPHAOP
-        5,  // D3DTSS_ALPHAARG1
-        6,  // D3DTSS_ALPHAARG2
-        11, // D3DTSS_TEXCOORDINDEX
-        24  // D3DTSS_TEXTURETRANSFORMFLAGS
-    };
-    std::array<std::array<DWORD, kWaterStageStates.size()>, 2> stages = {};
-    DWORD successfulStageReads = 0;
-    for (DWORD stage = 0; stage < stages.size(); ++stage)
-    {
-        for (std::size_t state = 0; state < kWaterStageStates.size(); ++state)
-        {
-            if (SUCCEEDED(g_methods.getTextureStageState(
-                    device,
-                    stage,
-                    kWaterStageStates[state],
-                    &stages[stage][state])))
-            {
-                successfulStageReads |= 1U <<
-                    (stage * kWaterStageStates.size() + state);
-            }
-        }
-    }
-
-    AppendLog(
-        L"D3D8 water pass diagnostic: zWrite=%lu blend[src=%lu(%08lX) dst=%lu(%08lX)] textureFactor=%08lX(%08lX) stageReads=%04lX stage0[colorOp=%lu arg1=%lu arg2=%lu alphaOp=%lu arg1=%lu arg2=%lu coord=%08lX transform=%lu] stage1[colorOp=%lu arg1=%lu arg2=%lu alphaOp=%lu arg1=%lu arg2=%lu coord=%08lX transform=%lu].",
-        snapshot.zWriteEnable,
-        sourceBlend,
-        static_cast<unsigned long>(sourceBlendResult),
-        destinationBlend,
-        static_cast<unsigned long>(destinationBlendResult),
-        textureFactor,
-        static_cast<unsigned long>(textureFactorResult),
-        successfulStageReads,
-        stages[0][0],
-        stages[0][1],
-        stages[0][2],
-        stages[0][3],
-        stages[0][4],
-        stages[0][5],
-        stages[0][6],
-        stages[0][7],
-        stages[1][0],
-        stages[1][1],
-        stages[1][2],
-        stages[1][3],
-        stages[1][4],
-        stages[1][5],
-        stages[1][6],
-        stages[1][7]);
-}
+#include "client/internal/D3D8StereoPairWaterDiagnostics.inl"
 
 void AppendPresentationLog(const wchar_t* message)
 {
@@ -2215,6 +2130,11 @@ DWORD WINAPI RunProbe(void*)
     constexpr DWORD kLifecycleReadyTimeoutMs = 60000;
     g_presentationConfiguration =
         bfvr::ReadD3D8PresentationConfiguration();
+    bfvr::MainMenuOverlay mainMenuOverlayAssets;
+    const bool mainMenuOverlayEnabled =
+        IsPresentationMode() && !g_offlinePresentation &&
+        mainMenuOverlayAssets.Initialize(AppendPresentationLog);
+    bfvr::SetMainMenuOverlayAvailable(mainMenuOverlayEnabled);
     bfvr::StartupMenuPresentation startupMenuPresentation;
     if (g_runUntilStopped)
     {
@@ -2252,6 +2172,7 @@ DWORD WINAPI RunProbe(void*)
         AppendLog(
             L"D3D8 stereo-pair probe skipped: the verified D3D8 lifecycle did not become ready within %lu ms.",
             kLifecycleReadyTimeoutMs);
+        bfvr::SetMainMenuOverlayAvailable(false);
         SignalCompletion();
         return 0;
     }
@@ -2295,6 +2216,7 @@ DWORD WINAPI RunProbe(void*)
         AppendLog(
             L"D3D8 OpenXR frame probe skipped: the x64 companion did not provide one symmetric runtime-sized stereo target pair.");
         g_presentationBridge.Shutdown();
+        bfvr::SetMainMenuOverlayAvailable(false);
         SignalCompletion();
         return 0;
     }
@@ -2308,11 +2230,16 @@ DWORD WINAPI RunProbe(void*)
         {
             g_presentationBridge.Shutdown();
         }
+        bfvr::SetMainMenuOverlayAvailable(false);
         SignalCompletion();
         return 0;
     }
     if (IsPresentationMode() && !g_offlinePresentation)
     {
+        // Startup pointer teardown clears this process-wide gate. Re-arm it
+        // for the GPU-resident presenter, which owns an independent copy of
+        // the same verified raster stacks after the handoff.
+        bfvr::SetMainMenuOverlayAvailable(mainMenuOverlayEnabled);
         bfvr::StartControllerInputOverlay(
             reinterpret_cast<void*>(g_gameImageBegin),
             AppendPresentationLog);
@@ -2431,6 +2358,7 @@ DWORD WINAPI RunProbe(void*)
         bfvr::StopMenuPointerOverlay();
         bfvr::StopControllerInputOverlay();
     }
+    bfvr::SetMainMenuOverlayAvailable(false);
     RemoveHooks();
     MH_Uninitialize();
     AppendLog(

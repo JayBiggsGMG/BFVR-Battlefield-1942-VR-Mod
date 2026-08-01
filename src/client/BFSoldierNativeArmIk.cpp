@@ -1,10 +1,11 @@
 #include "client/BFSoldierNativeArmIk.h"
-
 #include "client/BFSoldierBoneResolver.h"
 #include "client/BFSoldierLeftGripRotationBinding.h"
 #include "client/BFSoldierOffHandSupportBinding.h"
 #include "client/BFSoldierOffHandWeaponSteering.h"
 #include "client/BFSoldierNativeArmPole.h"
+#include "client/BFSoldierPrimarySupportPoseCache.h"
+#include "client/BFSoldierRightGripRotationBinding.h"
 #include "client/BFSoldierTrackedHandPose.h"
 #include "client/BFSoldierVrMotionFilter.h"
 #include "client/ControllerInputCache.h"
@@ -108,7 +109,6 @@ constexpr BYTE kBFSoldierGetPoseCameraPositionPrefix[] = {
     0x8B, 0x44, 0x24, 0x04, 0x8B, 0x49, 0x4C, 0x8D,
     0x04, 0x40, 0x8D, 0x84, 0x81, 0x54, 0x02, 0x00,
     0x00, 0xC2, 0x04, 0x00};
-
 using Matrix4 = bfvr::stereo::Matrix4;
 bool IsFinite(const float value) noexcept
 {
@@ -272,12 +272,10 @@ struct ArmIkRestore
     bool captureMotionProbe = false;
     bool active = false;
 };
-
 struct PendingLocalActiveItemAttachment
 {
-    void* soldier = nullptr;
-    const Matrix4* handWorld = nullptr;
-    const Matrix4* leftHandWorld = nullptr;
+    void* soldier = nullptr; void* skeleton = nullptr;
+    const Matrix4* handWorld = nullptr; const Matrix4* leftHandWorld = nullptr;
     LONG leftHandBone = -1;
 };
 struct RightHandFrameContext
@@ -462,10 +460,10 @@ public:
         enabled_ = true;
         (void)armPole_.Start(gameImage_, appendLog_);
         WriteLog(
-            L"Native 1P right-arm IK armed at Skeleton::transform and the exact active-item AnimatedBundle attachment callback. OpenXR aim owns the held gun/fire basis continuously; BF1942's selected item supplies its own native hand-from-fire relation before IK is enabled, with no shot, spawn-camera, or process-global calibration. BF1942's authored crouch/prone camera translation is inherited without changing controller orientation. The complete native 1P arm root is shifted %.2f metres forward for VR shoulder placement. Existing authored IK targets are left untouched.",
+            L"Native 1P right-arm IK armed at Skeleton::transform and the exact active-item AnimatedBundle attachment callback. Primary slot 3 retains direct OpenXR gun aim and automatically establishes one controller-grip-to-anatomical-wrist reference; non-primary items use that wrist reference and BF1942's selected-item relation to reconstruct their authored functional basis. No shot, spawn-camera, or per-item user calibration is required. BF1942's authored crouch/prone camera translation is inherited without changing controller orientation. The complete native 1P arm root is shifted %.2f metres forward for VR shoulder placement. Existing authored IK targets are left untouched.",
             kFirstPersonArmRootForwardOffset);
         WriteLog(
-            L"Native 1P left-hand IK follows tracked OpenXR grip position and relative wrist rotation after selected-item warm-up. Left squeeze is reserved for proximity-gated support. Primary slot 3 preserves BF1942's native left-to-right-hand relation and permits a minimal fixed-pivot swing capped at 35 degrees; the exact result is shared by weapon presentation and fire. Close sidearm slot 2 captures the user's current visual cup without a jump and is permanently visual-only. Elbow bend uses only Maya's direction-only rotate-plane pole for exact BFVR-owned 1P targets; no third-person body position is consumed.");
+            L"Native 1P left-hand IK follows tracked OpenXR grip position and relative wrist rotation after selected-item warm-up. A successful authored primary support grip establishes one automatic anatomical left-wrist reference for later item switches; the prior native per-item zero remains the fail-closed fallback until then. Left squeeze is reserved for proximity-gated support. Primary slot 3 preserves BF1942's native left-to-right-hand relation and permits a minimal fixed-pivot swing capped at 35 degrees; the exact result is shared by weapon presentation and fire. Close sidearm slot 2 captures the user's current visual cup without a jump and is permanently visual-only. Elbow bend uses only Maya's direction-only rotate-plane pole for exact BFVR-owned 1P targets; no third-person body position is consumed.");
         return true;
     }
 
@@ -723,7 +721,7 @@ private:
             return;
         }
         const auto handFromFire =
-            bfvr::stereo::MakeD3D8NativeHandFromFireRotation(
+            bfvr::stereo::MakeD3D8NativeHandFromFunctionalTransform(
                 *nativeFireWorld,
                 nativeHandWorld);
         if (!handFromFire.has_value())
@@ -761,6 +759,9 @@ private:
                 InterlockedIncrement(&leftSupportCaptureFailures_);
             }
         }
+        if (hasLeftSupportPose) primarySupportPoseCache_.Resolve(
+            soldier, pending.skeleton, item, activeItemIndex,
+            leftHandFromRightHand, appendLog_);
 
         bool published = false;
         AcquireSRWLockExclusive(&activeItemAlignmentLock_);
@@ -772,12 +773,9 @@ private:
             activeItemAlignmentValid_ = true;
             if (hasLeftSupportPose)
             {
-                activeItemLeftHandFromRightHand_ =
-                    leftHandFromRightHand;
-                activeItemNativeLeftHandLocal_ =
-                    nativeLeftHandLocal;
-                activeItemLeftHandBone_ =
-                    pending.leftHandBone;
+                activeItemLeftHandFromRightHand_ = leftHandFromRightHand;
+                activeItemNativeLeftHandLocal_ = nativeLeftHandLocal;
+                activeItemLeftHandBone_ = pending.leftHandBone;
                 activeItemLeftSupportPoseValid_ = true;
             }
             published = true;
@@ -787,7 +785,7 @@ private:
         {
             InterlockedIncrement(&activeItemAlignments_);
             WriteLog(
-                L"Native 1P arm adopted the selected item's authored hand-from-fire rotation before firing: soldier=%p item=%p nativeHand=(%.4f,%.4f,%.4f) nativeFire=(%.4f,%.4f,%.4f). OpenXR aim now owns this item's gun and projectile basis.",
+                L"Native 1P arm adopted the selected item's authored hand-from-functional rotation: soldier=%p item=%p nativeHand=(%.4f,%.4f,%.4f) nativeFunctional=(%.4f,%.4f,%.4f). The same relation supports direct primary aim or inverse non-primary anatomical grip ownership.",
                 soldier,
                 item,
                 nativeHandWorld.values[3][0],
@@ -873,7 +871,7 @@ private:
                       kBoneFinalMatrixOffset)
                 : nullptr;
             pendingLocalActiveItemAttachment_ = {
-                soldier,
+                soldier, skeleton,
                 reinterpret_cast<const Matrix4*>(
                     boneRecords +
                     static_cast<std::size_t>(handBone) * kBoneRecordStride +
@@ -1252,13 +1250,14 @@ private:
                 InterlockedIncrement(&stanceReadFailures_);
             }
 
-            // OpenXR's aim basis describes the gun/barrel, not BF1942's
-            // anatomical right-hand bone. The current game-selected item
-            // supplies its authored hand-from-fire rotation through the
-            // native attachment callback before controller IK is allowed.
+            // Slot 3 keeps the proven OpenXR-aim gun contract. Its result also
+            // establishes one anatomical grip-to-wrist reference; other items
+            // use that reference first, then invert their authored relation to
+            // recover the corresponding functional basis.
             Matrix4 controllerGunWorld = Multiply(
                 controllerGunLocal,
                 *soldierTransform);
+            const Matrix4 controllerGripWorld = Multiply(*grip, *soldierTransform);
             ActiveItemAlignmentSnapshot alignment = {};
             if (!ReadActiveItemAlignment(soldier, alignment))
             {
@@ -1286,16 +1285,25 @@ private:
                 InterlockedIncrement(&matrixRejected_);
                 return false;
             }
-            auto correctedHandWorld =
-                bfvr::stereo::MakeD3D8ControllerDirectedNativeHandMatrix(
+            const auto rightHandPose = rightGripRotationBinding_.Update(
+                soldier,
+                skeleton,
+                alignment.activeItem,
+                handBone,
+                alignment.activeItemIndex,
+                controllerGripWorld,
                 controllerGunWorld,
-                alignment.handFromFire);
-            if (!correctedHandWorld.has_value())
+                alignment.handFromFire,
+                appendLog_);
+            if (!rightHandPose.has_value())
             {
                 ResetLifetimeBinding();
                 InterlockedIncrement(&matrixRejected_);
                 return false;
             }
+            controllerGunWorld = rightHandPose->functionalWorld;
+            auto correctedHandWorld =
+                std::optional<Matrix4>(rightHandPose->handWorld);
             if (alignment.leftSupportPoseValid &&
                 alignment.activeItemIndex == 3 &&
                 IsTrackedGrip(sample.hands[kLeftControllerHand]))
@@ -1519,7 +1527,6 @@ private:
             return false;
         }
     }
-
     bool TryInjectFreeLeftHand(
         void* skeleton,
         const RightHandFrameContext& rightFrame,
@@ -1531,7 +1538,7 @@ private:
         if (skeleton == nullptr || soldier == nullptr ||
             !IsLocalPlayerAlive())
         {
-            ResetLeftGripRotationBinding();
+            leftGripRotationBinding_.Reset();
             ResetOffHandSupportBinding();
             return false;
         }
@@ -1565,7 +1572,7 @@ private:
                 kControllerSampleMaximumAgeMs) ||
             !IsTrackedGrip(sample.hands[kLeftControllerHand]))
         {
-            ResetLeftGripRotationBinding();
+            leftGripRotationBinding_.ResetTransient();
             ResetOffHandSupportBinding();
             InterlockedIncrement(&leftTrackingRejected_);
             return false;
@@ -1642,7 +1649,7 @@ private:
                 // hand. Never replace it with the experimental free-hand
                 // controller target.
                 ResetOwnedLeftHandle();
-                ResetLeftGripRotationBinding();
+                leftGripRotationBinding_.ResetTransient();
                 ResetOffHandSupportBinding();
                 InterlockedIncrement(
                     &leftNativeTargetPreserved_);
@@ -1729,11 +1736,13 @@ private:
                 supportInput.inverseSoldierWorld =
                     rightFrame.inverseSoldierWorld;
                 supportInput.controllerLeftHandLocal = target;
+                supportInput.diagnostics = {appendLog_, soldier, activeItem, activeItemIndex};
                 const auto support =
                     offHandSupportBinding_.Update(
                         supportInput);
                 if (support.enteredSupport)
                 {
+                    leftGripRotationBinding_.CaptureAnatomicalReference(soldier, skeleton, activeItem, leftHandBone, leftGrip->local, support.targetLocal, appendLog_);
                     InterlockedIncrement(
                         &leftSupportEntered_);
                     const wchar_t* const supportMode =
@@ -1767,8 +1776,7 @@ private:
                 {
                     target = support.targetLocal;
                 }
-            }
-
+                }
             const std::array<float, 3> nativePosition = {
                 nativeLeftHandLocal.values[3][0],
                 nativeLeftHandLocal.values[3][1],
@@ -1787,7 +1795,6 @@ private:
                 InterlockedIncrement(&leftMatrixRejected_);
                 return false;
             }
-
             const std::byte* const skeletonBytes =
                 static_cast<const std::byte*>(skeleton);
             const std::byte* const handleBegin =
@@ -1883,7 +1890,7 @@ private:
                 loggedFreeLeftSkeleton_ = skeleton;
                 loggedFreeLeftBone_ = leftHandBone;
                 WriteLog(
-                    L"Native 1P free left hand bound to tracked OpenXR grip: soldier=%p skeleton=%p bone=%ld generation=%ld native=(%.4f,%.4f,%.4f) target=(%.4f,%.4f,%.4f). Position is absolute; wrist twist/rotation is relative to the selected item's native zero pose. After proximity acquisition, primary slot 3 may steer by a bounded fixed-pivot swing; close sidearm slot 2 captures only a visual cup. Elbow/pole correction is not active.",
+                    L"Native 1P free left hand bound to tracked OpenXR grip: soldier=%p skeleton=%p bone=%ld generation=%ld native=(%.4f,%.4f,%.4f) target=(%.4f,%.4f,%.4f). Position is absolute; wrist rotation uses the learned anatomical primary-grip reference when available and otherwise the selected item's native fallback. After proximity acquisition, primary slot 3 may steer by a bounded fixed-pivot swing; close sidearm slot 2 captures only a visual cup. Elbow/pole correction is not active.",
                     soldier,
                     skeleton,
                     leftHandBone,
@@ -1904,7 +1911,6 @@ private:
             return false;
         }
     }
-
     bool MakeControllerRotatedLeftHandTarget(
         void* soldier,
         void* skeleton,
@@ -1996,7 +2002,6 @@ private:
             return std::nullopt;
         }
     }
-
     bool SafeCopyMatrix(
         const Matrix4* source,
         Matrix4& destination) const noexcept
@@ -2300,11 +2305,6 @@ private:
         ownedLeftHandleIndex_ = -1;
     }
 
-    void ResetLeftGripRotationBinding() noexcept
-    {
-        leftGripRotationBinding_.Reset();
-    }
-
     void ResetOffHandSupportBinding() noexcept
     {
         offHandSupportBinding_.Reset();
@@ -2352,7 +2352,7 @@ private:
         ResetObservedNativePose();
         ResetOwnedHandle();
         ResetOwnedLeftHandle();
-        ResetLeftGripRotationBinding();
+        leftGripRotationBinding_.Reset(); rightGripRotationBinding_.Reset(); primarySupportPoseCache_.Reset();
         ResetOffHandSupportBinding();
         ResetActiveItemAlignment();
         loggedFreeLeftSoldier_ = nullptr;
@@ -2465,10 +2465,10 @@ private:
     void* ownedLeftHandleSkeleton_ = nullptr;
     LONG ownedLeftHandleBone_ = -1;
     LONG ownedLeftHandleIndex_ = -1;
-    bfvr::BFSoldierLeftGripRotationBinding
-        leftGripRotationBinding_ = {};
-    bfvr::BFSoldierOffHandSupportBinding
-        offHandSupportBinding_ = {};
+    bfvr::BFSoldierLeftGripRotationBinding leftGripRotationBinding_ = {};
+    bfvr::BFSoldierRightGripRotationBinding rightGripRotationBinding_ = {};
+    bfvr::BFSoldierPrimarySupportPoseCache primarySupportPoseCache_ = {};
+    bfvr::BFSoldierOffHandSupportBinding offHandSupportBinding_ = {};
     std::uint64_t loggedPrimarySteeringBindingId_ = 0;
     void* loggedFreeLeftSoldier_ = nullptr;
     void* loggedFreeLeftSkeleton_ = nullptr;

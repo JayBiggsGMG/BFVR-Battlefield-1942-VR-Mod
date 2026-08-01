@@ -11,10 +11,12 @@ namespace bfvr::shared
 using SharedTextureLogCallback = void (*)(void* context, const wchar_t* message);
 
 constexpr DWORD kProtocolMagic = 0x52564642; // "BFVR"
-constexpr DWORD kProtocolVersion = 7;
+constexpr DWORD kProtocolVersion = 8;
 constexpr std::size_t kTextureCount = 3;
 constexpr std::size_t kSharedNameCapacity = 128;
 constexpr DWORD kProducerFlagRuntimeTimedRender = 0x1;
+constexpr LONG kFrameOverlayBackToGameVisible = 0x1;
+constexpr LONG kFrameOverlayBackToGameHovered = 0x2;
 
 constexpr DWORD kControllerSampleFlagSessionFocused = 0x1;
 constexpr DWORD kControllerHandFlagAimActive = 0x1;
@@ -149,9 +151,9 @@ struct SharedRenderRequest
 // Controller payloads are sampled by the x64 OpenXR owner at the render
 // request's predicted display time. The x86 client must reject a sample unless
 // its sequence and timestamp match that request exactly. The protocol carries
-// no game-input or game-state field: any local input use remains an x86-client
-// current-frame transform behind independent focus, freshness, and ownership
-// checks.
+// no game-input field: any local input use remains an x86-client current-frame
+// transform behind independent focus, freshness, and ownership checks. The
+// separate frame overlay flags below describe presenter-owned UI only.
 struct SharedControllerHandSample
 {
     DWORD flags = 0;
@@ -203,6 +205,9 @@ struct ControlBlock
     // anchor shared by the world-locked menu panel and controller-ray mapper.
     volatile LONG frameUiWorldAnchorValid = 0;
     SharedPresentationPose frameUiWorldAnchor = {};
+    // Published by the x86 producer before frameSequence. These flags control
+    // only presenter-owned pixels composited into the copied Ref2 UI texture.
+    volatile LONG frameOverlayFlags = 0;
     PresentationRequirements requirements = {};
     SharedRenderRequest renderRequest = {};
     SharedControllerSample controllerSample = {};

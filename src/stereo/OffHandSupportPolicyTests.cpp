@@ -2,6 +2,8 @@
 #include "stereo/OffHandWeaponSteeringMath.h"
 #include "client/BFSoldierOffHandWeaponSteering.h"
 #include "client/BFSoldierOffHandSupportBinding.h"
+#include "client/BFSoldierLeftGripRotationBinding.h"
+#include "client/BFSoldierPrimarySupportPoseCache.h"
 
 #include <cmath>
 #include <cstdio>
@@ -56,6 +58,114 @@ Matrix4 Translation(
     result.values[3][2] = z;
     result.values[3][3] = 1.0F;
     return result;
+}
+
+Matrix4 YawRightAngle() noexcept
+{
+    auto result = Translation(0.0F, 0.0F, 0.0F);
+    result.values[0][0] = 0.0F;
+    result.values[0][2] = 1.0F;
+    result.values[2][0] = -1.0F;
+    result.values[2][2] = 0.0F;
+    return result;
+}
+
+Matrix4 PitchUpRightAngle() noexcept
+{
+    auto result = Translation(0.0F, 0.0F, 0.0F);
+    result.values[1][1] = 0.0F;
+    result.values[1][2] = 1.0F;
+    result.values[2][1] = -1.0F;
+    result.values[2][2] = 0.0F;
+    return result;
+}
+
+bool LearnedLeftWristReferenceSurvivesItemAndTrackingChanges() noexcept
+{
+    bfvr::BFSoldierLeftGripRotationBinding binding;
+    auto* const soldier = reinterpret_cast<void*>(0x1000);
+    auto* const skeleton = reinterpret_cast<void*>(0x2000);
+    auto* const primary = reinterpret_cast<void*>(0x3000);
+    auto* const gadget = reinterpret_cast<void*>(0x4000);
+    const auto grip = Translation(0.0F, 0.0F, 0.0F);
+    const auto authoredPrimary = YawRightAngle();
+    const auto gadgetNative = PitchUpRightAngle();
+    Matrix4 target = {};
+    bool created = false;
+    if (!binding.Update(
+            soldier, skeleton, primary, 21, grip, authoredPrimary,
+            target, created))
+    {
+        return Expect(false, "left wrist fallback could not initialize");
+    }
+    binding.CaptureAnatomicalReference(
+        soldier, skeleton, primary, 21, grip, authoredPrimary, nullptr);
+    created = false;
+    if (!binding.Update(
+            soldier, skeleton, gadget, 21, grip, gadgetNative,
+            target, created) ||
+        !Expect(
+            std::fabs(target.values[0][2] - 1.0F) < 0.0001F &&
+                std::fabs(target.values[1][2]) < 0.0001F && !created,
+            "gadget switch replaced the learned anatomical left wrist"))
+    {
+        return false;
+    }
+    binding.ResetTransient();
+    created = false;
+    if (!binding.Update(
+            soldier, skeleton, gadget, 21, grip, gadgetNative,
+            target, created) ||
+        !Expect(
+            std::fabs(target.values[0][2] - 1.0F) < 0.0001F && !created,
+            "tracking reset discarded the learned anatomical left wrist"))
+    {
+        return false;
+    }
+    binding.Reset();
+    created = false;
+    return binding.Update(
+               soldier, skeleton, gadget, 21, grip, gadgetNative,
+               target, created) &&
+        Expect(
+            std::fabs(target.values[1][2] - 1.0F) < 0.0001F && created,
+            "full lifetime reset retained the prior anatomical left wrist");
+}
+
+bool PrimarySupportRelationRejectsRedeployDrift() noexcept
+{
+    bfvr::BFSoldierPrimarySupportPoseCache cache;
+    auto* const soldier = reinterpret_cast<void*>(0x1000);
+    auto* const skeleton = reinterpret_cast<void*>(0x2000);
+    auto* const rifle = reinterpret_cast<void*>(0x3000);
+    auto first = YawRightAngle();
+    first.values[3][0] = 0.45F;
+    auto redeploy = PitchUpRightAngle();
+    redeploy.values[3][0] = 0.57F;
+    cache.Resolve(soldier, skeleton, rifle, 3, first, nullptr);
+    cache.Resolve(soldier, skeleton, rifle, 3, redeploy, nullptr);
+    if (!Expect(
+            std::fabs(redeploy.values[3][0] - 0.45F) < 0.0001F &&
+                std::fabs(redeploy.values[0][2] - 1.0F) < 0.0001F,
+            "primary redeploy replaced its first known-good support relation"))
+    {
+        return false;
+    }
+    auto gadget = PitchUpRightAngle();
+    gadget.values[3][0] = 0.12F;
+    cache.Resolve(soldier, skeleton, rifle, 4, gadget, nullptr);
+    if (!Expect(
+            std::fabs(gadget.values[3][0] - 0.12F) < 0.0001F,
+            "non-primary relation was overwritten by the primary cache"))
+    {
+        return false;
+    }
+    cache.Reset();
+    auto nextLifetime = Translation(0.61F, 0.0F, 0.0F);
+    cache.Resolve(soldier, skeleton, rifle, 3, nextLifetime, nullptr);
+    return Expect(
+        std::fabs(nextLifetime.values[3][0] - 0.61F) < 0.0001F,
+        "primary cache reset retained the prior lifetime relation");
 }
 
 bool ReconstructsAuthoredVisualSocket() noexcept
@@ -641,6 +751,8 @@ int main()
 {
     const bool passed =
         ReconstructsAuthoredVisualSocket() &&
+        LearnedLeftWristReferenceSurvivesItemAndTrackingChanges() &&
+        PrimarySupportRelationRejectsRedeployDrift() &&
         CapturedClosePoseIsNoJumpAndFollowsRightHand() &&
         CloseBindingCapturesAndIgnoresLeftNoise() &&
         AuthoredBindingAllowsOnlyCurrentSupportedSteering() &&

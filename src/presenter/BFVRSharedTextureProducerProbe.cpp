@@ -112,6 +112,7 @@ int RunProbe(
     bool transportOnly,
     bool runtimeTimed,
     bool brightWorld,
+    bool backToGameOverlay,
     DWORD durationMs,
     UINT sourceWidth,
     UINT sourceHeight)
@@ -248,6 +249,14 @@ int RunProbe(
                     break;
                 }
                 InterlockedExchange(
+                    &block->frameOverlayFlags,
+                    backToGameOverlay
+                        ? bfvr::shared::kFrameOverlayBackToGameVisible |
+                            ((localFrameCount / 30U) % 2U != 0
+                                ? bfvr::shared::kFrameOverlayBackToGameHovered
+                                : 0)
+                        : 0);
+                InterlockedExchange(
                     &block->producedFrameCount,
                     static_cast<LONG>(localFrameCount));
                 if (runtimeTimed)
@@ -344,6 +353,7 @@ int wmain(int argc, wchar_t** argv)
     bool transportOnly = false;
     bool runtimeTimed = false;
     bool brightWorld = false;
+    bool backToGameOverlay = false;
     DWORD durationMs = 10000;
     UINT sourceWidth = 0;
     UINT sourceHeight = 0;
@@ -383,6 +393,10 @@ int wmain(int argc, wchar_t** argv)
         {
             brightWorld = true;
         }
+        else if (wcscmp(argv[index], L"--back-to-game-overlay") == 0)
+        {
+            backToGameOverlay = true;
+        }
         else if (wcscmp(argv[index], L"--source-width") == 0 && index + 1 < argc)
         {
             sourceWidth = wcstoul(argv[++index], nullptr, 10);
@@ -394,7 +408,7 @@ int wmain(int argc, wchar_t** argv)
         else
         {
             wprintf(
-                L"Usage: BFVRSharedTextureProducerProbe --presenter <x64-path> [--presenter-log <path>] [--duration-ms <1000-60000>] [--ui-cylinder] [--transport-only] [--runtime-timed] [--bright-world] [--source-width <pixels> --source-height <pixels>]\n");
+                L"Usage: BFVRSharedTextureProducerProbe --presenter <x64-path> [--presenter-log <path>] [--duration-ms <1000-60000>] [--ui-cylinder] [--transport-only] [--runtime-timed] [--bright-world] [--back-to-game-overlay] [--source-width <pixels> --source-height <pixels>]\n");
             return 2;
         }
     }
@@ -417,6 +431,7 @@ int wmain(int argc, wchar_t** argv)
         transportOnly,
         runtimeTimed,
         brightWorld,
+        backToGameOverlay,
         durationMs,
         sourceWidth,
         sourceHeight);

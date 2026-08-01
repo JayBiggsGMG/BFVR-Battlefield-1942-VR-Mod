@@ -31,6 +31,13 @@ MakeD3D8NativeHandFromFireRotation(
     const Matrix4& nativeFireMatrix,
     const Matrix4& nativeHandWorld) noexcept;
 
+// Recovers the complete authored hand-from-functional rigid transform,
+// including the local translation from a throwable/tool origin to the wrist.
+[[nodiscard]] std::optional<Matrix4>
+MakeD3D8NativeHandFromFunctionalTransform(
+    const Matrix4& nativeFunctionalWorld,
+    const Matrix4& nativeHandWorld) noexcept;
+
 // Applies the recovered local hand-from-fire correction in BF1942's
 // row-vector order: correction * controllerGunWorld. The controller position
 // is retained so the rotational correction cannot create a world-space pivot.
@@ -38,6 +45,14 @@ MakeD3D8NativeHandFromFireRotation(
 MakeD3D8ControllerDirectedNativeHandMatrix(
     const Matrix4& controllerGunWorld,
     const Matrix4& nativeHandFromFireRotation) noexcept;
+
+// Inverts the complete authored hand-from-functional transform so a
+// controller-owned anatomical wrist recovers both the item's direction and its
+// origin offset without forcing the wrist to point like the item.
+[[nodiscard]] std::optional<Matrix4>
+MakeD3D8FunctionalFromNativeHandTransform(
+    const Matrix4& nativeHandWorld,
+    const Matrix4& nativeHandFromFunctionalTransform) noexcept;
 
 // Applies the exact rigid world-space attachment already used by the
 // grip-driven visual weapon to BF1942's native local-infantry fire matrix.

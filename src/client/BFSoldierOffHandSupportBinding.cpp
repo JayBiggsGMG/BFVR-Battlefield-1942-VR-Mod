@@ -4,12 +4,17 @@
 
 #include <cmath>
 #include <optional>
+#include <array>
+#include <cwchar>
 
 namespace
 {
 
 constexpr float kSqueezePressThreshold = 0.60F;
 constexpr float kSqueezeReleaseThreshold = 0.45F;
+constexpr float kAuthoredAcquireDistanceMetres = 0.12F;
+constexpr DWORD kBlockedReportIntervalMs = 500;
+constexpr LONG kMaximumBlockedReports = 12;
 
 } // namespace
 
@@ -29,6 +34,8 @@ BFSoldierOffHandSupportBinding::Update(
         closeRelationValid_ = false;
         bindingId_ = input.bindingId;
         mode_ = input.mode;
+        lastBlockedReportAt_ = 0;
+        blockedReports_ = 0;
     }
 
     std::optional<stereo::OffHandVisualSupportPose> pose;
@@ -92,6 +99,40 @@ BFSoldierOffHandSupportBinding::Update(
     sample.nativeLeftHandTargetActive =
         input.nativeLeftHandTargetActive;
     auto state = policy_.Update(sample);
+    if (input.mode == BFSoldierOffHandSupportMode::AuthoredHandSpan &&
+        pose.has_value() && squeezeHeld_ &&
+        pose->controllerDistanceMetres > kAuthoredAcquireDistanceMetres &&
+        state.state != stereo::OffHandSupportState::Supported &&
+        input.diagnostics.appendLog != nullptr &&
+        blockedReports_ < kMaximumBlockedReports)
+    {
+        const DWORD now = GetTickCount();
+        if (lastBlockedReportAt_ == 0 ||
+            now - lastBlockedReportAt_ >= kBlockedReportIntervalMs)
+        {
+            lastBlockedReportAt_ = now;
+            ++blockedReports_;
+            std::array<wchar_t, 896> message = {};
+            _snwprintf_s(
+                message.data(), message.size(), _TRUNCATE,
+                L"Native 1P primary support acquisition is outside the "
+                L"authored-point gate: soldier=%p item=%p activeItemIndex=%ld "
+                L"distance=%.4f m predictedLocal=(%.4f,%.4f,%.4f) "
+                L"trackedLocal=(%.4f,%.4f,%.4f). No support snap or anchor "
+                L"replacement was applied.",
+                input.diagnostics.soldier,
+                input.diagnostics.activeItem,
+                input.diagnostics.activeItemIndex,
+                pose->controllerDistanceMetres,
+                pose->targetLocal.values[3][0],
+                pose->targetLocal.values[3][1],
+                pose->targetLocal.values[3][2],
+                input.controllerLeftHandLocal.values[3][0],
+                input.controllerLeftHandLocal.values[3][1],
+                input.controllerLeftHandLocal.values[3][2]);
+            input.diagnostics.appendLog(message.data());
+        }
+    }
     if (input.mode ==
             BFSoldierOffHandSupportMode::CapturedClose &&
         state.enteredSupport)
@@ -207,6 +248,8 @@ void BFSoldierOffHandSupportBinding::Reset() noexcept
     mode_ = BFSoldierOffHandSupportMode::Disabled;
     closeRelationValid_ = false;
     squeezeHeld_ = false;
+    lastBlockedReportAt_ = 0;
+    blockedReports_ = 0;
     ReleaseSRWLockExclusive(&lock_);
 }
 

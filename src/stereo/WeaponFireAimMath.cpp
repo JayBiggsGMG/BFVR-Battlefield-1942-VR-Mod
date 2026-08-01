@@ -101,6 +101,50 @@ void MultiplyRotation(
     }
 }
 
+Matrix4 Multiply(const Matrix4& lhs, const Matrix4& rhs) noexcept
+{
+    Matrix4 result = {};
+    for (std::size_t row = 0; row < 4; ++row)
+    {
+        for (std::size_t column = 0; column < 4; ++column)
+        {
+            for (std::size_t inner = 0; inner < 4; ++inner)
+            {
+                result.values[row][column] +=
+                    lhs.values[row][inner] * rhs.values[inner][column];
+            }
+        }
+    }
+    return result;
+}
+
+std::optional<Matrix4> InvertRigid(const Matrix4& matrix) noexcept
+{
+    if (!IsRigidTransform(matrix))
+    {
+        return std::nullopt;
+    }
+    Matrix4 result = {};
+    for (std::size_t row = 0; row < 3; ++row)
+    {
+        for (std::size_t column = 0; column < 3; ++column)
+        {
+            result.values[row][column] = matrix.values[column][row];
+        }
+    }
+    for (std::size_t column = 0; column < 3; ++column)
+    {
+        result.values[3][column] =
+            -(matrix.values[3][0] * result.values[0][column] +
+              matrix.values[3][1] * result.values[1][column] +
+              matrix.values[3][2] * result.values[2][column]);
+    }
+    result.values[3][3] = 1.0F;
+    return IsRigidTransform(result)
+        ? std::optional<Matrix4>(result)
+        : std::nullopt;
+}
+
 } // namespace
 
 namespace bfvr::stereo
@@ -166,6 +210,21 @@ std::optional<Matrix4> MakeD3D8NativeHandFromFireRotation(
         : std::nullopt;
 }
 
+std::optional<Matrix4> MakeD3D8NativeHandFromFunctionalTransform(
+    const Matrix4& nativeFunctionalWorld,
+    const Matrix4& nativeHandWorld) noexcept
+{
+    const auto inverseFunctional = InvertRigid(nativeFunctionalWorld);
+    if (!inverseFunctional.has_value() || !IsRigidTransform(nativeHandWorld))
+    {
+        return std::nullopt;
+    }
+    const Matrix4 result = Multiply(nativeHandWorld, *inverseFunctional);
+    return IsRigidTransform(result)
+        ? std::optional<Matrix4>(result)
+        : std::nullopt;
+}
+
 std::optional<Matrix4> MakeD3D8ControllerDirectedNativeHandMatrix(
     const Matrix4& controllerGunWorld,
     const Matrix4& nativeHandFromFireRotation) noexcept
@@ -185,6 +244,22 @@ std::optional<Matrix4> MakeD3D8ControllerDirectedNativeHandMatrix(
     result.values[3][1] = controllerGunWorld.values[3][1];
     result.values[3][2] = controllerGunWorld.values[3][2];
     result.values[3][3] = 1.0F;
+    return IsRigidTransform(result)
+        ? std::optional<Matrix4>(result)
+        : std::nullopt;
+}
+
+std::optional<Matrix4> MakeD3D8FunctionalFromNativeHandTransform(
+    const Matrix4& nativeHandWorld,
+    const Matrix4& nativeHandFromFunctionalTransform) noexcept
+{
+    const auto inverseRelation =
+        InvertRigid(nativeHandFromFunctionalTransform);
+    if (!inverseRelation.has_value() || !IsRigidTransform(nativeHandWorld))
+    {
+        return std::nullopt;
+    }
+    const Matrix4 result = Multiply(*inverseRelation, nativeHandWorld);
     return IsRigidTransform(result)
         ? std::optional<Matrix4>(result)
         : std::nullopt;

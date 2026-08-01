@@ -32,15 +32,19 @@ if(BFVR_PRESENTER_ONLY)
   endif()
 
   add_executable(BFVRPresenter
+    client/MainMenuOverlay.cpp
     presenter/BFVRPresenter.cpp
     presenter/DesktopMirror.cpp
+    presenter/D3D11MainMenuOverlay.cpp
     presenter/D3D11TextureScaler.cpp
     presenter/SharedControlChannel.cpp
     presenter/SharedTextureConsumer.cpp
     openxr/OpenXRPresentation.cpp
   )
   add_executable(BFVRSharedTextureConsumerProbe
+    client/MainMenuOverlay.cpp
     presenter/BFVRSharedTextureConsumerProbe.cpp
+    presenter/D3D11MainMenuOverlay.cpp
     presenter/D3D11TextureScaler.cpp
     presenter/SharedControlChannel.cpp
     presenter/SharedTextureConsumer.cpp
@@ -52,7 +56,7 @@ if(BFVR_PRESENTER_ONLY)
       "${CMAKE_CURRENT_SOURCE_DIR}"
       "${BFVR_OPENXR_INCLUDE_DIRECTORY}")
     target_link_libraries(${target} PRIVATE
-      kernel32 ole32 d3d11 dxgi d3dcompiler)
+      kernel32 ole32 user32 windowscodecs d3d11 dxgi d3dcompiler)
     set_property(TARGET ${target} PROPERTY
       MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
     if(MSVC)
@@ -65,6 +69,18 @@ if(BFVR_PRESENTER_ONLY)
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
       "${BFVR_OPENXR_LOADER}"
       "$<TARGET_FILE_DIR:BFVRPresenter>/runtime/openxr/win64/openxr_loader.dll")
+  foreach(target BFVRPresenter BFVRSharedTextureConsumerProbe)
+    add_custom_command(TARGET ${target} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+        "$<TARGET_FILE_DIR:${target}>/assets"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      "${CMAKE_CURRENT_SOURCE_DIR}/../assets/BackToGame_bg.png"
+      "${CMAKE_CURRENT_SOURCE_DIR}/../assets/BackToGame_hover.png"
+      "${CMAKE_CURRENT_SOURCE_DIR}/../assets/BackToGame_text.png"
+      "${CMAKE_CURRENT_SOURCE_DIR}/../assets/BackToGame_BorderFrame.png"
+      "${CMAKE_CURRENT_SOURCE_DIR}/../assets/BackToGame_BorderFrameHover.png"
+        "$<TARGET_FILE_DIR:${target}>/assets")
+  endforeach()
   return()
 endif()
 
@@ -106,6 +122,7 @@ add_library(BFVRClient SHARED
   client/ControllerInputCache.cpp
   client/ControllerInputOverlay.cpp
   client/CrosshairOverlay.cpp
+  client/MainMenuOverlay.cpp
   client/MenuPointerOverlay.cpp
   client/StartupMenuPresentation.cpp
   client/D3D8ImportRoute.cpp
@@ -115,6 +132,8 @@ add_library(BFVRClient SHARED
   client/BFSoldierFirstPersonArmProbe.cpp
   client/BFSoldierLeftGripRotationBinding.cpp
   client/BFSoldierNativeArmIk.cpp
+  client/BFSoldierPrimarySupportPoseCache.cpp
+  client/BFSoldierRightGripRotationBinding.cpp
   client/BFSoldierNativeArmPole.cpp
   client/BFSoldierOffHandSupportBinding.cpp
   client/BFSoldierOffHandWeaponSteering.cpp
@@ -145,6 +164,7 @@ add_library(BFVRClient SHARED
   client/internal/BFVRClientFrameDiagnostics.inl
   client/internal/BFVRClientSurfaceDiagnostics.inl
   client/internal/BFVRClientEngineDiagnostics.inl
+  client/internal/D3D8StereoPairWaterDiagnostics.inl
   openxr/OpenXRBootstrap.cpp
   presenter/SharedControlChannel.cpp
   presenter/D3DSystemRuntime.cpp
@@ -213,8 +233,10 @@ add_executable(BFVRWeaponFireAimMathTests
 )
 
 add_executable(BFVROffHandSupportPolicyTests
+  client/BFSoldierLeftGripRotationBinding.cpp
   client/BFSoldierOffHandSupportBinding.cpp
   client/BFSoldierOffHandWeaponSteering.cpp
+  client/BFSoldierPrimarySupportPoseCache.cpp
   client/BFSoldierTrackedHandPose.cpp
   stereo/OffHandSupportPolicyTests.cpp
 )
@@ -223,11 +245,16 @@ add_executable(BFVRArmPoleVectorMathTests
   stereo/ArmPoleVectorMathTests.cpp
 )
 
+add_executable(BFVRMainMenuOverlayTests
+  client/MainMenuOverlay.cpp
+  client/MainMenuOverlayTests.cpp
+)
+
 add_executable(BFVRRfaInspect
   tools/RfaInspect.cpp
 )
 
-foreach(target BFVRClient BFVRD3D8To9FlatClient BFVRLoader BFVROpenXRProbe BFVRSharedTextureProducerProbe BFVRD3D8To9SharedSurfaceProbe BFVRStereoMath BFVRStereoMathTests BFVRWeaponFireAimMathTests BFVROffHandSupportPolicyTests BFVRArmPoleVectorMathTests BFVRRfaInspect)
+foreach(target BFVRClient BFVRD3D8To9FlatClient BFVRLoader BFVROpenXRProbe BFVRSharedTextureProducerProbe BFVRD3D8To9SharedSurfaceProbe BFVRStereoMath BFVRStereoMathTests BFVRWeaponFireAimMathTests BFVROffHandSupportPolicyTests BFVRArmPoleVectorMathTests BFVRMainMenuOverlayTests BFVRRfaInspect)
   target_compile_definitions(${target} PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
   set_property(TARGET ${target} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
   if(MSVC)
@@ -235,7 +262,8 @@ foreach(target BFVRClient BFVRD3D8To9FlatClient BFVRLoader BFVROpenXRProbe BFVRS
   endif()
 endforeach()
 
-target_link_libraries(BFVRClient PRIVATE kernel32 advapi32)
+target_link_libraries(BFVRClient PRIVATE
+  kernel32 advapi32 ole32 user32 windowscodecs)
 target_link_libraries(BFVRD3D8To9FlatClient PRIVATE kernel32)
 target_link_libraries(BFVRLoader PRIVATE kernel32)
 target_link_libraries(BFVROpenXRProbe PRIVATE kernel32 d3d11 dxgi)
@@ -255,6 +283,10 @@ target_link_libraries(BFVRStereoMathTests PRIVATE BFVRStereoMath)
 target_link_libraries(BFVRWeaponFireAimMathTests PRIVATE BFVRStereoMath)
 target_link_libraries(BFVROffHandSupportPolicyTests PRIVATE BFVRStereoMath)
 target_link_libraries(BFVRArmPoleVectorMathTests PRIVATE BFVRStereoMath)
+target_link_libraries(BFVRMainMenuOverlayTests PRIVATE
+  ole32 user32 windowscodecs)
+target_include_directories(BFVRMainMenuOverlayTests PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}")
 
 include(CTest)
 if(BUILD_TESTING)
@@ -268,6 +300,10 @@ if(BUILD_TESTING)
   add_test(
     NAME BFVRArmPoleVectorMathTests
     COMMAND BFVRArmPoleVectorMathTests)
+  add_test(
+    NAME BFVRMainMenuOverlayTests
+    COMMAND BFVRMainMenuOverlayTests
+      "${CMAKE_CURRENT_SOURCE_DIR}/../assets")
 endif()
 
 foreach(target BFVRClient BFVROpenXRProbe)
@@ -282,6 +318,17 @@ foreach(target BFVRClient BFVROpenXRProbe)
       "$<TARGET_FILE_DIR:${target}>/runtime/openxr/win32/openxr_loader.dll"
   )
 endforeach()
+
+add_custom_command(TARGET BFVRClient POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E make_directory
+    "$<TARGET_FILE_DIR:BFVRClient>/assets"
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    "${CMAKE_CURRENT_SOURCE_DIR}/../assets/BackToGame_bg.png"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../assets/BackToGame_hover.png"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../assets/BackToGame_text.png"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../assets/BackToGame_BorderFrame.png"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../assets/BackToGame_BorderFrameHover.png"
+    "$<TARGET_FILE_DIR:BFVRClient>/assets")
 
 target_include_directories(BFVRClient PRIVATE
   "${BFVR_D3D8TO9_ROOT}/source")

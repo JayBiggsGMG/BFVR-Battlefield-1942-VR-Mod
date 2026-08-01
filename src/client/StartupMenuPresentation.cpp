@@ -134,6 +134,10 @@ void StartupMenuPresentation::Pump()
             bridge_.UiWidth(),
             bridge_.UiHeight()}}};
     D3D8RuntimeUiPlacement uiPlacement = {};
+    const MainMenuOverlayInteractionState overlayState =
+        GetMainMenuOverlayInteractionState();
+    uiPlacement.backToGameVisible = overlayState.visible;
+    uiPlacement.backToGameHovered = overlayState.hovered;
     // Preserve the historical world-static startup panel until BF1942 reports
     // a real native menu, then replace its fallback latch with the same
     // yaw-only edge anchor used after the D3D8 handoff.

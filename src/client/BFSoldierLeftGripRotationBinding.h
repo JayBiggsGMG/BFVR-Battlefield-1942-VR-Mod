@@ -7,9 +7,9 @@
 namespace bfvr
 {
 
-// Maintains the reversible per-item relation between OpenXR's left grip basis
-// and BF1942's native anatomical wrist basis. It owns no game object and
-// performs no Skeleton writes.
+// Maintains one learned primary-grip anatomical wrist relation plus the prior
+// per-item native fallback until that relation exists. It owns no game object
+// and performs no Skeleton writes.
 class BFSoldierLeftGripRotationBinding final
 {
 public:
@@ -22,16 +22,27 @@ public:
         const stereo::Matrix4& nativeLeftHandLocal,
         stereo::Matrix4& target,
         bool& createdBinding) noexcept;
+    void CaptureAnatomicalReference(
+        void* soldier,
+        void* skeleton,
+        const void* activeItem,
+        LONG leftHandBone,
+        const stereo::Matrix4& leftGrip,
+        const stereo::Matrix4& authoredLeftHandTarget,
+        void (*appendLog)(const wchar_t* message)) noexcept;
+    void ResetTransient() noexcept;
     void Reset() noexcept;
 
 private:
     SRWLOCK lock_ = SRWLOCK_INIT;
-    stereo::Matrix4 handFromGripRotation_ = {};
+    stereo::Matrix4 anatomicalHandFromGripRotation_ = {};
+    stereo::Matrix4 fallbackHandFromGripRotation_ = {};
     void* soldier_ = nullptr;
     void* skeleton_ = nullptr;
-    const void* activeItem_ = nullptr;
+    const void* fallbackActiveItem_ = nullptr;
     LONG leftHandBone_ = -1;
-    bool valid_ = false;
+    bool anatomicalValid_ = false;
+    bool fallbackValid_ = false;
 };
 
 } // namespace bfvr

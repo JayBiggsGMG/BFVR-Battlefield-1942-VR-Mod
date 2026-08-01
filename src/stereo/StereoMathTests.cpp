@@ -4,6 +4,7 @@
 #include "stereo/D3D8SemanticDrawPolicy.h"
 #include "stereo/D3D8ShaderTransform.h"
 #include "stereo/D3D8WeaponDrawPolicy.h"
+#include "stereo/MainMenuOverlayLayout.h"
 #include "stereo/StereoMath.h"
 #include "stereo/TreeAngleSlicePolicy.h"
 #include "stereo/UiPointerMath.h"
@@ -2747,6 +2748,95 @@ void TestStereoFrameResourceReuseReset()
         Fail(test, "per-frame state was not reset");
     }
 }
+
+void TestMainMenuOverlayLayout()
+{
+    constexpr std::string_view test = "main menu overlay layout";
+    constexpr bfvr::stereo::UiCanvasRect rect =
+        bfvr::stereo::BackToGameButtonRect();
+    constexpr float tolerance = 0.001F;
+    const auto differs = [](float left, float right)
+    {
+        return std::abs(left - right) > tolerance;
+    };
+    if (differs(rect.left, 344.96F) || differs(rect.top, 542.08F) ||
+        differs(rect.right, 455.04F) || differs(rect.bottom, 576.0F) ||
+        differs(rect.right - rect.left, 110.08F) ||
+        differs(rect.bottom - rect.top, 33.92F))
+    {
+        Fail(test, "button did not match the reference-image size and 24-pixel bottom margin");
+    }
+    constexpr bfvr::stereo::UiCanvasRect referenceMapped =
+        bfvr::stereo::MapUiCanvasRectThroughAspectFit(
+            rect,
+            1920.0F,
+            1080.0F,
+            1920.0F,
+            1080.0F);
+    constexpr float visibleBorderWidth =
+        (referenceMapped.right - referenceMapped.left) * 246.0F / 256.0F;
+    constexpr float visibleBorderHeight =
+        (referenceMapped.bottom - referenceMapped.top) * 50.0F / 64.0F;
+    if (differs(visibleBorderWidth, 253.872F) ||
+        differs(visibleBorderHeight, 47.7F) ||
+        referenceMapped.left < 800.0F)
+    {
+        Fail(test, "reference-image border size or copyright-text clearance regressed");
+    }
+    if (!bfvr::stereo::IsInsideUiCanvasRect(rect, rect.left, rect.top) ||
+        !bfvr::stereo::IsInsideUiCanvasRect(
+            rect,
+            rect.right - 0.01F,
+            rect.bottom - 0.01F) ||
+        bfvr::stereo::IsInsideUiCanvasRect(
+            rect,
+            rect.left - 0.01F,
+            rect.top) ||
+        bfvr::stereo::IsInsideUiCanvasRect(
+            rect,
+            rect.right,
+            rect.bottom - 1.0F) ||
+        bfvr::stereo::IsInsideUiCanvasRect(
+            rect,
+            (rect.left + rect.right) * 0.5F,
+            rect.bottom))
+    {
+        Fail(test, "button hit-test boundaries did not match rendering");
+    }
+
+    bool pressed = false;
+    if (!bfvr::stereo::ConsumeUiButtonPressEdge(
+            true,
+            true,
+            true,
+            pressed) ||
+        bfvr::stereo::ConsumeUiButtonPressEdge(
+            true,
+            true,
+            true,
+            pressed))
+    {
+        Fail(test, "one press did not produce exactly one activation edge");
+    }
+    static_cast<void>(bfvr::stereo::ConsumeUiButtonPressEdge(
+        true,
+        true,
+        false,
+        pressed));
+    if (bfvr::stereo::ConsumeUiButtonPressEdge(
+            true,
+            false,
+            true,
+            pressed) ||
+        bfvr::stereo::ConsumeUiButtonPressEdge(
+            true,
+            true,
+            true,
+            pressed))
+    {
+        Fail(test, "a press begun outside activated after moving inside");
+    }
+}
 }
 
 int main()
@@ -2781,6 +2871,7 @@ int main()
     TestBF1942SemanticDrawPolicy();
     TestD3D8FrameCompositionPolicy();
     TestStereoFrameResourceReuseReset();
+    TestMainMenuOverlayLayout();
 
     if (g_failures != 0)
     {

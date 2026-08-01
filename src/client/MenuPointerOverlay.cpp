@@ -2,6 +2,7 @@
 
 #include "client/ControllerInputCache.h"
 #include "presenter/SharedPresentationProtocol.h"
+#include "stereo/MainMenuOverlayLayout.h"
 #include "stereo/UiPointerMath.h"
 
 #include <MinHook.h>
@@ -19,8 +20,6 @@
 namespace
 {
 
-constexpr wchar_t kEnableVrInteractionEnvironment[] =
-    L"BFVR_ENABLE_WEAPON_MOTION";
 constexpr std::ptrdiff_t kBfMenuSetGameInputRva = 0x0005DE60;
 constexpr std::size_t kBfMenuActiveIndexOffset = 0xFC;
 constexpr std::size_t kBfMenuRef2SystemOffset = 0x144;
@@ -31,6 +30,7 @@ constexpr std::size_t kGameInputEnableMaskLowOffset = 0xC0;
 constexpr DWORD kGameInputOk = 20;
 constexpr DWORD kGameInputMouseLookX = 26;
 constexpr DWORD kGameInputMouseLookY = 27;
+constexpr int kBfMenuBattlefieldState = 0;
 constexpr DWORD kControllerHandRight = 1;
 constexpr DWORD kControllerSampleMaximumAgeMs = 125;
 constexpr float kControllerTriggerPressThreshold = 0.60F;
@@ -44,6 +44,9 @@ constexpr BYTE kBfMenuSetGameInputPrefix[] = {
     0x83, 0xEC, 0x20, 0x53, 0x8B, 0xD9, 0x83, 0xBB,
     0xFC, 0x00, 0x00, 0x00, 0xFF, 0x0F, 0x84, 0xDC};
 volatile LONG g_nativeMenuActiveState = 0;
+volatile LONG g_mainMenuOverlayAvailable = 0;
+volatile LONG g_mainMenuOverlayVisible = 0;
+volatile LONG g_mainMenuOverlayHovered = 0;
 SRWLOCK g_menuAnchorLock = SRWLOCK_INIT;
 bfvr::stereo::Pose g_menuWorldAnchor = {};
 bool g_menuWorldAnchorValid = false;
@@ -65,6 +68,40 @@ bool HasExpectedPrefix(
     {
         return false;
     }
+}
+
+bool SendEscapeKeyPress() noexcept
+{
+    const HWND foregroundWindow = GetForegroundWindow();
+    DWORD foregroundProcessId = 0;
+    if (foregroundWindow == nullptr ||
+        GetWindowThreadProcessId(
+            foregroundWindow,
+            &foregroundProcessId) == 0 ||
+        foregroundProcessId != GetCurrentProcessId())
+    {
+        return false;
+    }
+    const UINT scanCode = MapVirtualKeyW(VK_ESCAPE, MAPVK_VK_TO_VSC);
+    std::array<INPUT, 2> inputs = {};
+    for (INPUT& input : inputs)
+    {
+        input.type = INPUT_KEYBOARD;
+        if (scanCode != 0)
+        {
+            input.ki.wScan = static_cast<WORD>(scanCode);
+            input.ki.dwFlags = KEYEVENTF_SCANCODE;
+        }
+        else
+        {
+            input.ki.wVk = VK_ESCAPE;
+        }
+    }
+    inputs[1].ki.dwFlags |= KEYEVENTF_KEYUP;
+    return SendInput(
+               static_cast<UINT>(inputs.size()),
+               inputs.data(),
+               sizeof(INPUT)) == static_cast<UINT>(inputs.size());
 }
 
 bfvr::stereo::Pose ToPose(
@@ -110,16 +147,9 @@ public:
             return;
         }
         appendLog = log;
-        wchar_t enabled[2] = {};
-        if (GetEnvironmentVariableW(
-                kEnableVrInteractionEnvironment,
-                enabled,
-                static_cast<DWORD>(std::size(enabled))) != 1 ||
-            enabled[0] != L'1')
-        {
-            InterlockedExchange(&started, 0);
-            return;
-        }
+        triggerPressed = false;
+        okPressedLastFrame = false;
+        overlayVisibleLastFrame = false;
         if (runtimeWidth == 0 || runtimeHeight == 0 ||
             sourceWidth == 0 || sourceHeight == 0)
         {
@@ -193,7 +223,7 @@ public:
         }
         hookEnabled = true;
         WriteLog(
-            L"Controller menu pointer armed at 0x0045DE60 for world-locked native menus: runtime=%ux%u source=%ux%u logical=800x600. The presentation path supplies the yaw-only LOCAL anchor shared by this mapper; a fresh tracked right aim ray supplies native c_GIMouseLookX/Y, and right trigger supplies native c_GIOk with hysteresis.",
+            L"Controller menu pointer armed at 0x0045DE60 for world-locked native menus: runtime=%ux%u source=%ux%u logical=800x600. The presentation path supplies the yaw-only LOCAL anchor shared by this mapper; a fresh tracked right aim ray supplies native c_GIMouseLookX/Y, and right trigger supplies native c_GIOk with hysteresis. The BFVR back-to-game button is gated to BfMenu Battlefield state 0 and emits one focus-checked Escape scan-code down/up pair on a new click edge.",
             runtimeUiWidth,
             runtimeUiHeight,
             sourceUiWidth,
@@ -217,13 +247,20 @@ public:
         }
         InterlockedCompareExchangePointer(&active, nullptr, this);
         InterlockedExchange(&g_nativeMenuActiveState, 0);
+        InterlockedExchange(&g_mainMenuOverlayVisible, 0);
+        InterlockedExchange(&g_mainMenuOverlayHovered, 0);
+        InterlockedExchange(&g_mainMenuOverlayAvailable, 0);
         WriteLog(
-            L"Controller menu pointer report: calls=%ld nativeMenuFrames=%ld freshTracking=%ld rayHits=%ld applied=%ld readFaults=%ld restoreFaults=%ld.",
+            L"Controller menu pointer report: calls=%ld nativeMenuFrames=%ld mainMenuFrames=%ld hoverFrames=%ld freshTracking=%ld rayHits=%ld applied=%ld escapePresses=%ld escapeFailures=%ld readFaults=%ld restoreFaults=%ld.",
             observedCalls,
             nativeMenuFrames,
+            mainMenuFrames,
+            hoverFrames,
             freshTrackingFrames,
             rayHits,
             appliedFrames,
+            escapePresses,
+            escapeFailures,
             readFaults,
             restoreFaults);
         RemoveHook();
@@ -258,6 +295,8 @@ private:
     {
         InterlockedIncrement(&observedCalls);
         bool nativeMenuActive = false;
+        bool battlefieldMainMenu = false;
+        int activeIndex = -1;
         float currentPointerX = 0.0F;
         float currentPointerY = 0.0F;
         __try
@@ -268,10 +307,19 @@ private:
                     *reinterpret_cast<void**>(
                         static_cast<std::byte*>(menu) +
                         kBfMenuRef2SystemOffset);
-                nativeMenuActive =
+                activeIndex =
                     *reinterpret_cast<int*>(
                         static_cast<std::byte*>(menu) +
-                        kBfMenuActiveIndexOffset) != -1 &&
+                        kBfMenuActiveIndexOffset);
+                battlefieldMainMenu =
+                    activeIndex == kBfMenuBattlefieldState &&
+                    ref2System != nullptr &&
+                    InterlockedCompareExchange(
+                        &g_mainMenuOverlayAvailable,
+                        0,
+                        0) != 0;
+                nativeMenuActive =
+                    activeIndex != -1 &&
                     *reinterpret_cast<int*>(
                         static_cast<std::byte*>(menu) +
                         kBfMenuMouseEnabledOffset) != 0 &&
@@ -295,6 +343,7 @@ private:
         __except (EXCEPTION_EXECUTE_HANDLER)
         {
             nativeMenuActive = false;
+            battlefieldMainMenu = false;
             InterlockedIncrement(&readFaults);
         }
 
@@ -383,8 +432,11 @@ private:
         float backupMouseX = 0.0F;
         float backupMouseY = 0.0F;
         DWORD backupMask = 0;
+        bool frameBackedUp = false;
         bool modified = false;
-        if (rayHit)
+        bool requestEscape = false;
+        bool hovered = false;
+        if (nativeMenuActive)
         {
             __try
             {
@@ -398,52 +450,135 @@ private:
                 backupMouseX = values[kGameInputMouseLookX];
                 backupMouseY = values[kGameInputMouseLookY];
                 backupMask = *enableMask;
+                frameBackedUp = true;
 
-                const float desiredX =
-                    canvasPoint.pixelX -
-                    static_cast<float>(kLogicalCanvasWidth) * 0.5F;
-                const float desiredY =
-                    canvasPoint.pixelY -
-                    static_cast<float>(kLogicalCanvasHeight) * 0.5F;
-                values[kGameInputMouseLookX] =
-                    (desiredX - currentPointerX) / kNativeMouseScale;
-                values[kGameInputMouseLookY] =
-                    (desiredY - currentPointerY) / kNativeMouseScale;
-                *enableMask |=
-                    (1UL << kGameInputMouseLookX) |
-                    (1UL << kGameInputMouseLookY);
-
-                if ((right->flags &
-                     bfvr::shared::kControllerHandFlagTriggerActive) != 0)
+                float nextPointerX = currentPointerX;
+                float nextPointerY = currentPointerY;
+                if (rayHit)
                 {
-                    if (triggerPressed)
+                    const float desiredX =
+                        canvasPoint.pixelX -
+                        static_cast<float>(kLogicalCanvasWidth) * 0.5F;
+                    const float desiredY =
+                        canvasPoint.pixelY -
+                        static_cast<float>(kLogicalCanvasHeight) * 0.5F;
+                    values[kGameInputMouseLookX] =
+                        (desiredX - currentPointerX) / kNativeMouseScale;
+                    values[kGameInputMouseLookY] =
+                        (desiredY - currentPointerY) / kNativeMouseScale;
+                    *enableMask |=
+                        (1UL << kGameInputMouseLookX) |
+                        (1UL << kGameInputMouseLookY);
+                    nextPointerX = desiredX;
+                    nextPointerY = desiredY;
+
+                    if ((right->flags &
+                         bfvr::shared::kControllerHandFlagTriggerActive) != 0)
                     {
-                        triggerPressed =
-                            right->triggerValue >
-                            kControllerTriggerReleaseThreshold;
+                        if (triggerPressed)
+                        {
+                            triggerPressed =
+                                right->triggerValue >
+                                kControllerTriggerReleaseThreshold;
+                        }
+                        else
+                        {
+                            triggerPressed =
+                                right->triggerValue >=
+                                kControllerTriggerPressThreshold;
+                        }
+                        const bool nativeOkActive =
+                            (backupMask & (1UL << kGameInputOk)) != 0 &&
+                            std::isfinite(backupOk) &&
+                            backupOk > 0.0F;
+                        values[kGameInputOk] =
+                            triggerPressed || nativeOkActive ? 1.0F : 0.0F;
+                        *enableMask |= 1UL << kGameInputOk;
                     }
-                    else
-                    {
-                        triggerPressed =
-                            right->triggerValue >=
-                            kControllerTriggerPressThreshold;
-                    }
-                    const bool nativeOkActive =
-                        (backupMask & (1UL << kGameInputOk)) != 0 &&
-                        std::isfinite(backupOk) &&
-                        backupOk > 0.0F;
-                    values[kGameInputOk] =
-                        triggerPressed || nativeOkActive ? 1.0F : 0.0F;
-                    *enableMask |= 1UL << kGameInputOk;
+                    modified = true;
+                    InterlockedIncrement(&appliedFrames);
                 }
-                modified = true;
-                InterlockedIncrement(&appliedFrames);
+                else
+                {
+                    if ((backupMask &
+                         (1UL << kGameInputMouseLookX)) != 0 &&
+                        std::isfinite(backupMouseX))
+                    {
+                        nextPointerX = std::clamp(
+                            currentPointerX +
+                                backupMouseX * kNativeMouseScale,
+                            -400.0F,
+                            400.0F);
+                    }
+                    if ((backupMask &
+                         (1UL << kGameInputMouseLookY)) != 0 &&
+                        std::isfinite(backupMouseY))
+                    {
+                        nextPointerY = std::clamp(
+                            currentPointerY +
+                                backupMouseY * kNativeMouseScale,
+                            -300.0F,
+                            300.0F);
+                    }
+                }
+
+                const float pointerCanvasX = nextPointerX + 400.0F;
+                const float pointerCanvasY = nextPointerY + 300.0F;
+                hovered = battlefieldMainMenu &&
+                    bfvr::stereo::IsInsideUiCanvasRect(
+                        bfvr::stereo::BackToGameButtonRect(),
+                        pointerCanvasX,
+                        pointerCanvasY);
+                const bool okDown =
+                    (*enableMask & (1UL << kGameInputOk)) != 0 &&
+                    std::isfinite(values[kGameInputOk]) &&
+                    values[kGameInputOk] > 0.0F;
+                requestEscape =
+                    bfvr::stereo::ConsumeUiButtonPressEdge(
+                        battlefieldMainMenu,
+                        hovered,
+                        okDown,
+                        okPressedLastFrame);
+                if (requestEscape)
+                {
+                    // Ref2 must not also activate any native element under the
+                    // BFVR-owned button. Restore the caller's frame afterward.
+                    values[kGameInputOk] = 0.0F;
+                    *enableMask |= 1UL << kGameInputOk;
+                    modified = true;
+                }
             }
             __except (EXCEPTION_EXECUTE_HANDLER)
             {
+                // Fail closed before the game sees a partially modified frame.
+                if (frameBackedUp)
+                {
+                    __try
+                    {
+                        float* const values =
+                            reinterpret_cast<float*>(gameInput);
+                        values[kGameInputOk] = backupOk;
+                        values[kGameInputMouseLookX] = backupMouseX;
+                        values[kGameInputMouseLookY] = backupMouseY;
+                        *reinterpret_cast<DWORD*>(
+                            static_cast<std::byte*>(gameInput) +
+                            kGameInputEnableMaskLowOffset) = backupMask;
+                    }
+                    __except (EXCEPTION_EXECUTE_HANDLER)
+                    {
+                        InterlockedIncrement(&restoreFaults);
+                    }
+                }
                 modified = false;
+                requestEscape = false;
+                hovered = false;
                 InterlockedIncrement(&readFaults);
             }
+        }
+        else
+        {
+            okPressedLastFrame = false;
+            triggerPressed = false;
         }
         if (nativeMenuActive)
         {
@@ -457,6 +592,29 @@ private:
         InterlockedExchange(
             &g_nativeMenuActiveState,
             nativeMenuActive ? 1 : 0);
+        InterlockedExchange(
+            &g_mainMenuOverlayVisible,
+            battlefieldMainMenu ? 1 : 0);
+        InterlockedExchange(
+            &g_mainMenuOverlayHovered,
+            hovered ? 1 : 0);
+        if (battlefieldMainMenu != overlayVisibleLastFrame)
+        {
+            overlayVisibleLastFrame = battlefieldMainMenu;
+            WriteLog(
+                battlefieldMainMenu
+                    ? L"Back-to-game overlay became visible on BfMenu state %d; the next published Ref2 frame will composite it in the x64 presenter."
+                    : L"Back-to-game overlay became hidden after BfMenu changed to state %d.",
+                activeIndex);
+        }
+        if (battlefieldMainMenu)
+        {
+            InterlockedIncrement(&mainMenuFrames);
+        }
+        if (hovered)
+        {
+            InterlockedIncrement(&hoverFrames);
+        }
 
         originalSetGameInput(menu, deltaTime, gameInput);
 
@@ -476,6 +634,17 @@ private:
             __except (EXCEPTION_EXECUTE_HANDLER)
             {
                 InterlockedIncrement(&restoreFaults);
+            }
+        }
+        if (requestEscape)
+        {
+            if (SendEscapeKeyPress())
+            {
+                InterlockedIncrement(&escapePresses);
+            }
+            else
+            {
+                InterlockedIncrement(&escapeFailures);
             }
         }
     }
@@ -525,9 +694,13 @@ private:
     volatile LONG started = 0;
     volatile LONG observedCalls = 0;
     volatile LONG nativeMenuFrames = 0;
+    volatile LONG mainMenuFrames = 0;
+    volatile LONG hoverFrames = 0;
     volatile LONG freshTrackingFrames = 0;
     volatile LONG rayHits = 0;
     volatile LONG appliedFrames = 0;
+    volatile LONG escapePresses = 0;
+    volatile LONG escapeFailures = 0;
     volatile LONG readFaults = 0;
     volatile LONG restoreFaults = 0;
     std::byte* gameImage = nullptr;
@@ -539,6 +712,8 @@ private:
     UINT sourceUiHeight = 0;
     void (*appendLog)(const wchar_t* message) = nullptr;
     bool triggerPressed = false;
+    bool okPressedLastFrame = false;
+    bool overlayVisibleLastFrame = false;
     bool menuAnchorValid = false;
     bfvr::stereo::Pose menuAnchorHead = {};
     bool ownsMinHook = false;
@@ -583,6 +758,34 @@ bool IsMenuPointerOverlayActive() noexcept
         &g_nativeMenuActiveState,
         0,
         0) != 0;
+}
+
+MainMenuOverlayInteractionState
+GetMainMenuOverlayInteractionState() noexcept
+{
+    MainMenuOverlayInteractionState state = {};
+    state.visible = InterlockedCompareExchange(
+        &g_mainMenuOverlayVisible,
+        0,
+        0) != 0;
+    state.hovered = state.visible &&
+        InterlockedCompareExchange(
+            &g_mainMenuOverlayHovered,
+            0,
+            0) != 0;
+    return state;
+}
+
+void SetMainMenuOverlayAvailable(bool available) noexcept
+{
+    InterlockedExchange(
+        &g_mainMenuOverlayAvailable,
+        available ? 1 : 0);
+    if (!available)
+    {
+        InterlockedExchange(&g_mainMenuOverlayVisible, 0);
+        InterlockedExchange(&g_mainMenuOverlayHovered, 0);
+    }
 }
 
 void PublishActiveMenuWorldAnchor(const stereo::Pose& anchor) noexcept

@@ -328,6 +328,67 @@ bool TestNativeHandPreservesAuthoredFireToWristRotation()
             "non-rigid controller pose was accepted");
 }
 
+bool TestAnatomicalHandRecoversItemFunctionalBasis()
+{
+    constexpr std::string_view test =
+        "anatomical wrist recovers item functional basis";
+    auto handFromFunctional = PitchUpRightAngle();
+    handFromFunctional.values[3][0] = 0.12F;
+    handFromFunctional.values[3][1] = -0.05F;
+    handFromFunctional.values[3][2] = 0.08F;
+    auto functional = YawRightAngle();
+    functional.values[3][0] = 12.0F;
+    functional.values[3][1] = -4.0F;
+    functional.values[3][2] = 7.0F;
+    const auto hand = MultiplyMatrices(handFromFunctional, functional);
+
+    const auto captured =
+        bfvr::stereo::MakeD3D8NativeHandFromFunctionalTransform(
+            functional,
+            hand);
+    if (!Expect(
+            captured.has_value(),
+            test,
+            "valid translated hand/item relation was rejected"))
+    {
+        return false;
+    }
+    const auto recovered =
+        bfvr::stereo::MakeD3D8FunctionalFromNativeHandTransform(
+            hand,
+            *captured);
+    if (!Expect(
+            recovered.has_value(),
+            test,
+            "valid anatomical hand/item relation was rejected"))
+    {
+        return false;
+    }
+    for (std::size_t row = 0; row < 4; ++row)
+    {
+        for (std::size_t column = 0; column < 4; ++column)
+        {
+            if (!Expect(
+                    NearlyEqual(
+                        recovered->values[row][column],
+                        functional.values[row][column]),
+                    test,
+                    "inverse authored relation did not reconstruct the item basis"))
+            {
+                return false;
+            }
+        }
+    }
+    auto invalidRelation = handFromFunctional;
+    invalidRelation.values[1][1] = 2.0F;
+    return Expect(
+        !bfvr::stereo::MakeD3D8FunctionalFromNativeHandTransform(
+             hand,
+             invalidRelation).has_value(),
+        test,
+        "non-rigid hand-to-functional relation was accepted");
+}
+
 bool TestLegacyCameraRecoilBecomesHeldWeaponRecoil()
 {
     constexpr std::string_view test = "legacy recoil transferred to weapon";
@@ -708,6 +769,7 @@ int main()
         TestRenderedWeaponForwardBecomesFireForward() &&
         TestControllerAimDirectlyOwnsFireBasisAndOrigin() &&
         TestNativeHandPreservesAuthoredFireToWristRotation() &&
+        TestAnatomicalHandRecoversItemFunctionalBasis() &&
         TestLegacyCameraRecoilBecomesHeldWeaponRecoil() &&
         TestNativePositionAndWorldAttachmentArePreserved() &&
         TestNativeArmFireAnchorDistancesRejectCinematicOrigin() &&

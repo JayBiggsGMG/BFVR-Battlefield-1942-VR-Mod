@@ -17,6 +17,14 @@ enum class BFSoldierOffHandSupportMode
     CapturedClose,
 };
 
+struct BFSoldierOffHandSupportDiagnostics
+{
+    void (*appendLog)(const wchar_t* message) = nullptr;
+    const void* soldier = nullptr;
+    const void* activeItem = nullptr;
+    LONG activeItemIndex = -1;
+};
+
 struct BFSoldierOffHandSupportInput
 {
     std::uint64_t bindingId = 0;
@@ -32,6 +40,7 @@ struct BFSoldierOffHandSupportInput
     stereo::Matrix4 controllerRightHandWorld = {};
     stereo::Matrix4 inverseSoldierWorld = {};
     stereo::Matrix4 controllerLeftHandLocal = {};
+    BFSoldierOffHandSupportDiagnostics diagnostics = {};
 };
 
 struct BFSoldierOffHandSupportOutput
@@ -85,6 +94,8 @@ private:
         BFSoldierOffHandSupportMode::Disabled;
     bool closeRelationValid_ = false;
     bool squeezeHeld_ = false;
+    DWORD lastBlockedReportAt_ = 0;
+    LONG blockedReports_ = 0;
 };
 
 } // namespace bfvr

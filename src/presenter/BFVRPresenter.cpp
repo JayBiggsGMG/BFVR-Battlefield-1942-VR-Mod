@@ -415,20 +415,21 @@ int RunPresenter(
     LONG openXrSubmitOrEndCount = 0;
     auto consumeSequence = [&](LONG availableSequence)
     {
+        // The producer publishes these pixels/metadata before frameSequence
+        // and cannot reuse the shared targets until consumedFrameSequence.
+        MemoryBarrier();
+        const LONG frameOverlayFlags = InterlockedCompareExchange(
+            &block->frameOverlayFlags,
+            0,
+            0);
         const std::int64_t consumeStarted = ReadPerformanceCounter();
-        if (!consumer.ConsumeFrame())
+        if (!consumer.ConsumeFrame(frameOverlayFlags))
         {
             return false;
         }
         totalSourceConsumeQpcTicks +=
             ReadPerformanceCounter() - consumeStarted;
         ++sourceConsumeCount;
-        consumedSequence = availableSequence;
-        // ConsumeFrame waits for the legacy D3D9 source reads to complete
-        // before it returns. The x86 producer may now reuse its shared frame
-        // targets; it does not need to wait for the later OpenXR copy/submit.
-        MemoryBarrier();
-        InterlockedExchange(&block->consumedFrameSequence, consumedSequence);
         const std::int64_t mirrorStarted = ReadPerformanceCounter();
         desktopMirror.Render(consumer.GetLocalTextures());
         totalDesktopMirrorQpcTicks +=
@@ -466,6 +467,12 @@ int RunPresenter(
             acceptedUiWorldAnchor.positionY = source.positionY;
             acceptedUiWorldAnchor.positionZ = source.positionZ;
         }
+        consumedSequence = availableSequence;
+        // ConsumeFrame waits for the legacy D3D9 source reads to complete.
+        // Acknowledge only after pairing the frame with its UI metadata; the
+        // producer may overwrite both for the next frame after this point.
+        MemoryBarrier();
+        InterlockedExchange(&block->consumedFrameSequence, consumedSequence);
         InterlockedIncrement(&block->transportedFrameCount);
         haveFrame = true;
         if (!sampledPixels)

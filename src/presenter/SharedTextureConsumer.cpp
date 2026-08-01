@@ -169,6 +169,15 @@ bool SharedTextureConsumer::Initialize(
         }
     }
 
+    // Failure here is deliberately non-fatal to the native menu and OpenXR
+    // transport. The x86 producer will still publish a usable Ref2 texture,
+    // while this renderer logs why the optional BFVR button is unavailable.
+    mainMenuOverlay_.Initialize(
+        device_,
+        context_,
+        logCallback_,
+        logContext_);
+
     if (scalerRequired_)
     {
         WriteLog(
@@ -183,7 +192,7 @@ bool SharedTextureConsumer::Initialize(
     return true;
 }
 
-bool SharedTextureConsumer::ConsumeFrame()
+bool SharedTextureConsumer::ConsumeFrame(LONG frameOverlayFlags)
 {
     if (context_ == nullptr)
     {
@@ -239,6 +248,23 @@ bool SharedTextureConsumer::ConsumeFrame()
         {
             context_->CopyResource(texture.local, texture.shared);
         }
+    }
+    const Texture& uiTexture =
+        textures_[static_cast<std::size_t>(TextureSlot::Ref2Ui)];
+    const bool overlayVisible =
+        (frameOverlayFlags & kFrameOverlayBackToGameVisible) != 0;
+    const bool overlayHovered = overlayVisible &&
+        (frameOverlayFlags & kFrameOverlayBackToGameHovered) != 0;
+    if (mainMenuOverlay_.IsReady() && !mainMenuOverlay_.Composite(
+            uiTexture.localTarget,
+            uiTexture.sourceWidth,
+            uiTexture.sourceHeight,
+            uiTexture.destinationWidth,
+            uiTexture.destinationHeight,
+            overlayVisible,
+            overlayHovered))
+    {
+        copied = false;
     }
     if (legacyCompletionQuery_ != nullptr)
     {
@@ -317,6 +343,7 @@ bool SharedTextureConsumer::ReadCenterPixels(DWORD* pixels, std::size_t count)
 
 void SharedTextureConsumer::Shutdown()
 {
+    mainMenuOverlay_.Shutdown();
     scaler_.Shutdown();
     scalerRequired_ = false;
     requiresLegacyCompletionWait_ = false;

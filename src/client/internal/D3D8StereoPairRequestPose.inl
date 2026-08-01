@@ -24,6 +24,10 @@ void PrepareRuntimeRenderRequestPose()
     const bool nativeMenuActive = bfvr::IsMenuPointerOverlayActive();
     g_frameUiPlacement = {};
     g_frameUiPlacement.headLocked = true;
+    const bfvr::MainMenuOverlayInteractionState overlayState =
+        bfvr::GetMainMenuOverlayInteractionState();
+    g_frameUiPlacement.backToGameVisible = overlayState.visible;
+    g_frameUiPlacement.backToGameHovered = overlayState.hovered;
     if (nativeMenuActive)
     {
         const bfvr::D3D8RuntimeView currentHead =

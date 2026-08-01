@@ -1048,6 +1048,17 @@ public:
                 placement.headLocked
                     ? shared::UiReferenceMode::HeadLocked
                     : shared::UiReferenceMode::WorldLocked));
+        LONG overlayFlags = placement.backToGameVisible
+            ? shared::kFrameOverlayBackToGameVisible
+            : 0;
+        if (placement.backToGameVisible &&
+            placement.backToGameHovered)
+        {
+            overlayFlags |= shared::kFrameOverlayBackToGameHovered;
+        }
+        InterlockedExchange(
+            &block->frameOverlayFlags,
+            overlayFlags);
     }
 
     void WriteLog(const wchar_t* format, ...) const

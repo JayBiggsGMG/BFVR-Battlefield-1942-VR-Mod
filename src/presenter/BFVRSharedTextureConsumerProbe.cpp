@@ -276,7 +276,12 @@ int RunConsumer(const wchar_t* channelName, DWORD durationMs)
             Sleep(1);
             continue;
         }
-        if (!consumer.ConsumeFrame())
+        MemoryBarrier();
+        const LONG frameOverlayFlags = InterlockedCompareExchange(
+            &block->frameOverlayFlags,
+            0,
+            0);
+        if (!consumer.ConsumeFrame(frameOverlayFlags))
         {
             healthy = false;
             break;
