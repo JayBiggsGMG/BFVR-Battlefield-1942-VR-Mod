@@ -101,6 +101,7 @@ struct OpenXRControllerInputState
 struct OpenXRPresentationFrameState
 {
     std::int64_t predictedDisplayTime = 0;
+    std::int64_t predictedDisplayPeriod = 0;
     bool shouldRender = false;
     bool viewsValid = false;
     bool headPoseValid = false;

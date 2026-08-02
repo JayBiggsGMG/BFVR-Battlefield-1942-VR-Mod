@@ -13,6 +13,7 @@ namespace bfvr::d3d8probe
 
 constexpr LONG kMaximumProvenanceSites = 64;
 constexpr std::size_t kProvenanceStackDepth = 4;
+constexpr std::size_t kFramePacingSampleCount = 512;
 
 struct D3DMatrix
 {
@@ -169,6 +170,7 @@ struct StereoFrameRecord
     volatile LONG excludedByKind[static_cast<std::size_t>(FrameDrawKind::Count)] = {};
     volatile LONG boundedDrawSkips = 0;
     volatile LONG restoreChecks = 0;
+    volatile LONG restoreVerifications = 0;
     volatile LONG restoreFailures = 0;
     volatile LONG sourceReleaseChecks = 0;
     volatile LONG sourceReleaseFailures = 0;
@@ -207,7 +209,7 @@ struct StereoFrameRecord
     HRESULT lastLeftDrawResult = E_FAIL;
     HRESULT lastRightDrawResult = E_FAIL;
     HRESULT lastMenuDrawResult = E_FAIL;
-    BOOL allRestorationsExact = TRUE;
+    BOOL allRestorationsAccepted = TRUE;
     ReadbackResult readback[2] = {};
     ReadbackResult menuReadback = {};
     ULONG ownedColorRelease[2] = {static_cast<ULONG>(-1), static_cast<ULONG>(-1)};
@@ -219,6 +221,11 @@ struct StereoFrameRecord
         static_cast<ULONG>(-1),
         static_cast<ULONG>(-1)};
     std::int64_t replayQpcTicks = 0;
+    std::int64_t preparationQpcTicks = 0;
+    std::int64_t eyeOrLayerDrawQpcTicks = 0;
+    std::int64_t restoreWriteQpcTicks = 0;
+    std::int64_t restoreVerifyQpcTicks = 0;
+    std::int64_t provenanceQpcTicks = 0;
     std::int64_t readbackQpcTicks = 0;
     std::int64_t uploadQpcTicks = 0;
     BOOL completedWithDifferingColor = FALSE;
@@ -235,6 +242,7 @@ struct PresentationRunRecord
     volatile LONG totalWorldDraws = 0;
     volatile LONG totalUiDraws = 0;
     volatile LONG totalRestoreChecks = 0;
+    volatile LONG totalRestoreVerifications = 0;
     volatile LONG totalRestoreFailures = 0;
     volatile LONG totalTreeRendererBillboardDraws = 0;
     volatile LONG totalTreeMeshAlphaBlockDraws = 0;
@@ -243,12 +251,23 @@ struct PresentationRunRecord
     volatile LONG totalSuppressedFirstPersonArmDraws = 0;
     volatile LONG totalTranslucentSpriteDraws = 0;
     std::int64_t totalReplayQpcTicks = 0;
+    std::int64_t totalPreparationQpcTicks = 0;
+    std::int64_t totalEyeOrLayerDrawQpcTicks = 0;
+    std::int64_t totalRestoreWriteQpcTicks = 0;
+    std::int64_t totalRestoreVerifyQpcTicks = 0;
+    std::int64_t totalProvenanceQpcTicks = 0;
+    std::int64_t totalOriginalPresentQpcTicks = 0;
+    volatile LONG originalPresentCalls = 0;
     std::int64_t totalReadbackQpcTicks = 0;
     std::int64_t totalUploadQpcTicks = 0;
     std::int64_t totalConsumptionWaitQpcTicks = 0;
     std::int64_t totalRequestWaitQpcTicks = 0;
     LONG firstSequence = 0;
     LONG lastSequence = 0;
+    std::int64_t lastCompletedFrameQpc = 0;
+    std::int64_t framePacingQpcTicks[kFramePacingSampleCount] = {};
+    std::size_t framePacingSampleWriteIndex = 0;
+    std::size_t framePacingSamplesStored = 0;
 };
 
 void ResetStereoFrameRecordForResourceReuse(

@@ -1,8 +1,10 @@
 #include "client/D3D8StereoPairProbe.h"
 #include "client/D3D8PresentationConfiguration.h"
+#include "client/D3D8PerformanceTiming.h"
 #include "client/D3D8RenderViewPoseHook.h"
 #include "client/BFSoldierVrMotionFilter.h"
 #include "client/D3D8RuntimePosePolicy.h"
+#include "client/D3D8RuntimeDiagnostics.h"
 #include "client/ControllerInputOverlay.h"
 #include "client/CrosshairOverlay.h"
 #include "client/D3D8WorldCrosshairRenderer.h"
@@ -358,6 +360,8 @@ bool g_offlinePresentation = false;
 bool g_runUntilStopped = false;
 bool g_keepOriginalFlatBackbuffer = false;
 bool g_headCenteredWaterReflection = true;
+bfvr::D3D8RuntimeDiagnosticLevel g_runtimeDiagnostics =
+    bfvr::D3D8RuntimeDiagnosticLevel::Deep;
 PresentationRunRecord g_presentationRun = {};
 DWORD g_lastPresentationTimingReportAt = 0;
 bool g_presentationTimingStarted = false;
@@ -758,80 +762,7 @@ bool AcquireFrameDrawState(void* device, DrawStateSnapshot& snapshot, bool& elig
     return true;
 }
 
-bool RestoreAndVerifyFrameState(void* device, const DrawStateSnapshot& snapshot)
-{
-    const bfvr::d3d8probe::D3D8VertexShaderConstantApi shaderApi = {
-        g_methods.setVertexShaderConstant,
-        g_methods.getVertexShaderConstant};
-    const bool shaderConstantsExact =
-        bfvr::d3d8probe::RestoreAndVerifyD3D8SkinningShaderConstants(
-            shaderApi,
-            device,
-            snapshot.skinningShaderTransform) &&
-        bfvr::d3d8probe::RestoreAndVerifyD3D8SpriteShaderConstants(
-            shaderApi,
-            device,
-            snapshot.spriteShaderTransform) &&
-        bfvr::d3d8probe::RestoreAndVerifyD3D8TreeSpriteShaderConstants(
-            shaderApi,
-            device,
-            snapshot.treeSpriteShaderTransform);
-    const HRESULT targetResult =
-        g_methods.setRenderTarget(device, snapshot.sourceColor, snapshot.sourceDepth);
-    const HRESULT viewportResult =
-        g_methods.setViewport(device, &snapshot.viewport);
-    const HRESULT viewResult =
-        g_methods.setTransform(device, kD3DTransformView, &snapshot.view);
-    const HRESULT projectionResult =
-        g_methods.setTransform(device, kD3DTransformProjection, &snapshot.projection);
-    const HRESULT worldResult =
-        g_methods.setTransform(device, kD3DTransformWorld, &snapshot.world);
-
-    void* actualColor = nullptr;
-    void* actualDepth = nullptr;
-    D3DViewport actualViewport = {};
-    D3DMatrix actualWorld = {};
-    D3DMatrix actualView = {};
-    D3DMatrix actualProjection = {};
-    const HRESULT getColorResult = g_methods.getRenderTarget(device, &actualColor);
-    const HRESULT getDepthResult = g_methods.getDepthStencilSurface(device, &actualDepth);
-    const HRESULT getViewportResult = g_methods.getViewport(device, &actualViewport);
-    const HRESULT getWorldResult =
-        g_methods.getTransform(device, kD3DTransformWorld, &actualWorld);
-    const HRESULT getViewResult =
-        g_methods.getTransform(device, kD3DTransformView, &actualView);
-    const HRESULT getProjectionResult =
-        g_methods.getTransform(device, kD3DTransformProjection, &actualProjection);
-
-    const bool exact =
-        SUCCEEDED(targetResult) &&
-        SUCCEEDED(viewportResult) &&
-        SUCCEEDED(viewResult) &&
-        SUCCEEDED(projectionResult) &&
-        SUCCEEDED(worldResult) &&
-        SUCCEEDED(getColorResult) &&
-        SUCCEEDED(getDepthResult) &&
-        SUCCEEDED(getViewportResult) &&
-        SUCCEEDED(getWorldResult) &&
-        SUCCEEDED(getViewResult) &&
-        SUCCEEDED(getProjectionResult) &&
-        shaderConstantsExact &&
-        actualColor == snapshot.sourceColor &&
-        actualDepth == snapshot.sourceDepth &&
-        EqualViewport(actualViewport, snapshot.viewport) &&
-        EqualMatrix(actualWorld, snapshot.world) &&
-        EqualMatrix(actualView, snapshot.view) &&
-        EqualMatrix(actualProjection, snapshot.projection);
-    ReleaseUnknown(actualColor);
-    ReleaseUnknown(actualDepth);
-    InterlockedIncrement(&g_frame.restoreChecks);
-    if (!exact)
-    {
-        g_frame.allRestorationsExact = FALSE;
-        InterlockedIncrement(&g_frame.restoreFailures);
-    }
-    return exact;
-}
+#include "client/internal/D3D8StereoPairRestore.inl"
 
 #include "client/internal/D3D8StereoPairFrameResources.inl"
 
@@ -897,6 +828,8 @@ FrameMirrorResult MirrorDrawIntoFrame(
         return FrameMirrorResult::NotMirrored;
     }
 
+    bfvr::d3d8probe::ScopedPerformanceAccumulator preparationTimer(
+        g_frame.preparationQpcTicks);
     DrawStateSnapshot snapshot = {};
     bool eligibleTarget = false;
     const bool readable = AcquireFrameDrawState(device, snapshot, eligibleTarget);
@@ -960,7 +893,10 @@ FrameMirrorResult MirrorDrawIntoFrame(
         ReleaseFrameSourceReferences(snapshot);
         return FrameMirrorResult::Failed;
     }
+    preparationTimer.Stop();
 
+    bfvr::d3d8probe::ScopedPerformanceAccumulator drawTimer(
+        g_frame.eyeOrLayerDrawQpcTicks);
     const D3DMatrix* const eyeViews[2] = {&snapshot.leftView, &snapshot.rightView};
     const D3DMatrix* const eyeProjections[2] = {
         &snapshot.leftProjection,
@@ -1122,8 +1058,8 @@ FrameMirrorResult MirrorDrawIntoFrame(
         }
     }
 
-    const bool frameStateRestored =
-        RestoreAndVerifyFrameState(device, snapshot);
+    drawTimer.Stop();
+    const bool frameStateRestored = RestoreFrameState(device, snapshot);
     const bool restored = frameStateRestored;
     ReleaseFrameSourceReferences(snapshot);
     g_frame.lastLeftDrawResult = eyeDrawResults[0];
@@ -1154,7 +1090,12 @@ FrameMirrorResult MirrorDrawIntoFrame(
     {
         InterlockedIncrement(&g_frame.headCenteredWaterReflectionDraws);
     }
-    RecordDrawProvenance(invocation, snapshot);
+    if (bfvr::IsDeepD3D8RuntimeDiagnostics(g_runtimeDiagnostics))
+    {
+        bfvr::d3d8probe::ScopedPerformanceAccumulator provenanceTimer(
+            g_frame.provenanceQpcTicks);
+        RecordDrawProvenance(invocation, snapshot);
+    }
     InterlockedExchangeAdd(
         &g_frame.mirroredPrimitives,
         static_cast<LONG>(std::min<UINT>(
@@ -1535,6 +1476,8 @@ HRESULT WINAPI HookPresent(
     InterlockedIncrement(&g_record.activeCallbacks);
     const LONG stateAtEntry =
         InterlockedCompareExchange(&g_record.state, 0, 0);
+    const std::int64_t originalPresentStarted =
+        bfvr::d3d8probe::ReadPerformanceCounter();
     const HRESULT result = g_originalPresent == nullptr
         ? E_FAIL
         : g_originalPresent(
@@ -1543,6 +1486,13 @@ HRESULT WINAPI HookPresent(
             destinationRectangle,
             destinationWindowOverride,
             dirtyRegion);
+    if (IsPresentationMode())
+    {
+        g_presentationRun.totalOriginalPresentQpcTicks +=
+            bfvr::d3d8probe::ReadPerformanceCounter() -
+            originalPresentStarted;
+        InterlockedIncrement(&g_presentationRun.originalPresentCalls);
+    }
 
     if (IsFullFrameMode() &&
         stateAtEntry == 2 &&
@@ -2427,6 +2377,12 @@ void StartStereoProbe(
 
     g_callbacks = callbacks;
     g_mode = mode;
+    if (mode == ProbeMode::FullFramePresentation)
+    {
+        AppendLog(
+            L"BFVR runtime diagnostics=%s: normal keeps all rendering and restoration writes while skipping per-draw proof readbacks and provenance aggregation; set BFVR_DIAGNOSTICS=deep to enable those expensive proof checks for a troubleshooting run.",
+            bfvr::DescribeD3D8RuntimeDiagnosticLevel(g_runtimeDiagnostics));
+    }
     HANDLE worker = CreateThread(nullptr, 0, RunProbe, nullptr, 0, nullptr);
     if (worker == nullptr)
     {
@@ -2479,6 +2435,9 @@ void StartD3D8StereoFramePresentationProbe(
             static_cast<DWORD>(std::size(stereoWaterReflection))) == 1 &&
         stereoWaterReflection[0] == L'1');
     g_keepOriginalFlatBackbuffer = ReadKeepOriginalFlatBackbuffer();
+    g_runtimeDiagnostics = g_runUntilStopped
+        ? ReadD3D8RuntimeDiagnosticLevel()
+        : D3D8RuntimeDiagnosticLevel::Deep;
     if (g_keepOriginalFlatBackbuffer)
     {
         AppendLog(
@@ -2491,6 +2450,7 @@ void StartD3D8StereoFrameSharedTransportProbe(
     const D3D8ObserverCallbacks& callbacks)
 {
     g_offlinePresentation = true;
+    g_runtimeDiagnostics = D3D8RuntimeDiagnosticLevel::Deep;
     StartStereoProbe(callbacks, ProbeMode::FullFramePresentation);
 }
 

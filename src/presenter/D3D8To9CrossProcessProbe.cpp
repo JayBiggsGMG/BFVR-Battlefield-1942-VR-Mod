@@ -255,9 +255,11 @@ bool RunD3D8To9CrossProcessProbe(
         StoreLegacySharedHandle(description, handles[index]);
     }
     PublishState(&block->producerState, ProcessState::TexturesReady);
+    (void)channel.SignalProducerUpdate();
     InterlockedExchange(&block->producedFrameCount, 1);
     MemoryBarrier();
     InterlockedExchange(&block->frameSequence, 1);
+    (void)channel.SignalProducerUpdate();
 
     {
         const DWORD startedAt = GetTickCount();
@@ -268,7 +270,10 @@ bool RunD3D8To9CrossProcessProbe(
                 0) != 1 &&
             IsProcessRunning(consumer.hProcess))
         {
-            Sleep(2);
+            if (channel.WaitForPresenterUpdate(20) == WAIT_FAILED)
+            {
+                Sleep(2);
+            }
         }
     }
     {
@@ -309,6 +314,7 @@ cleanup:
             &block->producerState,
             succeeded ? ProcessState::Stopping : ProcessState::Failed);
         InterlockedExchange(&block->shutdownRequested, 1);
+        (void)channel.SignalProducerUpdate();
     }
     if (consumer.hProcess != nullptr)
     {

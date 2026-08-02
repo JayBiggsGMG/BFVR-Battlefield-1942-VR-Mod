@@ -4,6 +4,18 @@
 
 namespace bfvr::shared
 {
+namespace
+{
+std::wstring MakeUpdateEventName(
+    const std::wstring& channelName,
+    const wchar_t* suffix)
+{
+    std::wstring result = channelName;
+    result += suffix;
+    return result;
+}
+} // namespace
+
 SharedControlChannel::~SharedControlChannel()
 {
     Close();
@@ -48,6 +60,7 @@ bool SharedControlChannel::Create(const wchar_t* channelName, DWORD producerProc
     block_->version = kProtocolVersion;
     block_->byteSize = static_cast<DWORD>(sizeof(ControlBlock));
     block_->producerProcessId = producerProcessId;
+    CreateUpdateEvents();
     PublishState(&block_->producerState, ProcessState::Starting);
     return true;
 }
@@ -77,11 +90,13 @@ bool SharedControlChannel::Open(const wchar_t* channelName)
         Close();
         return false;
     }
+    OpenUpdateEvents();
     return true;
 }
 
 void SharedControlChannel::Close()
 {
+    CloseUpdateEvents();
     if (block_ != nullptr)
     {
         UnmapViewOfFile(block_);
@@ -110,6 +125,38 @@ const std::wstring& SharedControlChannel::Name() const noexcept
     return name_;
 }
 
+bool SharedControlChannel::SignalProducerUpdate() const noexcept
+{
+    return producerUpdateEvent_ != nullptr &&
+        SetEvent(producerUpdateEvent_) != FALSE;
+}
+
+bool SharedControlChannel::SignalPresenterUpdate() const noexcept
+{
+    return presenterUpdateEvent_ != nullptr &&
+        SetEvent(presenterUpdateEvent_) != FALSE;
+}
+
+DWORD SharedControlChannel::WaitForProducerUpdate(DWORD timeoutMs) const noexcept
+{
+    return producerUpdateEvent_ == nullptr
+        ? WAIT_FAILED
+        : WaitForSingleObject(producerUpdateEvent_, timeoutMs);
+}
+
+DWORD SharedControlChannel::WaitForPresenterUpdate(DWORD timeoutMs) const noexcept
+{
+    return presenterUpdateEvent_ == nullptr
+        ? WAIT_FAILED
+        : WaitForSingleObject(presenterUpdateEvent_, timeoutMs);
+}
+
+bool SharedControlChannel::HasUpdateEvents() const noexcept
+{
+    return producerUpdateEvent_ != nullptr &&
+        presenterUpdateEvent_ != nullptr;
+}
+
 bool SharedControlChannel::Map(HANDLE mapping)
 {
     block_ = static_cast<ControlBlock*>(MapViewOfFile(
@@ -125,6 +172,62 @@ bool SharedControlChannel::Map(HANDLE mapping)
     }
     lastError_ = ERROR_SUCCESS;
     return true;
+}
+
+void SharedControlChannel::CreateUpdateEvents() noexcept
+{
+    const std::wstring producerName =
+        MakeUpdateEventName(name_, L"-ProducerUpdate");
+    const std::wstring presenterName =
+        MakeUpdateEventName(name_, L"-PresenterUpdate");
+    producerUpdateEvent_ = CreateEventW(
+        nullptr,
+        FALSE,
+        FALSE,
+        producerName.c_str());
+    presenterUpdateEvent_ = CreateEventW(
+        nullptr,
+        FALSE,
+        FALSE,
+        presenterName.c_str());
+    if (producerUpdateEvent_ == nullptr || presenterUpdateEvent_ == nullptr)
+    {
+        CloseUpdateEvents();
+    }
+}
+
+void SharedControlChannel::OpenUpdateEvents() noexcept
+{
+    const std::wstring producerName =
+        MakeUpdateEventName(name_, L"-ProducerUpdate");
+    const std::wstring presenterName =
+        MakeUpdateEventName(name_, L"-PresenterUpdate");
+    producerUpdateEvent_ = OpenEventW(
+        SYNCHRONIZE | EVENT_MODIFY_STATE,
+        FALSE,
+        producerName.c_str());
+    presenterUpdateEvent_ = OpenEventW(
+        SYNCHRONIZE | EVENT_MODIFY_STATE,
+        FALSE,
+        presenterName.c_str());
+    if (producerUpdateEvent_ == nullptr || presenterUpdateEvent_ == nullptr)
+    {
+        CloseUpdateEvents();
+    }
+}
+
+void SharedControlChannel::CloseUpdateEvents() noexcept
+{
+    if (producerUpdateEvent_ != nullptr)
+    {
+        CloseHandle(producerUpdateEvent_);
+        producerUpdateEvent_ = nullptr;
+    }
+    if (presenterUpdateEvent_ != nullptr)
+    {
+        CloseHandle(presenterUpdateEvent_);
+        presenterUpdateEvent_ = nullptr;
+    }
 }
 
 bool IsCompatible(const ControlBlock* block) noexcept

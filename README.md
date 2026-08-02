@@ -257,6 +257,44 @@ muzzle/impact alignment remain deliberate follow-up tests.
 
 ## OpenXR presentation smoke test
 
+### Normal and deep diagnostics
+
+BFVR has one source tree and one normal launcher build; there are not separate
+copies of the code to keep in sync. `Launch-BFVR-VR.bat` sets
+`BFVR_DIAGNOSTICS=normal`. Normal mode keeps every visual feature, required
+graphics-state restoration, failure check, useful event log, and 30-second
+performance summary. It skips only two expensive per-draw proof tools:
+reading restored graphics state back from Direct3D to prove it byte-for-byte,
+and grouping every draw by its diagnostic provenance.
+
+For a troubleshooting run, change the launcher's one setting to:
+
+```bat
+set "BFVR_DIAGNOSTICS=deep"
+```
+
+Deep mode turns those proof tools back on. Change it back to `normal` for
+ordinary play and performance testing. Bounded no-headset proof probes always
+use deep diagnostics. A compiler Debug build is also generated from the same
+source only when diagnosing a rare memory/calling-convention fault; it is not a
+second version that receives separate edits.
+
+The normal log now reports the rate and pacing of newly completed BFVR stereo
+frames, detailed x86 replay stages, original Direct3D `Present`, transport
+waits, the OpenXR runtime's predicted refresh period, and how often the headset
+had to receive the last complete image because a new one was not ready. These
+“new BFVR frames” are not vanilla BF1942's frame rate.
+
+The x86 game bridge and x64 presenter use two named auto-reset events as
+cross-process doorbells instead of repeatedly sleeping and checking for frame
+changes. Shared sequence numbers remain authoritative, and BFVR automatically
+falls back to bounded polling if those events are unavailable. This first
+transport optimization does not change resolution, FXAA, rendered features, or
+the one-set image path. Headset timing should compare `consumeWait`,
+`nextRequestWait`, and their sum before adding a second native-resolution
+texture set: Oculus publishes the next pose only after the current source has
+been consumed/submitted, so those two waits are not fully independent.
+
 The original standalone probe is x86 because it shares the client build. The
 currently installed Oculus x86 runtime faults inside `xrCreateSession`, while
 the corresponding x64 runtime has been independently proven healthy. BFVR

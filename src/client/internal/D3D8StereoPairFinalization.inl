@@ -133,7 +133,7 @@ bool FinalizeFrameTargets(void* device)
         mirroredDraws != 0,
         InterlockedCompareExchange(&g_frame.restoreFailures, 0, 0) == 0 &&
             InterlockedCompareExchange(&g_frame.sourceReleaseFailures, 0, 0) == 0 &&
-            g_frame.allRestorationsExact,
+            g_frame.allRestorationsAccepted,
         bothEyesHaveColor,
         hashesDiffer,
         layerPartitionExact,

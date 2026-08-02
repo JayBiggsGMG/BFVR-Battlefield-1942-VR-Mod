@@ -296,7 +296,10 @@ public:
                 Shutdown();
                 return false;
             }
-            Sleep(5);
+            if (channel.WaitForPresenterUpdate(5) == WAIT_FAILED)
+            {
+                Sleep(5);
+            }
         }
         if (shared::ReadState(&block->presenterState) !=
             shared::ProcessState::RequirementsReady)
@@ -352,14 +355,18 @@ public:
             shared::PublishState(
                 &block->producerState,
                 shared::ProcessState::TexturesReady);
+            (void)channel.SignalProducerUpdate();
             texturesPublished = true;
         }
         initialized = true;
         WriteLog(
-            L"D3D8 presentation bridge is ready: transport=%s source world=%ux%u/%ux%u at scale %.3f, destination=%ux%u/%ux%u, logical UI=%ux%u, destinationFormat=%u.",
+            L"D3D8 presentation bridge is ready: transport=%s synchronization=%s source world=%ux%u/%ux%u at scale %.3f, destination=%ux%u/%ux%u, logical UI=%ux%u, destinationFormat=%u.",
             gpuSharedTargets
                 ? L"D3D9Ex legacy shared GPU targets"
                 : L"D3D8 readback plus D3D11 upload",
+            channel.HasUpdateEvents()
+                ? L"cross-process events"
+                : L"bounded polling fallback",
             requirements.leftWorldWidth,
             requirements.leftWorldHeight,
             requirements.rightWorldWidth,
@@ -451,6 +458,7 @@ public:
         shared::PublishState(
             &block->producerState,
             shared::ProcessState::TexturesReady);
+        (void)channel.SignalProducerUpdate();
         texturesPublished = true;
         WriteLog(
             L"Published Reset-owned D3D9Ex shared targets: world=%ux%u R10G10B10A2 x2, UI=%ux%u R16G16B16A16_FLOAT, helperDeviceCreations=%ld. Legacy handles are lifetime-bound resource tokens and are never passed to CloseHandle.",
@@ -600,10 +608,15 @@ public:
         // (for example while focus is changing).  Keep one request sequence
         // outstanding so a nonblocking continuous-mode poll neither loses the
         // request nor advances ahead of the x64 presenter.
-        const LONG sequence = pendingRenderRequest != 0
-            ? pendingRenderRequest
-            : InterlockedIncrement(&block->renderReadySequence);
+        const bool newlyRequested = pendingRenderRequest == 0;
+        const LONG sequence = newlyRequested
+            ? InterlockedIncrement(&block->renderReadySequence)
+            : pendingRenderRequest;
         pendingRenderRequest = sequence;
+        if (newlyRequested)
+        {
+            (void)channel.SignalProducerUpdate();
+        }
         const DWORD waitStarted = GetTickCount();
         for (;;)
         {
@@ -719,7 +732,15 @@ public:
             {
                 break;
             }
-            Sleep(1);
+            const DWORD elapsed = GetTickCount() - waitStarted;
+            const DWORD remaining = timeoutMs > elapsed
+                ? timeoutMs - elapsed
+                : 0;
+            const DWORD waitSlice = (std::min)(remaining, 20UL);
+            if (channel.WaitForPresenterUpdate(waitSlice) == WAIT_FAILED)
+            {
+                Sleep((std::min)(remaining, 1UL));
+            }
         }
         if (timeoutMs != 0)
         {
@@ -771,6 +792,7 @@ public:
         InterlockedIncrement(&block->producedFrameCount);
         MemoryBarrier();
         InterlockedExchange(&block->frameSequence, request.sequence);
+        (void)channel.SignalProducerUpdate();
         return true;
     }
 
@@ -799,6 +821,7 @@ public:
         InterlockedIncrement(&block->producedFrameCount);
         MemoryBarrier();
         InterlockedExchange(&block->frameSequence, request.sequence);
+        (void)channel.SignalProducerUpdate();
         return true;
     }
 
@@ -844,7 +867,15 @@ public:
                     IsProcessRunning(presenterProcess.hProcess) ? 1 : 0);
                 return false;
             }
-            Sleep(2);
+            const DWORD elapsed = GetTickCount() - waitStarted;
+            const DWORD remaining = timeoutMs > elapsed
+                ? timeoutMs - elapsed
+                : 0;
+            const DWORD waitSlice = (std::min)(remaining, 50UL);
+            if (channel.WaitForPresenterUpdate(waitSlice) == WAIT_FAILED)
+            {
+                Sleep((std::min)(remaining, 2UL));
+            }
         }
         WriteLog(
             L"OpenXR game bridge timed out waiting %lu ms for source consumption %ld: rendered=%ld consumed=%ld presenterState=%ld presenterError=%ld.",
@@ -909,7 +940,15 @@ public:
                     IsProcessRunning(presenterProcess.hProcess) ? 1 : 0);
                 return false;
             }
-            Sleep(2);
+            const DWORD elapsed = GetTickCount() - waitStarted;
+            const DWORD remaining = timeoutMs > elapsed
+                ? timeoutMs - elapsed
+                : 0;
+            const DWORD waitSlice = (std::min)(remaining, 50UL);
+            if (channel.WaitForPresenterUpdate(waitSlice) == WAIT_FAILED)
+            {
+                Sleep((std::min)(remaining, 2UL));
+            }
         }
         WriteLog(
             L"OpenXR game bridge timed out waiting %lu ms for presentation %ld: rendered=%ld consumed=%ld presenterState=%ld presenterError=%ld.",
@@ -974,6 +1013,7 @@ public:
                 &block->producerState,
                 shared::ProcessState::Stopping);
             InterlockedExchange(&block->shutdownRequested, 1);
+            (void)channel.SignalProducerUpdate();
         }
         if (presenterProcess.hProcess != nullptr)
         {

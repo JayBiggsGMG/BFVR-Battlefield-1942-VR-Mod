@@ -1718,6 +1718,8 @@ public:
         pendingViewsValid = false;
         publicFrameState.predictedDisplayTime =
             static_cast<std::int64_t>(pendingFrameState.predictedDisplayTime);
+        publicFrameState.predictedDisplayPeriod =
+            static_cast<std::int64_t>(pendingFrameState.predictedDisplayPeriod);
         publicFrameState.shouldRender = pendingFrameState.shouldRender != XR_FALSE;
         pendingHeadPoseValid = false;
         SampleControllerInput(

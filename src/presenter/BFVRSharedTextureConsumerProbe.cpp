@@ -6,6 +6,7 @@
 #include <d3d11.h>
 #include <dxgi.h>
 
+#include <algorithm>
 #include <array>
 #include <cstdio>
 #include <cwchar>
@@ -133,6 +134,7 @@ int RunConsumer(const wchar_t* channelName, DWORD durationMs)
         return 20;
     }
     PublishTestRequirements(*block, adapterLuid, featureLevel);
+    (void)channel.SignalPresenterUpdate();
     fwprintf(
         g_output,
         L"[X64-CONSUMER] Published offline requirements: adapter=%08lX:%08lX featureLevel=0x%04X.\n",
@@ -163,7 +165,10 @@ int RunConsumer(const wchar_t* channelName, DWORD durationMs)
             device->Release();
             return 21;
         }
-        Sleep(2);
+        if (channel.WaitForProducerUpdate(2) == WAIT_FAILED)
+        {
+            Sleep(2);
+        }
     }
 
     bfvr::shared::SharedTextureConsumer consumer;
@@ -187,6 +192,7 @@ int RunConsumer(const wchar_t* channelName, DWORD durationMs)
     bfvr::shared::PublishState(
         &block->presenterState,
         bfvr::shared::ProcessState::Running);
+    (void)channel.SignalPresenterUpdate();
 
     LONG consumedSequence = 0;
     LONG completedRenderRequest = 0;
@@ -210,7 +216,10 @@ int RunConsumer(const wchar_t* channelName, DWORD durationMs)
                     0);
             if (readySequence == completedRenderRequest)
             {
-                Sleep(1);
+                if (channel.WaitForProducerUpdate(2) == WAIT_FAILED)
+                {
+                    Sleep(1);
+                }
                 continue;
             }
             block->renderRequest.predictedDisplayTime =
@@ -231,6 +240,7 @@ int RunConsumer(const wchar_t* channelName, DWORD durationMs)
             InterlockedExchange(
                 &block->renderRequestSequence,
                 readySequence);
+            (void)channel.SignalPresenterUpdate();
             const DWORD frameWaitStarted = GetTickCount();
             while (GetTickCount() - frameWaitStarted < 1000)
             {
@@ -243,7 +253,13 @@ int RunConsumer(const wchar_t* channelName, DWORD durationMs)
                 {
                     break;
                 }
-                Sleep(1);
+                const DWORD elapsed = GetTickCount() - frameWaitStarted;
+                const DWORD remaining = elapsed < 1000 ? 1000 - elapsed : 0;
+                const DWORD waitSlice = (std::min)(remaining, 20UL);
+                if (channel.WaitForProducerUpdate(waitSlice) == WAIT_FAILED)
+                {
+                    Sleep((std::min)(remaining, 1UL));
+                }
             }
             if (availableSequence != readySequence)
             {
@@ -273,7 +289,10 @@ int RunConsumer(const wchar_t* channelName, DWORD durationMs)
         }
         if (availableSequence == consumedSequence)
         {
-            Sleep(1);
+            if (channel.WaitForProducerUpdate(2) == WAIT_FAILED)
+            {
+                Sleep(1);
+            }
             continue;
         }
         MemoryBarrier();
@@ -308,12 +327,14 @@ int RunConsumer(const wchar_t* channelName, DWORD durationMs)
         consumedSequence = availableSequence;
         InterlockedExchange(&block->consumedFrameSequence, consumedSequence);
         InterlockedIncrement(&block->transportedFrameCount);
+        (void)channel.SignalPresenterUpdate();
         if (runtimeTimed)
         {
             completedRenderRequest = availableSequence;
             InterlockedExchange(
                 &block->renderedFrameSequence,
                 completedRenderRequest);
+            (void)channel.SignalPresenterUpdate();
         }
     }
 
@@ -335,6 +356,7 @@ int RunConsumer(const wchar_t* channelName, DWORD durationMs)
         succeeded
             ? bfvr::shared::ProcessState::Stopped
             : bfvr::shared::ProcessState::Failed);
+    (void)channel.SignalPresenterUpdate();
     fwprintf(
         g_output,
         L"[X64-CONSUMER] Exit summary: healthy=%d consumedSequence=%ld transported=%ld.\n",

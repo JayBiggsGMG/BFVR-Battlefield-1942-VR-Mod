@@ -2378,7 +2378,11 @@ void TestD3D8SkinningShaderOverrideLifecycle()
         return;
     }
     ExpectNear(test, device.constants.values[0][3], -0.032F);
-    if (!bfvr::d3d8probe::RestoreAndVerifyD3D8SkinningShaderConstants(
+    if (!bfvr::d3d8probe::RestoreD3D8SkinningShaderConstants(
+            api,
+            &device,
+            state) ||
+        !bfvr::d3d8probe::VerifyD3D8SkinningShaderConstants(
             api,
             &device,
             state) ||
@@ -2489,7 +2493,11 @@ void TestD3D8SpriteShaderOverrideLifecycle()
     ExpectNear(test, device.registers[4][2], -0.1F);
     ExpectNear(test, device.registers[9][0], 0.968F);
     ExpectNear(test, device.registers[8][0], 11.0F);
-    if (!bfvr::d3d8probe::RestoreAndVerifyD3D8SpriteShaderConstants(
+    if (!bfvr::d3d8probe::RestoreD3D8SpriteShaderConstants(
+            api,
+            &device,
+            state) ||
+        !bfvr::d3d8probe::VerifyD3D8SpriteShaderConstants(
             api,
             &device,
             state) ||
@@ -2607,7 +2615,11 @@ void TestD3D8TreeSpriteShaderOverrideLifecycle()
     ExpectNear(test, device.registers[0][3], 4.032F);
     ExpectNear(test, device.registers[4][2], -0.1F);
     ExpectNear(test, device.registers[8][0], 41.0F);
-    if (!bfvr::d3d8probe::RestoreAndVerifyD3D8TreeSpriteShaderConstants(
+    if (!bfvr::d3d8probe::RestoreD3D8TreeSpriteShaderConstants(
+            api,
+            &device,
+            state) ||
+        !bfvr::d3d8probe::VerifyD3D8TreeSpriteShaderConstants(
             api,
             &device,
             state) ||
@@ -2722,7 +2734,7 @@ void TestStereoFrameResourceReuseReset()
     record.resourcesReady = 1;
     record.mirroredDraws = 400;
     record.restoreFailures = 2;
-    record.allRestorationsExact = FALSE;
+    record.allRestorationsAccepted = FALSE;
     bfvr::d3d8probe::ResetStereoFrameRecordForResourceReuse(record);
     if (record.ownedColor[0] != reinterpret_cast<void*>(1) ||
         record.ownedColor[1] != reinterpret_cast<void*>(2) ||
@@ -2743,7 +2755,7 @@ void TestStereoFrameResourceReuseReset()
         record.resourcesReady != 0 ||
         record.mirroredDraws != 0 ||
         record.restoreFailures != 0 ||
-        record.allRestorationsExact != TRUE)
+        record.allRestorationsAccepted != TRUE)
     {
         Fail(test, "per-frame state was not reset");
     }

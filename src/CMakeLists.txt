@@ -162,6 +162,7 @@ add_library(BFVRClient SHARED
   client/BFSoldierOffHandWeaponSteering.cpp
   client/BFSoldierTrackedHandPose.cpp
   client/D3D8RuntimePosePolicy.cpp
+  client/D3D8RuntimeDiagnostics.cpp
   client/D3D8RuntimeRedirect.cpp
   client/BFSoldierBoneResolver.cpp
   client/PlayerInputProbe.cpp
@@ -292,11 +293,21 @@ add_executable(BFVRWorldCrosshairMathTests
   stereo/WorldCrosshairMathTests.cpp
 )
 
+add_executable(BFVRRuntimeDiagnosticsTests
+  client/D3D8RuntimeDiagnostics.cpp
+  client/D3D8RuntimeDiagnosticsTests.cpp
+)
+
+add_executable(BFVRSharedControlChannelTests
+  presenter/SharedControlChannel.cpp
+  presenter/SharedControlChannelTests.cpp
+)
+
 add_executable(BFVRRfaInspect
   tools/RfaInspect.cpp
 )
 
-foreach(target BFVRClient BFVRD3D8To9FlatClient BFVRLoader BFVROpenXRProbe BFVRSharedTextureProducerProbe BFVRD3D8To9SharedSurfaceProbe BFVRStereoMath BFVRStereoMathTests BFVRWeaponFireAimMathTests BFVROffHandSupportPolicyTests BFVRArmPoleVectorMathTests BFVRMainMenuOverlayTests BFVRQuickMenuTests BFVRVehicleMotionAimMathTests BFVRWorldCrosshairMathTests BFVRRfaInspect)
+foreach(target BFVRClient BFVRD3D8To9FlatClient BFVRLoader BFVROpenXRProbe BFVRSharedTextureProducerProbe BFVRD3D8To9SharedSurfaceProbe BFVRStereoMath BFVRStereoMathTests BFVRWeaponFireAimMathTests BFVROffHandSupportPolicyTests BFVRArmPoleVectorMathTests BFVRMainMenuOverlayTests BFVRQuickMenuTests BFVRVehicleMotionAimMathTests BFVRWorldCrosshairMathTests BFVRRuntimeDiagnosticsTests BFVRSharedControlChannelTests BFVRRfaInspect)
   target_compile_definitions(${target} PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
   set_property(TARGET ${target} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
   if(MSVC)
@@ -336,6 +347,10 @@ target_include_directories(BFVRMainMenuOverlayTests PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}")
 target_include_directories(BFVRQuickMenuTests PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}")
+target_include_directories(BFVRRuntimeDiagnosticsTests PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}")
+target_include_directories(BFVRSharedControlChannelTests PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}")
 
 include(CTest)
 if(BUILD_TESTING)
@@ -363,6 +378,12 @@ if(BUILD_TESTING)
   add_test(
     NAME BFVRWorldCrosshairMathTests
     COMMAND BFVRWorldCrosshairMathTests)
+  add_test(
+    NAME BFVRRuntimeDiagnosticsTests
+    COMMAND BFVRRuntimeDiagnosticsTests)
+  add_test(
+    NAME BFVRSharedControlChannelTests
+    COMMAND BFVRSharedControlChannelTests)
 endif()
 
 foreach(target BFVRClient BFVROpenXRProbe)

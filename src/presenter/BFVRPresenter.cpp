@@ -5,6 +5,7 @@
 
 #include <windows.h>
 
+#include <algorithm>
 #include <array>
 #include <cstdio>
 #include <cwchar>
@@ -393,6 +394,7 @@ int RunPresenter(
     const bfvr::OpenXRPresentationTextureRequirements requirements =
         presentation.GetTextureRequirements();
     PublishRequirements(*block, requirements);
+    (void)channel.SignalPresenterUpdate();
     fwprintf(
         g_output,
         L"[PRESENTER] Published x64 requirements: adapter=%08lX:%08lX format=%u eyes=%ux%u/%ux%u UI=%ux%u.\n",
@@ -430,7 +432,10 @@ int RunPresenter(
             presentation.Shutdown();
             return 6;
         }
-        Sleep(5);
+        if (channel.WaitForProducerUpdate(5) == WAIT_FAILED)
+        {
+            Sleep(5);
+        }
     }
 
     bfvr::shared::SharedTextureConsumer consumer;
@@ -462,6 +467,7 @@ int RunPresenter(
     bfvr::shared::PublishState(
         &block->presenterState,
         bfvr::shared::ProcessState::Running);
+    (void)channel.SignalPresenterUpdate();
     LONG consumedSequence = 0;
     bool haveFrame = false;
     bool sampledPixels = false;
@@ -480,10 +486,14 @@ int RunPresenter(
     std::int64_t totalDesktopMirrorQpcTicks = 0;
     std::int64_t totalOpenXrBeginQpcTicks = 0;
     std::int64_t totalOpenXrSubmitOrEndQpcTicks = 0;
+    std::int64_t totalPredictedDisplayPeriod = 0;
+    std::int64_t minimumPredictedDisplayPeriod = 0;
+    std::int64_t maximumPredictedDisplayPeriod = 0;
     LONG sourceConsumeCount = 0;
     LONG desktopMirrorCount = 0;
     LONG openXrBeginCount = 0;
     LONG openXrSubmitOrEndCount = 0;
+    LONG predictedDisplayPeriodCount = 0;
     bool desktopMirrorSourceDirty = false;
     bool quickMenuWasVisibleInMirror = false;
     auto consumeSequence = [&](LONG availableSequence)
@@ -543,6 +553,7 @@ int RunPresenter(
         MemoryBarrier();
         InterlockedExchange(&block->consumedFrameSequence, consumedSequence);
         InterlockedIncrement(&block->transportedFrameCount);
+        (void)channel.SignalPresenterUpdate();
         haveFrame = true;
         if (!sampledPixels)
         {
@@ -619,6 +630,20 @@ int RunPresenter(
         totalOpenXrBeginQpcTicks +=
             ReadPerformanceCounter() - beginStarted;
         ++openXrBeginCount;
+        if (began && frame.predictedDisplayPeriod > 0)
+        {
+            totalPredictedDisplayPeriod += frame.predictedDisplayPeriod;
+            minimumPredictedDisplayPeriod =
+                minimumPredictedDisplayPeriod == 0
+                ? frame.predictedDisplayPeriod
+                : (std::min)(
+                    minimumPredictedDisplayPeriod,
+                    frame.predictedDisplayPeriod);
+            maximumPredictedDisplayPeriod = (std::max)(
+                maximumPredictedDisplayPeriod,
+                frame.predictedDisplayPeriod);
+            ++predictedDisplayPeriodCount;
+        }
         return began;
     };
     const auto renderDesktopMirror = [&] (
@@ -670,7 +695,73 @@ int RunPresenter(
         return beginFrame(frame) &&
             endFrame(consumer.GetLocalTextures(), frame);
     };
+    const auto reportPerformance = [&](const wchar_t* label)
+    {
+        LARGE_INTEGER frequency = {};
+        if (!QueryPerformanceFrequency(&frequency) || frequency.QuadPart <= 0)
+        {
+            return;
+        }
+        const double millisecondsPerTick =
+            1000.0 / static_cast<double>(frequency.QuadPart);
+        const auto averageMilliseconds = [millisecondsPerTick](
+            std::int64_t ticks,
+            LONG count)
+        {
+            return count > 0
+                ? static_cast<double>(ticks) * millisecondsPerTick /
+                    static_cast<double>(count)
+                : 0.0;
+        };
+        const LONG submittedFrames = InterlockedCompareExchange(
+            &block->presentedFrameCount,
+            0,
+            0);
+        const LONG reusedFrames = submittedFrames > sourceConsumeCount
+            ? submittedFrames - sourceConsumeCount
+            : 0;
+        const double averagePeriodNanoseconds =
+            predictedDisplayPeriodCount > 0
+            ? static_cast<double>(totalPredictedDisplayPeriod) /
+                static_cast<double>(predictedDisplayPeriodCount)
+            : 0.0;
+        const double runtimeRefreshHz = averagePeriodNanoseconds > 0.0
+            ? 1000000000.0 / averagePeriodNanoseconds
+            : 0.0;
+        fwprintf(
+            g_output,
+            L"[PRESENTER] %s stage timing: sourceConsume=%.3f ms/source (n=%ld) desktopMirror=%.3f ms/render (n=%ld) xrBegin=%.3f ms/call (n=%ld) xrSubmitOrEnd=%.3f ms/call (n=%ld).\n",
+            label,
+            averageMilliseconds(totalSourceConsumeQpcTicks, sourceConsumeCount),
+            sourceConsumeCount,
+            averageMilliseconds(totalDesktopMirrorQpcTicks, desktopMirrorCount),
+            desktopMirrorCount,
+            averageMilliseconds(totalOpenXrBeginQpcTicks, openXrBeginCount),
+            openXrBeginCount,
+            averageMilliseconds(
+                totalOpenXrSubmitOrEndQpcTicks,
+                openXrSubmitOrEndCount),
+            openXrSubmitOrEndCount);
+        fwprintf(
+            g_output,
+            L"[PRESENTER] %s runtime cadence: predictedPeriod=%.3f ms (%.2f Hz, min=%.3f max=%.3f, n=%ld) newSourceFrames=%ld submittedFrames=%ld reusedSubmissions=%ld (%.1f%%). Reuse means the headset received the last complete image because no newer BFVR stereo frame was ready.\n",
+            label,
+            averagePeriodNanoseconds / 1000000.0,
+            runtimeRefreshHz,
+            static_cast<double>(minimumPredictedDisplayPeriod) / 1000000.0,
+            static_cast<double>(maximumPredictedDisplayPeriod) / 1000000.0,
+            predictedDisplayPeriodCount,
+            sourceConsumeCount,
+            submittedFrames,
+            reusedFrames,
+            submittedFrames > 0
+                ? 100.0 * static_cast<double>(reusedFrames) /
+                    static_cast<double>(submittedFrames)
+                : 0.0);
+        fflush(g_output);
+    };
     const DWORD startedAt = GetTickCount();
+    DWORD lastPerformanceReportAt = startedAt;
     while ((runUntilStopped ||
             GetTickCount() - startedAt < durationMs) &&
         InterlockedCompareExchange(
@@ -679,6 +770,12 @@ int RunPresenter(
             0) == 0 &&
         producerIsAlive())
     {
+        const DWORD performanceNow = GetTickCount();
+        if (performanceNow - lastPerformanceReportAt >= 30000)
+        {
+            reportPerformance(L"Periodic");
+            lastPerformanceReportAt = performanceNow;
+        }
         desktopMirror.PumpMessages();
         if (!presentation.PollEvents())
         {
@@ -704,6 +801,7 @@ int RunPresenter(
                     InterlockedExchange(
                         &block->renderedFrameSequence,
                         pendingSourceSequence);
+                    (void)channel.SignalPresenterUpdate();
                     if (sourceGapReported)
                     {
                         fwprintf(
@@ -757,7 +855,10 @@ int RunPresenter(
                 }
                 else
                 {
-                    Sleep(2);
+                    if (channel.WaitForProducerUpdate(2) == WAIT_FAILED)
+                    {
+                        Sleep(2);
+                    }
                 }
                 continue;
             }
@@ -767,7 +868,10 @@ int RunPresenter(
             if (!presentation.IsSessionRunning() ||
                 readySequence == completedRenderRequest)
             {
-                Sleep(1);
+                if (channel.WaitForProducerUpdate(2) == WAIT_FAILED)
+                {
+                    Sleep(1);
+                }
                 continue;
             }
 
@@ -783,6 +887,7 @@ int RunPresenter(
                 continue;
             }
             PublishRenderRequest(*block, readySequence, frame);
+            (void)channel.SignalPresenterUpdate();
 
             const DWORD renderWaitStarted = GetTickCount();
             LONG availableSequence = 0;
@@ -800,7 +905,15 @@ int RunPresenter(
                 {
                     break;
                 }
-                Sleep(1);
+                const DWORD elapsed = GetTickCount() - renderWaitStarted;
+                const DWORD remaining = sourceWaitLimit > elapsed
+                    ? sourceWaitLimit - elapsed
+                    : 0;
+                const DWORD waitSlice = (std::min)(remaining, 20UL);
+                if (channel.WaitForProducerUpdate(waitSlice) == WAIT_FAILED)
+                {
+                    Sleep((std::min)(remaining, 1UL));
+                }
             }
             if (availableSequence != readySequence)
             {
@@ -845,6 +958,7 @@ int RunPresenter(
             }
             InterlockedIncrement(&block->presentedFrameCount);
             InterlockedExchange(&block->renderedFrameSequence, readySequence);
+            (void)channel.SignalPresenterUpdate();
             completedRenderRequest = readySequence;
             continue;
         }
@@ -868,7 +982,10 @@ int RunPresenter(
         }
         else
         {
-            Sleep(2);
+            if (channel.WaitForProducerUpdate(2) == WAIT_FAILED)
+            {
+                Sleep(2);
+            }
         }
     }
 
@@ -880,35 +997,7 @@ int RunPresenter(
     presentation.Shutdown();
     const LONG presentedFrames =
         InterlockedCompareExchange(&block->presentedFrameCount, 0, 0);
-    LARGE_INTEGER frequency = {};
-    if (QueryPerformanceFrequency(&frequency) && frequency.QuadPart > 0)
-    {
-        const double millisecondsPerTick =
-            1000.0 / static_cast<double>(frequency.QuadPart);
-        const auto averageMilliseconds = [millisecondsPerTick](
-            std::int64_t ticks,
-            LONG count)
-        {
-            return count > 0
-                ? static_cast<double>(ticks) * millisecondsPerTick /
-                    static_cast<double>(count)
-                : 0.0;
-        };
-        fwprintf(
-            g_output,
-            L"[PRESENTER] Stage timing: sourceConsume=%.3f ms/source (n=%ld) desktopMirror=%.3f ms/render (n=%ld) xrBegin=%.3f ms/call (n=%ld) xrSubmitOrEnd=%.3f ms/call (n=%ld).\n",
-            averageMilliseconds(totalSourceConsumeQpcTicks, sourceConsumeCount),
-            sourceConsumeCount,
-            averageMilliseconds(totalDesktopMirrorQpcTicks, desktopMirrorCount),
-            desktopMirrorCount,
-            averageMilliseconds(totalOpenXrBeginQpcTicks, openXrBeginCount),
-            openXrBeginCount,
-            averageMilliseconds(
-                totalOpenXrSubmitOrEndQpcTicks,
-                openXrSubmitOrEndCount),
-            openXrSubmitOrEndCount);
-        fflush(g_output);
-    }
+    reportPerformance(L"Final");
     const bool succeeded = healthy && consumedSequence > 0 && presentedFrames > 0;
     if (!succeeded)
     {
@@ -919,6 +1008,7 @@ int RunPresenter(
         succeeded
             ? bfvr::shared::ProcessState::Stopped
             : bfvr::shared::ProcessState::Failed);
+    (void)channel.SignalPresenterUpdate();
     fwprintf(
         g_output,
         L"[PRESENTER] Exit summary: healthy=%d consumedSequence=%ld presentedFrames=%ld.\n",

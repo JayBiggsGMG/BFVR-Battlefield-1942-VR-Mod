@@ -15,7 +15,8 @@ void StartD3D8StereoPairProbe(const D3D8ObserverCallbacks& callbacks);
 // over one bounded Present-to-Present window into frame-lived BFVR-owned eye
 // targets. Perspective geometry receives stereo transforms; pretransformed
 // and non-perspective work keeps the game's transforms in both eyes. RTT and
-// depthless targets are excluded, and every draw verifies exact restoration.
+// depthless targets are excluded, and every draw restores required state.
+// Deep runtime diagnostics additionally verifies that state through readback.
 void StartD3D8StereoFrameProbe(const D3D8ObserverCallbacks& callbacks);
 
 // Runs a bounded continuous form of the same partition through the x64 OpenXR

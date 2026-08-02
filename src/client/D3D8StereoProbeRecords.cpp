@@ -154,6 +154,9 @@ void AccumulateContinuousPresentationFrame(
     InterlockedExchangeAdd(&run.totalWorldDraws, frame.worldEyeDraws);
     InterlockedExchangeAdd(&run.totalUiDraws, frame.menuLayerDraws);
     InterlockedExchangeAdd(&run.totalRestoreChecks, frame.restoreChecks);
+    InterlockedExchangeAdd(
+        &run.totalRestoreVerifications,
+        frame.restoreVerifications);
     InterlockedExchangeAdd(&run.totalRestoreFailures, frame.restoreFailures);
     InterlockedExchangeAdd(
         &run.totalTreeRendererBillboardDraws,
@@ -174,8 +177,30 @@ void AccumulateContinuousPresentationFrame(
         &run.totalTranslucentSpriteDraws,
         frame.translucentSpriteDraws);
     run.totalReplayQpcTicks += frame.replayQpcTicks;
+    run.totalPreparationQpcTicks += frame.preparationQpcTicks;
+    run.totalEyeOrLayerDrawQpcTicks += frame.eyeOrLayerDrawQpcTicks;
+    run.totalRestoreWriteQpcTicks += frame.restoreWriteQpcTicks;
+    run.totalRestoreVerifyQpcTicks += frame.restoreVerifyQpcTicks;
+    run.totalProvenanceQpcTicks += frame.provenanceQpcTicks;
     run.totalReadbackQpcTicks += frame.readbackQpcTicks;
     run.totalUploadQpcTicks += frame.uploadQpcTicks;
+    LARGE_INTEGER completedAt = {};
+    if (QueryPerformanceCounter(&completedAt))
+    {
+        if (run.lastCompletedFrameQpc != 0)
+        {
+            run.framePacingQpcTicks[run.framePacingSampleWriteIndex] =
+                completedAt.QuadPart - run.lastCompletedFrameQpc;
+            run.framePacingSampleWriteIndex =
+                (run.framePacingSampleWriteIndex + 1) %
+                kFramePacingSampleCount;
+            if (run.framePacingSamplesStored < kFramePacingSampleCount)
+            {
+                ++run.framePacingSamplesStored;
+            }
+        }
+        run.lastCompletedFrameQpc = completedAt.QuadPart;
+    }
     if (run.firstSequence == 0)
     {
         run.firstSequence = sequence;

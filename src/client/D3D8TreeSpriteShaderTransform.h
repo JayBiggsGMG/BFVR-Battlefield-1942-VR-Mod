@@ -55,9 +55,14 @@ PrepareD3D8TreeSpriteShaderTransforms(
     const D3D8TreeSpriteShaderTransformState& state,
     std::size_t eye) noexcept;
 
-// Restores and byte-verifies c0-c7. Tree/light/fade constants c8 and later
-// are never modified by BFVR.
-[[nodiscard]] bool RestoreAndVerifyD3D8TreeSpriteShaderConstants(
+// Restores c0-c7. Tree/light/fade constants c8 and later are never modified by
+// BFVR. Deep diagnostics may verify the restored block separately.
+[[nodiscard]] bool RestoreD3D8TreeSpriteShaderConstants(
+    const D3D8VertexShaderConstantApi& api,
+    void* device,
+    const D3D8TreeSpriteShaderTransformState& state) noexcept;
+
+[[nodiscard]] bool VerifyD3D8TreeSpriteShaderConstants(
     const D3D8VertexShaderConstantApi& api,
     void* device,
     const D3D8TreeSpriteShaderTransformState& state) noexcept;

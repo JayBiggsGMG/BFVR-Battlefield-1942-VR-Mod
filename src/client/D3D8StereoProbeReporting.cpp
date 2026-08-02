@@ -1,5 +1,8 @@
 #include "client/D3D8StereoProbeReporting.h"
 
+#include <algorithm>
+#include <array>
+
 namespace bfvr::d3d8probe
 {
 
@@ -158,7 +161,7 @@ void ReportStereoFrameResult(
     StereoFrameRecord& frame)
 {
     appendLog(
-        L"D3D8 full-draw-frame stereo result: state=%ld device=%p thread=%lu mirroredDraws=%ld mirroredPrimitives=%ld excludedTargetDraws=%ld boundedSkips=%ld restoreChecks=%ld restoreFailures=%ld allRestorationsExact=%d sourceReleaseChecks=%ld sourceReleaseFailures=%ld resetAborted=%ld resetResult=0x%08lX.",
+        L"D3D8 full-draw-frame stereo result: state=%ld device=%p thread=%lu mirroredDraws=%ld mirroredPrimitives=%ld excludedTargetDraws=%ld boundedSkips=%ld restoreChecks=%ld restoreVerifications=%ld restoreFailures=%ld allRestorationsAccepted=%d sourceReleaseChecks=%ld sourceReleaseFailures=%ld resetAborted=%ld resetResult=0x%08lX.",
         InterlockedCompareExchange(&record.state, 0, 0),
         record.device,
         record.deviceThreadId,
@@ -167,8 +170,9 @@ void ReportStereoFrameResult(
         InterlockedCompareExchange(&frame.excludedTargetDraws, 0, 0),
         InterlockedCompareExchange(&frame.boundedDrawSkips, 0, 0),
         InterlockedCompareExchange(&frame.restoreChecks, 0, 0),
+        InterlockedCompareExchange(&frame.restoreVerifications, 0, 0),
         InterlockedCompareExchange(&frame.restoreFailures, 0, 0),
-        frame.allRestorationsExact,
+        frame.allRestorationsAccepted,
         InterlockedCompareExchange(&frame.sourceReleaseChecks, 0, 0),
         InterlockedCompareExchange(&frame.sourceReleaseFailures, 0, 0),
         InterlockedCompareExchange(&frame.resetAborted, 0, 0),
@@ -184,7 +188,7 @@ void ReportStereoFrameResult(
         InterlockedCompareExchange(&frame.excludedByKind[2], 0, 0),
         InterlockedCompareExchange(&frame.excludedByKind[3], 0, 0));
     appendLog(
-        L"D3D8 full-draw-frame transform policy: stereoPerspective=%ld monoPretransformed=%ld monoNonPerspective=%ld skyboxCubeFaces=%ld billboardBatches=%ld treeMeshAlphaBlocks=%ld treeMeshProgrammableSprites=%ld animatedMeshSkinning=%ld waterSurfaces=%ld headCenteredWaterReflections=%ld translucentSprites=%ld ref2FontGlyphBatches=%ld ref2MenuQuads=%ld vertexShaderReadFailures=%ld skinningPrepareFailures=%ld skinningSourceMismatches=%ld skinningApplyFailures=%ld spritePrepareFailures=%ld spriteSourceMismatches=%ld spriteApplyFailures=%ld treeSpritePrepareFailures=%ld treeSpriteSourceMismatches=%ld treeSpriteApplyFailures=%ld renderStateReadFailures=%ld provenanceSites=%ld/%zu provenanceOverflow=%ld. Exact WinPC water uses its normal stereo replay except for the directly evidenced additive reflection pass: that pass uses the tracked head-centre View while retaining each eye's projection, preventing its fixed-function camera-space reflection vector from diverging per eye without pinning it to BF1942's flat source camera. Set BFVR_STEREO_WATER_REFLECTION=1 to restore the legacy fully stereo reflection path; exact SkinningShader2Bones draws receive per-eye c0-c3 world-view-projection constants, exact translated TranslucentBucketDB sprites receive per-eye c0-c7 plus c9 camera constants, and exact TreeMesh programmable sprites receive per-eye c0-c7 constants, all with restoration verification.",
+        L"D3D8 full-draw-frame transform policy: stereoPerspective=%ld monoPretransformed=%ld monoNonPerspective=%ld skyboxCubeFaces=%ld billboardBatches=%ld treeMeshAlphaBlocks=%ld treeMeshProgrammableSprites=%ld animatedMeshSkinning=%ld waterSurfaces=%ld headCenteredWaterReflections=%ld translucentSprites=%ld ref2FontGlyphBatches=%ld ref2MenuQuads=%ld vertexShaderReadFailures=%ld skinningPrepareFailures=%ld skinningSourceMismatches=%ld skinningApplyFailures=%ld spritePrepareFailures=%ld spriteSourceMismatches=%ld spriteApplyFailures=%ld treeSpritePrepareFailures=%ld treeSpriteSourceMismatches=%ld treeSpriteApplyFailures=%ld renderStateReadFailures=%ld provenanceSites=%ld/%zu provenanceOverflow=%ld. Exact WinPC water uses its normal stereo replay except for the directly evidenced additive reflection pass: that pass uses the tracked head-centre View while retaining each eye's projection, preventing its fixed-function camera-space reflection vector from diverging per eye without pinning it to BF1942's flat source camera. Set BFVR_STEREO_WATER_REFLECTION=1 to restore the legacy fully stereo reflection path; exact SkinningShader2Bones draws receive per-eye c0-c3 world-view-projection constants, exact translated TranslucentBucketDB sprites receive per-eye c0-c7 plus c9 camera constants, and exact TreeMesh programmable sprites receive per-eye c0-c7 constants. All receive required restoration; deep diagnostics additionally reads the restored registers back for exact verification.",
         InterlockedCompareExchange(&frame.stereoPerspectiveDraws, 0, 0),
         InterlockedCompareExchange(&frame.monoPretransformedDraws, 0, 0),
         InterlockedCompareExchange(&frame.monoNonPerspectiveDraws, 0, 0),
@@ -376,7 +380,7 @@ void ReportContinuousPresentationResult(
     UINT worldHeight)
 {
     appendLog(
-        L"D3D8 OpenXR continuous handoff: sequences=%ld..%ld nativeWorld=%ux%u published=%ld presented=%ld failed=%ld draws=%ld world=%ld UI=%ld restorations=%ld/%ld. Runtime centre-head pose drives RenderView while residual eye poses and asymmetric FOV drive D3D8 replay.",
+        L"D3D8 OpenXR continuous handoff: sequences=%ld..%ld nativeWorld=%ux%u published=%ld presented=%ld failed=%ld draws=%ld world=%ld UI=%ld restorationWrites=%ld/%ld deepVerifications=%ld. Runtime centre-head pose drives RenderView while residual eye poses and asymmetric FOV drive D3D8 replay.",
         run.firstSequence,
         run.lastSequence,
         worldWidth,
@@ -388,7 +392,8 @@ void ReportContinuousPresentationResult(
         run.totalWorldDraws,
         run.totalUiDraws,
         run.totalRestoreChecks - run.totalRestoreFailures,
-        run.totalRestoreChecks);
+        run.totalRestoreChecks,
+        run.totalRestoreVerifications);
     appendLog(
         L"D3D8 OpenXR session geometry families: treeRendererBillboards=%ld treeMeshAlphaBlocks=%ld treeMeshProgrammableSprites=%ld animatedMeshSkinning=%ld firstPersonArmsSuppressed=%ld translucentSprites=%ld. These are accumulated across every presented world frame, including frames before a menu exit.",
         run.totalTreeRendererBillboardDraws,
@@ -408,6 +413,9 @@ void ReportContinuousPresentationResult(
     const double millisecondsPerTick =
         1000.0 / static_cast<double>(frequency.QuadPart);
     const double frameCount = static_cast<double>(run.presentedFrames);
+    const LONG originalPresentCalls = run.originalPresentCalls;
+    const double presentCallCount = static_cast<double>(
+        originalPresentCalls > 0 ? originalPresentCalls : 1);
     appendLog(
         run.gpuResidentTransport
             ? L"D3D8 OpenXR GPU-resident stage timing: replay=%.3f ms/frame readback=%.3f ms/frame gpuSyncPublish=%.3f ms/frame consumeWait=%.3f ms/frame nextRequestWait=%.3f ms/frame."
@@ -422,6 +430,47 @@ void ReportContinuousPresentationResult(
             millisecondsPerTick / frameCount,
         static_cast<double>(run.totalRequestWaitQpcTicks) *
             millisecondsPerTick / frameCount);
+    appendLog(
+        L"D3D8 OpenXR replay detail: prepare=%.3f ms/frame eyeOrUiDraw=%.3f ms/frame restoreWrites=%.3f ms/frame deepRestoreReadback=%.3f ms/frame deepProvenance=%.3f ms/frame nativePresent=%.3f ms/call (%ld calls). Normal diagnostics always restores state but skips the two deep proof-readback stages.",
+        static_cast<double>(run.totalPreparationQpcTicks) *
+            millisecondsPerTick / frameCount,
+        static_cast<double>(run.totalEyeOrLayerDrawQpcTicks) *
+            millisecondsPerTick / frameCount,
+        static_cast<double>(run.totalRestoreWriteQpcTicks) *
+            millisecondsPerTick / frameCount,
+        static_cast<double>(run.totalRestoreVerifyQpcTicks) *
+            millisecondsPerTick / frameCount,
+        static_cast<double>(run.totalProvenanceQpcTicks) *
+            millisecondsPerTick / frameCount,
+        static_cast<double>(run.totalOriginalPresentQpcTicks) *
+            millisecondsPerTick / presentCallCount,
+        originalPresentCalls);
+
+    if (run.framePacingSamplesStored != 0)
+    {
+        std::array<std::int64_t, kFramePacingSampleCount> samples = {};
+        std::copy_n(
+            run.framePacingQpcTicks,
+            run.framePacingSamplesStored,
+            samples.begin());
+        std::sort(
+            samples.begin(),
+            samples.begin() + run.framePacingSamplesStored);
+        const auto percentile = [&samples, &run](double fraction)
+        {
+            const std::size_t index = static_cast<std::size_t>(
+                fraction * static_cast<double>(run.framePacingSamplesStored - 1));
+            return samples[index];
+        };
+        appendLog(
+            L"D3D8 OpenXR new-frame pacing over the latest %zu intervals: median=%.3f ms p95=%.3f ms p99=%.3f ms worst=%.3f ms. These intervals measure completed new BFVR stereo frames, not vanilla BF1942's frame rate.",
+            run.framePacingSamplesStored,
+            static_cast<double>(percentile(0.50)) * millisecondsPerTick,
+            static_cast<double>(percentile(0.95)) * millisecondsPerTick,
+            static_cast<double>(percentile(0.99)) * millisecondsPerTick,
+            static_cast<double>(samples[run.framePacingSamplesStored - 1]) *
+                millisecondsPerTick);
+    }
 }
 
 } // namespace bfvr::d3d8probe

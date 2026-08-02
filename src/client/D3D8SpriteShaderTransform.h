@@ -54,9 +54,14 @@ struct D3D8SpriteShaderTransformState
     const D3D8SpriteShaderTransformState& state,
     std::size_t eye) noexcept;
 
-// Restores and verifies c0-c9. c10 and all later engine constants are never
-// modified by BFVR.
-[[nodiscard]] bool RestoreAndVerifyD3D8SpriteShaderConstants(
+// Restores c0-c9. c10 and all later engine constants are never modified by
+// BFVR. Deep diagnostics may verify the restored block separately.
+[[nodiscard]] bool RestoreD3D8SpriteShaderConstants(
+    const D3D8VertexShaderConstantApi& api,
+    void* device,
+    const D3D8SpriteShaderTransformState& state) noexcept;
+
+[[nodiscard]] bool VerifyD3D8SpriteShaderConstants(
     const D3D8VertexShaderConstantApi& api,
     void* device,
     const D3D8SpriteShaderTransformState& state) noexcept;

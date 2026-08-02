@@ -126,7 +126,7 @@ HRESULT ApplyD3D8SkinningShaderEye(
     return api.setConstants(device, 0, &state.eyeConstants[eye], 4);
 }
 
-bool RestoreAndVerifyD3D8SkinningShaderConstants(
+bool RestoreD3D8SkinningShaderConstants(
     const D3D8VertexShaderConstantApi& api,
     void* device,
     const D3D8SkinningShaderTransformState& state) noexcept
@@ -136,14 +136,26 @@ bool RestoreAndVerifyD3D8SkinningShaderConstants(
         return true;
     }
     if (device == nullptr ||
-        api.setConstants == nullptr ||
-        api.getConstants == nullptr ||
-        FAILED(api.setConstants(device, 0, &state.originalConstants, 4)))
+        api.setConstants == nullptr)
     {
         return false;
     }
+    return SUCCEEDED(api.setConstants(device, 0, &state.originalConstants, 4));
+}
+
+bool VerifyD3D8SkinningShaderConstants(
+    const D3D8VertexShaderConstantApi& api,
+    void* device,
+    const D3D8SkinningShaderTransformState& state) noexcept
+{
+    if (!state.prepared)
+    {
+        return true;
+    }
     D3DMatrix actual = {};
-    return SUCCEEDED(api.getConstants(device, 0, &actual, 4)) &&
+    return device != nullptr &&
+        api.getConstants != nullptr &&
+        SUCCEEDED(api.getConstants(device, 0, &actual, 4)) &&
         std::memcmp(&actual, &state.originalConstants, sizeof(actual)) == 0;
 }
 

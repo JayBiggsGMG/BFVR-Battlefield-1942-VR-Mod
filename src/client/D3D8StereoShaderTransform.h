@@ -54,9 +54,15 @@ struct D3D8SkinningShaderTransformState
     const D3D8SkinningShaderTransformState& state,
     std::size_t eye) noexcept;
 
-// Restores c0-c3 and reads them back byte-for-byte. Registers c4 onward are
-// never touched by BFVR, preserving the engine's fog, lighting, and bones.
-[[nodiscard]] bool RestoreAndVerifyD3D8SkinningShaderConstants(
+// Restores c0-c3. Registers c4 onward are never touched by BFVR, preserving
+// the engine's fog, lighting, and bones. Deep diagnostics may verify the
+// restored registers through the separate read-only function.
+[[nodiscard]] bool RestoreD3D8SkinningShaderConstants(
+    const D3D8VertexShaderConstantApi& api,
+    void* device,
+    const D3D8SkinningShaderTransformState& state) noexcept;
+
+[[nodiscard]] bool VerifyD3D8SkinningShaderConstants(
     const D3D8VertexShaderConstantApi& api,
     void* device,
     const D3D8SkinningShaderTransformState& state) noexcept;

@@ -178,7 +178,7 @@ HRESULT ApplyD3D8SpriteShaderEye(
     return result;
 }
 
-bool RestoreAndVerifyD3D8SpriteShaderConstants(
+bool RestoreD3D8SpriteShaderConstants(
     const D3D8VertexShaderConstantApi& api,
     void* device,
     const D3D8SpriteShaderTransformState& state) noexcept
@@ -188,23 +188,34 @@ bool RestoreAndVerifyD3D8SpriteShaderConstants(
         return true;
     }
     if (device == nullptr ||
-        api.setConstants == nullptr ||
-        api.getConstants == nullptr ||
-        FAILED(api.setConstants(
-            device,
-            0,
-            &state.originalRegisters,
-            kD3D8SpriteShaderRegisterCount)))
+        api.setConstants == nullptr)
     {
         return false;
     }
+    return SUCCEEDED(api.setConstants(
+        device,
+        0,
+        &state.originalRegisters,
+        kD3D8SpriteShaderRegisterCount));
+}
 
+bool VerifyD3D8SpriteShaderConstants(
+    const D3D8VertexShaderConstantApi& api,
+    void* device,
+    const D3D8SpriteShaderTransformState& state) noexcept
+{
+    if (!state.prepared)
+    {
+        return true;
+    }
     D3D8SpriteShaderRegisterBlock actual = {};
-    return SUCCEEDED(api.getConstants(
-               device,
-               0,
-               &actual,
-               kD3D8SpriteShaderRegisterCount)) &&
+    return device != nullptr &&
+        api.getConstants != nullptr &&
+        SUCCEEDED(api.getConstants(
+            device,
+            0,
+            &actual,
+            kD3D8SpriteShaderRegisterCount)) &&
         std::memcmp(
             &actual,
             &state.originalRegisters,

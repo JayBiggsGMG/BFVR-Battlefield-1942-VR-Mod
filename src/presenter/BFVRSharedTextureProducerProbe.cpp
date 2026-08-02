@@ -3,6 +3,7 @@
 
 #include <windows.h>
 
+#include <algorithm>
 #include <array>
 #include <cstdio>
 #include <cwchar>
@@ -208,6 +209,7 @@ int RunProbe(
             bfvr::shared::PublishState(
                 &block->producerState,
                 bfvr::shared::ProcessState::TexturesReady);
+            (void)channel.SignalProducerUpdate();
 
             bool healthy = true;
             const DWORD startedAt = GetTickCount();
@@ -223,6 +225,7 @@ int RunProbe(
                 {
                     frameSequence =
                         InterlockedIncrement(&block->renderReadySequence);
+                    (void)channel.SignalProducerUpdate();
                     const DWORD requestWaitStarted = GetTickCount();
                     while (GetTickCount() - requestWaitStarted < 1000 &&
                         InterlockedCompareExchange(
@@ -230,7 +233,15 @@ int RunProbe(
                             0,
                             0) != frameSequence)
                     {
-                        Sleep(1);
+                        const DWORD elapsed =
+                            GetTickCount() - requestWaitStarted;
+                        const DWORD remaining =
+                            elapsed < 1000 ? 1000 - elapsed : 0;
+                        if (channel.WaitForPresenterUpdate(
+                                (std::min)(remaining, 20UL)) == WAIT_FAILED)
+                        {
+                            Sleep((std::min)(remaining, 1UL));
+                        }
                     }
                     if (InterlockedCompareExchange(
                             &block->renderRequestSequence,
@@ -262,6 +273,7 @@ int RunProbe(
                 if (runtimeTimed)
                 {
                     InterlockedExchange(&block->frameSequence, frameSequence);
+                    (void)channel.SignalProducerUpdate();
                     const DWORD submitWaitStarted = GetTickCount();
                     while (GetTickCount() - submitWaitStarted < 1000 &&
                         InterlockedCompareExchange(
@@ -269,7 +281,15 @@ int RunProbe(
                             0,
                             0) != frameSequence)
                     {
-                        Sleep(1);
+                        const DWORD elapsed =
+                            GetTickCount() - submitWaitStarted;
+                        const DWORD remaining =
+                            elapsed < 1000 ? 1000 - elapsed : 0;
+                        if (channel.WaitForPresenterUpdate(
+                                (std::min)(remaining, 20UL)) == WAIT_FAILED)
+                        {
+                            Sleep((std::min)(remaining, 1UL));
+                        }
                     }
                     if (InterlockedCompareExchange(
                             &block->renderedFrameSequence,
@@ -283,6 +303,7 @@ int RunProbe(
                 else
                 {
                     InterlockedIncrement(&block->frameSequence);
+                    (void)channel.SignalProducerUpdate();
                 }
                 Sleep(2);
             }
@@ -323,6 +344,7 @@ int RunProbe(
         &block->producerState,
         bfvr::shared::ProcessState::Stopping);
     InterlockedExchange(&block->shutdownRequested, 1);
+    (void)channel.SignalProducerUpdate();
     const DWORD presenterWait = WaitForSingleObject(presenterProcess.hProcess, 5000);
     if (presenterWait == WAIT_TIMEOUT)
     {

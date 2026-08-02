@@ -215,7 +215,7 @@ bool CreateAndClearFrameResources(void* device, const DrawStateSnapshot& snapsho
         }
     }
 
-    const bool restored = RestoreAndVerifyFrameState(device, snapshot);
+    const bool restored = RestoreFrameState(device, snapshot);
     if (!created || !cleared || !restored)
     {
         ReleaseFrameOwnedResources();
