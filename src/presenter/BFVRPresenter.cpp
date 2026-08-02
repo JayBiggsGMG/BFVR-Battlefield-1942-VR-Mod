@@ -210,6 +210,7 @@ UINT QuickMenuVirtualKey(
     case QuickMenuSelection::CameraF10: return VK_F10;
     case QuickMenuSelection::CameraF11: return VK_F11;
     case QuickMenuSelection::CameraF12: return VK_F12;
+    case QuickMenuSelection::MapToggle: return 'M';
     default: return 0;
     }
 }
@@ -621,9 +622,7 @@ int RunPresenter(
             return;
         }
         if (selection ==
-                bfvr::stereo::QuickMenuSelection::UtilityPlaceholder2 ||
-            selection ==
-                bfvr::stereo::QuickMenuSelection::UtilityPlaceholder3)
+            bfvr::stereo::QuickMenuSelection::VrSettings)
         {
             fwprintf(
                 g_output,

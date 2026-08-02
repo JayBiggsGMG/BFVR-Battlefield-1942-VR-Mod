@@ -100,6 +100,11 @@ if(BFVR_PRESENTER_ONLY)
       "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_frame.png"
       "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_text.png"
       "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_Cursor.png"
+      "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_stripBG.png"
+      "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_stripDecoupleHover.png"
+      "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_stripMapHover.png"
+      "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_stripSettingsHover.png"
+      "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_stripText.png"
         "$<TARGET_FILE_DIR:${target}>/assets")
   endforeach()
   return()
@@ -433,6 +438,11 @@ add_custom_command(TARGET BFVRClient POST_BUILD
     "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_frame.png"
     "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_text.png"
     "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_Cursor.png"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_stripBG.png"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_stripDecoupleHover.png"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_stripMapHover.png"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_stripSettingsHover.png"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_stripText.png"
     "${CMAKE_CURRENT_SOURCE_DIR}/../assets/Crosshair.png"
     "${CMAKE_CURRENT_SOURCE_DIR}/../assets/HitMarker.png"
     "$<TARGET_FILE_DIR:BFVRClient>/assets")

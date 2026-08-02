@@ -97,9 +97,9 @@ bool TestBounds()
         bfvr::stereo::QuickMenuUtilitySelectionAt(0.0F, 0.5F) ==
             QuickMenuSelection::MountedCameraDecouple &&
         bfvr::stereo::QuickMenuUtilitySelectionAt(0.5F, 0.5F) ==
-            QuickMenuSelection::UtilityPlaceholder2 &&
+            QuickMenuSelection::MapToggle &&
         bfvr::stereo::QuickMenuUtilitySelectionAt(1.0F, 0.5F) ==
-            QuickMenuSelection::UtilityPlaceholder3 &&
+            QuickMenuSelection::VrSettings &&
         bfvr::stereo::QuickMenuUtilitySelectionAt(0.5F, -0.1F) ==
             QuickMenuSelection::None;
 }
@@ -114,9 +114,8 @@ bool TestPhysicalSize()
         NearlyEqual(
                bfvr::stereo::kQuickMenuHeightMeters,
                initialPanelSizeMeters * requestedScale) &&
-        bfvr::stereo::kQuickMenuUtilityTextureWidth %
-                bfvr::stereo::kQuickMenuUtilityButtonCount ==
-            0 &&
+        bfvr::stereo::kQuickMenuUtilityTextureWidth == 512 &&
+        bfvr::stereo::kQuickMenuUtilityTextureHeight == 64 &&
         bfvr::stereo::kQuickMenuUtilityHeightMeters > 0.0F;
 }
 
@@ -204,6 +203,22 @@ bool TestInteraction()
     interaction.Update(input);
     const auto opened = interaction.Snapshot();
     if (!opened.visible)
+    {
+        return false;
+    }
+    if (!NearlyEqual(
+            opened.panelPose.position.x,
+            input.rightGripPose.position.x) ||
+        !NearlyEqual(
+            opened.panelPose.position.y,
+            input.rightGripPose.position.y + 0.09F) ||
+        !NearlyEqual(
+            opened.panelPose.position.z,
+            input.rightGripPose.position.z -
+                bfvr::stereo::kQuickMenuHandForwardOffsetMeters) ||
+        !NearlyEqual(
+            bfvr::stereo::kQuickMenuHandForwardOffsetMeters,
+            0.16F + 0.33F))
     {
         return false;
     }
@@ -435,6 +450,8 @@ bool TestArt(const wchar_t* assetsDirectory)
     std::vector<std::uint32_t> utilityOff;
     std::vector<std::uint32_t> utilityOn;
     std::vector<std::uint32_t> utilityHovered;
+    std::vector<std::uint32_t> utilityMapHovered;
+    std::vector<std::uint32_t> utilitySettingsHovered;
     UINT utilityWidth = 0;
     UINT utilityHeight = 0;
     UINT comparedWidth = 0;
@@ -458,9 +475,24 @@ bool TestArt(const wchar_t* assetsDirectory)
             utilityHovered,
             comparedWidth,
             comparedHeight) ||
+        !art.CopyUtilityStripPixels(
+            QuickMenuSelection::MapToggle,
+            false,
+            utilityMapHovered,
+            comparedWidth,
+            comparedHeight) ||
+        !art.CopyUtilityStripPixels(
+            QuickMenuSelection::VrSettings,
+            false,
+            utilitySettingsHovered,
+            comparedWidth,
+            comparedHeight) ||
         utilityWidth != bfvr::stereo::kQuickMenuUtilityTextureWidth ||
         utilityHeight != bfvr::stereo::kQuickMenuUtilityTextureHeight ||
-        utilityOff == utilityOn || utilityOff == utilityHovered)
+        utilityOff == utilityOn || utilityOn != utilityHovered ||
+        utilityOff == utilityMapHovered ||
+        utilityOff == utilitySettingsHovered ||
+        utilityMapHovered == utilitySettingsHovered)
     {
         return false;
     }

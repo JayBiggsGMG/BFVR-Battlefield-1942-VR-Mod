@@ -39,8 +39,6 @@ constexpr std::ptrdiff_t kPlayerManagerGlobalRva = 0x0057D76C;
 constexpr std::size_t kPlayerManagerLocalPlayerOffset = 0x54;
 constexpr std::size_t kBFPlayerIsAliveOffset = 0xA9;
 constexpr DWORD kVisualWeaponPoseMaximumAgeMs = 125;
-constexpr float kMaximumNativeFireToHandDistance = 1.25F;
-constexpr float kMaximumSolvedHandDisplacement = 1.50F;
 constexpr std::size_t kRecordCapacity = 16;
 constexpr BYTE kWeaponFireCorePrefix[] = {
     0x81, 0xEC, 0xB8, 0x01, 0x00, 0x00, 0x53, 0x55,
@@ -283,6 +281,8 @@ private:
         LONG visualControllerGeneration = 0;
         float nativeFireToHandDistance = 0.0F;
         float solvedHandDisplacement = 0.0F;
+        float nativeFireToHandLimit = 0.0F;
+        bool exactCurrentActiveItemReceiver = false;
         if (moveNativeFireOrigin)
         {
             bfvr::NativeArmWeaponVisualPose nativeArmPose = {};
@@ -322,18 +322,27 @@ private:
                 anchorDistances->nativeFireToHand;
             solvedHandDisplacement =
                 anchorDistances->solvedHandDisplacement;
-            if (nativeFireToHandDistance > kMaximumNativeFireToHandDistance ||
-                solvedHandDisplacement > kMaximumSolvedHandDisplacement)
+            exactCurrentActiveItemReceiver =
+                nativeArmPose.activeItem != nullptr &&
+                nativeArmPose.activeItem == weapon;
+            nativeFireToHandLimit =
+                bfvr::stereo::SelectD3D8NativeArmFireToHandLimit(
+                    exactCurrentActiveItemReceiver);
+            if (!bfvr::stereo::IsD3D8NativeArmFireAnchorWithinPolicy(
+                    *anchorDistances,
+                    exactCurrentActiveItemReceiver))
             {
                 InterlockedIncrement(&anchorDistanceRejected);
                 if (InterlockedIncrement(&loggedLocalFallbacks) <= 8)
                 {
                     WriteLog(
-                        L"Local WeaponFire_Core call forwarded unchanged because its native origin is not associated with the solved hand (fireToHand=%.3f m, handDisplacement=%.3f m, limits=%.3f/%.3f m). A cinematic/death/match-start camera matrix is not eligible for the native-arm attachment.",
+                        L"Local WeaponFire_Core call forwarded unchanged because its native origin is not associated with the solved hand (fireToHand=%.3f m, handDisplacement=%.3f m, limits=%.3f/1.500 m, exactActiveItem=%d weapon=%p activeItem=%p). A cinematic/death/match-start camera matrix is not eligible for the native-arm attachment.",
                         nativeFireToHandDistance,
                         solvedHandDisplacement,
-                        kMaximumNativeFireToHandDistance,
-                        kMaximumSolvedHandDisplacement);
+                        nativeFireToHandLimit,
+                        exactCurrentActiveItemReceiver ? 1 : 0,
+                        weapon,
+                        nativeArmPose.activeItem);
                 }
                 originalFire(weapon, actor, matrix, barrelIndex);
                 return;
@@ -386,10 +395,12 @@ private:
         if (InterlockedIncrement(&loggedAdjustedSamples) <= 8)
         {
             WriteLog(
-                L"Controller-directed fire applied direct OpenXR-aim gun pose: generation=%ld fireToHand=%.3f m handDisplacement=%.3f m nativeOrigin=(%.3f,%.3f,%.3f) heldGunOrigin=(%.3f,%.3f,%.3f) nativeForward=(%.5f,%.5f,%.5f) heldGunForward=(%.5f,%.5f,%.5f).",
+                L"Controller-directed fire applied direct OpenXR-aim gun pose: generation=%ld fireToHand=%.3f m handDisplacement=%.3f m nativeLimit=%.3f m exactActiveItem=%d nativeOrigin=(%.3f,%.3f,%.3f) heldGunOrigin=(%.3f,%.3f,%.3f) nativeForward=(%.5f,%.5f,%.5f) heldGunForward=(%.5f,%.5f,%.5f).",
                 visualControllerGeneration,
                 nativeFireToHandDistance,
                 solvedHandDisplacement,
+                nativeFireToHandLimit,
+                exactCurrentActiveItemReceiver ? 1 : 0,
                 nativeMatrix.values[3][0],
                 nativeMatrix.values[3][1],
                 nativeMatrix.values[3][2],

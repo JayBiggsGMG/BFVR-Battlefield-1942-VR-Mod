@@ -594,6 +594,58 @@ bool TestNativeArmFireAnchorDistancesRejectCinematicOrigin()
             "non-rigid hand anchor was accepted");
 }
 
+bool TestNativeArmFireAssociationExtendsOnlyExactActiveItem()
+{
+    constexpr std::string_view test =
+        "native-arm exact active-item fire association";
+    const bfvr::stereo::NativeArmFireAnchorDistances firstSpawn = {
+        1.272F,
+        1.035F};
+    const bfvr::stereo::NativeArmFireAnchorDistances cinematic = {
+        4.50F,
+        1.035F};
+    const bfvr::stereo::NativeArmFireAnchorDistances displacedHand = {
+        0.718F,
+        1.501F};
+
+    return Expect(
+               NearlyEqual(
+                   bfvr::stereo::SelectD3D8NativeArmFireToHandLimit(false),
+                   1.25F),
+               test,
+               "unverified fire no longer uses the original 1.25 m limit") &&
+        Expect(
+            NearlyEqual(
+                bfvr::stereo::SelectD3D8NativeArmFireToHandLimit(true),
+                1.35F),
+            test,
+            "exact active-item fire did not select the bounded 1.35 m limit") &&
+        Expect(
+            !bfvr::stereo::IsD3D8NativeArmFireAnchorWithinPolicy(
+                firstSpawn,
+                false),
+            test,
+            "first-spawn distance was widened without exact item identity") &&
+        Expect(
+            bfvr::stereo::IsD3D8NativeArmFireAnchorWithinPolicy(
+                firstSpawn,
+                true),
+            test,
+            "observed exact-item first-spawn distance remained rejected") &&
+        Expect(
+            !bfvr::stereo::IsD3D8NativeArmFireAnchorWithinPolicy(
+                cinematic,
+                true),
+            test,
+            "multi-metre cinematic origin passed exact-item policy") &&
+        Expect(
+            !bfvr::stereo::IsD3D8NativeArmFireAnchorWithinPolicy(
+                displacedHand,
+                true),
+            test,
+            "solved-hand displacement guard was weakened");
+}
+
 bool TestFireOrientationMatchesSourceViewConjugatedVisualReplay()
 {
     constexpr std::string_view test =
@@ -773,6 +825,7 @@ int main()
         TestLegacyCameraRecoilBecomesHeldWeaponRecoil() &&
         TestNativePositionAndWorldAttachmentArePreserved() &&
         TestNativeArmFireAnchorDistancesRejectCinematicOrigin() &&
+        TestNativeArmFireAssociationExtendsOnlyExactActiveItem() &&
         TestFireOrientationMatchesSourceViewConjugatedVisualReplay() &&
         TestInvalidInputsFailClosed();
     if (!passed)

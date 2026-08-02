@@ -24,8 +24,8 @@ enum class QuickMenuSelection : std::uint32_t
     CameraF11,
     CameraF12,
     MountedCameraDecouple,
-    UtilityPlaceholder2,
-    UtilityPlaceholder3,
+    MapToggle,
+    VrSettings,
     Count
 };
 
@@ -35,14 +35,19 @@ constexpr std::uint32_t kQuickMenuTextureSize = 512;
 // Owner-requested 30% reduction from the initial 0.38 m square panel.
 constexpr float kQuickMenuWidthMeters = 0.266F;
 constexpr float kQuickMenuHeightMeters = 0.266F;
-constexpr std::uint32_t kQuickMenuUtilityTextureWidth = 510;
-constexpr std::uint32_t kQuickMenuUtilityTextureHeight = 108;
+constexpr std::uint32_t kQuickMenuUtilityTextureWidth = 512;
+constexpr std::uint32_t kQuickMenuUtilityTextureHeight = 64;
 constexpr std::size_t kQuickMenuUtilityButtonCount = 3;
+constexpr std::size_t kQuickMenuUtilityVisualCount = 8;
 constexpr float kQuickMenuUtilityGapMeters = 0.010F;
 constexpr float kQuickMenuUtilityHeightMeters =
     kQuickMenuWidthMeters *
     static_cast<float>(kQuickMenuUtilityTextureHeight) /
     static_cast<float>(kQuickMenuUtilityTextureWidth);
+// The panel was originally 0.16 m ahead of the right grip. Moving the whole
+// assembly another 0.33 m along the HMD's horizontal forward direction keeps
+// its pose, interaction ray, cursor, strip, and desktop mirror synchronized.
+constexpr float kQuickMenuHandForwardOffsetMeters = 0.49F;
 constexpr float kQuickMenuCursorHotspotX = 0.0F;
 constexpr float kQuickMenuCursorHotspotY = 0.0F;
 

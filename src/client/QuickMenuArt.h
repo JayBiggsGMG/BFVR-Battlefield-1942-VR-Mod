@@ -60,6 +60,7 @@ private:
     void WriteLog(const wchar_t* format, ...) const;
 
     std::array<Image, stereo::kQuickMenuSelectionCount> menus_ = {};
+    std::array<Image, stereo::kQuickMenuUtilityVisualCount> utilities_ = {};
     Image cursor_ = {};
     LogCallback logCallback_ = nullptr;
     void* logContext_ = nullptr;

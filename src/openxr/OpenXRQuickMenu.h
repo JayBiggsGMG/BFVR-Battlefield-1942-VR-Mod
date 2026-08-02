@@ -96,7 +96,9 @@ private:
     ID3D11DeviceContext* context_ = nullptr;
     std::array<ID3D11Texture2D*, stereo::kQuickMenuSelectionCount>
         menuSources_ = {};
-    std::array<ID3D11Texture2D*, 8> utilitySources_ = {};
+    std::array<
+        ID3D11Texture2D*,
+        stereo::kQuickMenuUtilityVisualCount> utilitySources_ = {};
     ID3D11Texture2D* cursorSource_ = nullptr;
     Swapchain menuSwapchain_ = {};
     Swapchain utilitySwapchain_ = {};

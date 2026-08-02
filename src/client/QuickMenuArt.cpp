@@ -13,10 +13,18 @@ namespace
 {
 constexpr UINT kExpectedMenuWidth = 512;
 constexpr UINT kExpectedMenuHeight = 512;
+constexpr UINT kExpectedUtilityWidth = 512;
+constexpr UINT kExpectedUtilityHeight = 64;
 constexpr wchar_t kBackgroundName[] = L"QM_bg.png";
 constexpr wchar_t kFrameName[] = L"QM_frame.png";
 constexpr wchar_t kTextName[] = L"QM_text.png";
 constexpr wchar_t kCursorName[] = L"QM_Cursor.png";
+constexpr wchar_t kUtilityBackgroundName[] = L"QM_stripBG.png";
+constexpr wchar_t kUtilityTextName[] = L"QM_stripText.png";
+constexpr std::array<const wchar_t*, 3> kUtilityHoverNames = {
+    L"QM_stripDecoupleHover.png",
+    L"QM_stripMapHover.png",
+    L"QM_stripSettingsHover.png"};
 constexpr std::array<const wchar_t*, 12> kHoverNames = {
     L"QM_menuhover.png",
     L"QM_deployhover.png",
@@ -101,82 +109,6 @@ std::uint32_t BlendPremultiplied(
         blendChannel(sourceAlpha, Channel(destination, 24U)));
 }
 
-std::uint32_t MakePremultipliedPixel(
-    std::uint8_t blue,
-    std::uint8_t green,
-    std::uint8_t red,
-    std::uint8_t alpha) noexcept
-{
-    const auto premultiply = [alpha](std::uint8_t channel) {
-        return (static_cast<std::uint32_t>(channel) * alpha + 127U) / 255U;
-    };
-    return PackPixel(
-        premultiply(blue),
-        premultiply(green),
-        premultiply(red),
-        alpha);
-}
-
-void FillRectangle(
-    std::vector<std::uint32_t>& pixels,
-    UINT width,
-    UINT height,
-    UINT left,
-    UINT top,
-    UINT right,
-    UINT bottom,
-    std::uint32_t color) noexcept
-{
-    left = std::min(left, width);
-    right = std::min(right, width);
-    top = std::min(top, height);
-    bottom = std::min(bottom, height);
-    for (UINT y = top; y < bottom; ++y)
-    {
-        const std::size_t row = static_cast<std::size_t>(y) * width;
-        std::fill(
-            pixels.begin() + row + left,
-            pixels.begin() + row + right,
-            color);
-    }
-}
-
-void DrawPlaceholderGlyph(
-    std::vector<std::uint32_t>& pixels,
-    UINT width,
-    UINT height,
-    UINT button,
-    const std::array<std::uint8_t, 7>& rows,
-    std::uint32_t color) noexcept
-{
-    constexpr UINT scale = 7;
-    constexpr UINT glyphWidth = 5 * scale;
-    constexpr UINT glyphHeight = 7 * scale;
-    const UINT buttonWidth = width /
-        static_cast<UINT>(bfvr::stereo::kQuickMenuUtilityButtonCount);
-    const UINT originX = button * buttonWidth +
-        (buttonWidth - glyphWidth) / 2;
-    const UINT originY = (height - glyphHeight) / 2;
-    for (UINT row = 0; row < rows.size(); ++row)
-    {
-        for (UINT column = 0; column < 5; ++column)
-        {
-            if ((rows[row] & (1U << (4U - column))) == 0)
-            {
-                continue;
-            }
-            FillRectangle(
-                pixels,
-                width,
-                height,
-                originX + column * scale,
-                originY + row * scale,
-                originX + (column + 1) * scale - 1,
-                originY + (row + 1) * scale - 1,
-                color);
-        }
-    }
-}
 } // namespace
 
 namespace bfvr
@@ -228,17 +160,37 @@ bool QuickMenuArt::InitializeFromDirectory(
     Image frame = {};
     Image text = {};
     std::array<Image, kHoverNames.size()> hovers = {};
+    Image utilityBackground = {};
+    Image utilityText = {};
+    std::array<Image, kUtilityHoverNames.size()> utilityHovers = {};
     bool loaded =
         LoadPng(factory, JoinPath(assetsDirectory, kBackgroundName), background) &&
         LoadPng(factory, JoinPath(assetsDirectory, kFrameName), frame) &&
         LoadPng(factory, JoinPath(assetsDirectory, kTextName), text) &&
-        LoadPng(factory, JoinPath(assetsDirectory, kCursorName), cursor_);
+        LoadPng(factory, JoinPath(assetsDirectory, kCursorName), cursor_) &&
+        LoadPng(
+            factory,
+            JoinPath(assetsDirectory, kUtilityBackgroundName),
+            utilityBackground) &&
+        LoadPng(
+            factory,
+            JoinPath(assetsDirectory, kUtilityTextName),
+            utilityText);
     for (std::size_t index = 0; loaded && index < hovers.size(); ++index)
     {
         loaded = LoadPng(
             factory,
             JoinPath(assetsDirectory, kHoverNames[index]),
             hovers[index]);
+    }
+    for (std::size_t index = 0;
+         loaded && index < utilityHovers.size();
+         ++index)
+    {
+        loaded = LoadPng(
+            factory,
+            JoinPath(assetsDirectory, kUtilityHoverNames[index]),
+            utilityHovers[index]);
     }
     ReleaseInterface(factory);
     if (uninitializeCom)
@@ -253,13 +205,26 @@ bool QuickMenuArt::InitializeFromDirectory(
                 static_cast<std::size_t>(kExpectedMenuWidth) *
                     kExpectedMenuHeight;
     };
+    const auto isUtilitySize = [](const Image& image) {
+        return image.width == kExpectedUtilityWidth &&
+            image.height == kExpectedUtilityHeight &&
+            image.pixels.size() ==
+                static_cast<std::size_t>(kExpectedUtilityWidth) *
+                    kExpectedUtilityHeight;
+    };
     if (!loaded || !isMenuSize(background) || !isMenuSize(frame) ||
         !isMenuSize(text) || cursor_.width == 0 || cursor_.height == 0 ||
         cursor_.pixels.empty() ||
-        !std::all_of(hovers.begin(), hovers.end(), isMenuSize))
+        !std::all_of(hovers.begin(), hovers.end(), isMenuSize) ||
+        !isUtilitySize(utilityBackground) ||
+        !isUtilitySize(utilityText) ||
+        !std::all_of(
+            utilityHovers.begin(),
+            utilityHovers.end(),
+            isUtilitySize))
     {
         WriteLog(
-            L"Quick Menu is unavailable: every menu layer must decode as 512x512 and the cursor must be a nonempty PNG in %s.",
+            L"Quick Menu is unavailable: every menu layer must decode as 512x512, every strip layer as 512x64, and the cursor must be a nonempty PNG in %s.",
             assetsDirectory.c_str());
         Reset();
         logCallback_ = logCallback;
@@ -311,8 +276,41 @@ bool QuickMenuArt::InitializeFromDirectory(
         // square menu remains on its neutral variant.
         menus_[index] = base;
     }
+    for (std::size_t active = 0; active < 2; ++active)
+    {
+        for (std::size_t hover = 0; hover < 4; ++hover)
+        {
+            Image variant = {};
+            variant.width = kExpectedUtilityWidth;
+            variant.height = kExpectedUtilityHeight;
+            variant.pixels.assign(
+                static_cast<std::size_t>(variant.width) * variant.height,
+                0U);
+            bool composed = CompositeLayer(utilityBackground, variant);
+            if (composed && active != 0)
+            {
+                composed = CompositeLayer(utilityHovers[0], variant);
+            }
+            if (composed && hover != 0 &&
+                !(active != 0 && hover == 1))
+            {
+                composed = CompositeLayer(
+                    utilityHovers[hover - 1],
+                    variant);
+            }
+            composed = composed && CompositeLayer(utilityText, variant);
+            if (!composed)
+            {
+                Reset();
+                logCallback_ = logCallback;
+                logContext_ = logContext;
+                return false;
+            }
+            utilities_[active * 4 + hover] = std::move(variant);
+        }
+    }
     WriteLog(
-        L"Quick Menu loaded background -> hover -> text -> final frame variants, a %ux%u top-left-hotspot cursor, and the temporary three-button utility strip from %s.",
+        L"Quick Menu loaded its authored square and three-button strip stacks (background -> hover/state -> text -> final frame where present), plus a %ux%u top-left-hotspot cursor from %s.",
         cursor_.width,
         cursor_.height,
         assetsDirectory.c_str());
@@ -322,6 +320,7 @@ bool QuickMenuArt::InitializeFromDirectory(
 void QuickMenuArt::Reset() noexcept
 {
     menus_ = {};
+    utilities_ = {};
     cursor_ = {};
     logCallback_ = nullptr;
     logContext_ = nullptr;
@@ -373,75 +372,30 @@ bool QuickMenuArt::CopyUtilityStripPixels(
     UINT& width,
     UINT& height) const
 {
-    width = stereo::kQuickMenuUtilityTextureWidth;
-    height = stereo::kQuickMenuUtilityTextureHeight;
-    pixels.assign(static_cast<std::size_t>(width) * height, 0U);
+    pixels.clear();
+    width = 0;
+    height = 0;
     if (!IsReady())
     {
-        pixels.clear();
-        width = 0;
-        height = 0;
         return false;
     }
-
-    constexpr UINT buttonWidth =
-        stereo::kQuickMenuUtilityTextureWidth /
-        static_cast<UINT>(stereo::kQuickMenuUtilityButtonCount);
-    const std::uint32_t outline = MakePremultipliedPixel(
-        174, 184, 188, 236);
-    const std::uint32_t glyph = MakePremultipliedPixel(
-        230, 238, 240, 244);
-    for (UINT button = 0;
-         button < stereo::kQuickMenuUtilityButtonCount;
-         ++button)
+    std::size_t hoverIndex = 0;
+    if (stereo::IsQuickMenuUtilitySelection(hovered))
     {
-        const stereo::QuickMenuSelection selection =
-            static_cast<stereo::QuickMenuSelection>(
-                static_cast<std::uint32_t>(
-                    stereo::QuickMenuSelection::MountedCameraDecouple) +
-                button);
-        const bool highlighted = hovered == selection;
-        const bool active = button == 0 && mountedCameraDecoupled;
-        const std::uint32_t fill = active
-            ? MakePremultipliedPixel(
-                highlighted ? 112 : 86,
-                highlighted ? 196 : 164,
-                highlighted ? 126 : 96,
-                226)
-            : MakePremultipliedPixel(
-                highlighted ? 88 : 54,
-                highlighted ? 104 : 66,
-                highlighted ? 114 : 74,
-                218);
-        const UINT left = button * buttonWidth + 4;
-        const UINT right = (button + 1) * buttonWidth - 4;
-        FillRectangle(pixels, width, height, left, 4, right, height - 4, outline);
-        FillRectangle(
-            pixels,
-            width,
-            height,
-            left + 3,
-            7,
-            right - 3,
-            height - 7,
-            fill);
+        hoverIndex = 1 + static_cast<std::size_t>(hovered) -
+            static_cast<std::size_t>(
+                stereo::QuickMenuSelection::MountedCameraDecouple);
     }
-
-    constexpr std::array<std::uint8_t, 7> decoupleGlyph = {
-        0b11110, 0b10001, 0b10001, 0b10001,
-        0b10001, 0b10001, 0b11110};
-    constexpr std::array<std::uint8_t, 7> secondGlyph = {
-        0b11110, 0b00001, 0b00001, 0b11110,
-        0b10000, 0b10000, 0b11111};
-    constexpr std::array<std::uint8_t, 7> thirdGlyph = {
-        0b11110, 0b00001, 0b00001, 0b01110,
-        0b00001, 0b00001, 0b11110};
-    DrawPlaceholderGlyph(
-        pixels, width, height, 0, decoupleGlyph, glyph);
-    DrawPlaceholderGlyph(
-        pixels, width, height, 1, secondGlyph, glyph);
-    DrawPlaceholderGlyph(
-        pixels, width, height, 2, thirdGlyph, glyph);
+    const std::size_t index = (mountedCameraDecoupled ? 4U : 0U) +
+        hoverIndex;
+    if (index >= utilities_.size())
+    {
+        return false;
+    }
+    const Image& source = utilities_[index];
+    pixels = source.pixels;
+    width = source.width;
+    height = source.height;
     return true;
 }
 
@@ -451,7 +405,7 @@ bool QuickMenuArt::IsReady() const noexcept
     {
         return false;
     }
-    return std::all_of(
+    const bool menusReady = std::all_of(
         menus_.begin(),
         menus_.end(),
         [](const Image& image) {
@@ -459,8 +413,19 @@ bool QuickMenuArt::IsReady() const noexcept
                 image.height == kExpectedMenuHeight &&
                 image.pixels.size() ==
                     static_cast<std::size_t>(kExpectedMenuWidth) *
-                        kExpectedMenuHeight;
+                    kExpectedMenuHeight;
         });
+    const bool utilitiesReady = std::all_of(
+        utilities_.begin(),
+        utilities_.end(),
+        [](const Image& image) {
+            return image.width == kExpectedUtilityWidth &&
+                image.height == kExpectedUtilityHeight &&
+                image.pixels.size() ==
+                    static_cast<std::size_t>(kExpectedUtilityWidth) *
+                        kExpectedUtilityHeight;
+        });
+    return menusReady && utilitiesReady;
 }
 
 bool QuickMenuArt::LoadPng(

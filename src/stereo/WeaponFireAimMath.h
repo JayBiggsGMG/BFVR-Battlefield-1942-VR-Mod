@@ -13,9 +13,20 @@ struct NativeArmFireAnchorDistances
     float solvedHandDisplacement = 0.0F;
 };
 
+// Unidentified/warm-up fire retains the original conservative neighborhood.
+// Only an exact WeaponFire receiver/current-active-item match receives the
+// slightly wider bound required by the observed valid first-spawn rifle call.
+// The solved-hand and multi-metre cinematic protections remain common.
+[[nodiscard]] float SelectD3D8NativeArmFireToHandLimit(
+    bool exactCurrentActiveItemReceiver) noexcept;
+
+[[nodiscard]] bool IsD3D8NativeArmFireAnchorWithinPolicy(
+    const NativeArmFireAnchorDistances& distances,
+    bool exactCurrentActiveItemReceiver) noexcept;
+
 // Measures whether the native WeaponFire matrix belongs to the same local
-// spatial neighborhood as the native/solved hand pair. Callers set their own
-// policy limits; invalid or non-rigid matrices fail closed.
+// spatial neighborhood as the native/solved hand pair. This measurement is
+// policy-free; invalid or non-rigid matrices fail closed.
 [[nodiscard]] std::optional<NativeArmFireAnchorDistances>
 MeasureD3D8NativeArmFireAnchorDistances(
     const Matrix4& nativeFireMatrix,

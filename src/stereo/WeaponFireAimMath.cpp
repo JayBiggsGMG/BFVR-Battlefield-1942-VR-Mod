@@ -150,6 +150,32 @@ std::optional<Matrix4> InvertRigid(const Matrix4& matrix) noexcept
 namespace bfvr::stereo
 {
 
+float SelectD3D8NativeArmFireToHandLimit(
+    const bool exactCurrentActiveItemReceiver) noexcept
+{
+    constexpr float kConservativeMaximumDistance = 1.25F;
+    constexpr float kVerifiedActiveItemMaximumDistance = 1.35F;
+    return exactCurrentActiveItemReceiver
+        ? kVerifiedActiveItemMaximumDistance
+        : kConservativeMaximumDistance;
+}
+
+bool IsD3D8NativeArmFireAnchorWithinPolicy(
+    const NativeArmFireAnchorDistances& distances,
+    const bool exactCurrentActiveItemReceiver) noexcept
+{
+    constexpr float kMaximumSolvedHandDisplacement = 1.50F;
+    return IsFinite(distances.nativeFireToHand) &&
+        IsFinite(distances.solvedHandDisplacement) &&
+        distances.nativeFireToHand >= 0.0F &&
+        distances.solvedHandDisplacement >= 0.0F &&
+        distances.nativeFireToHand <=
+            SelectD3D8NativeArmFireToHandLimit(
+                exactCurrentActiveItemReceiver) &&
+        distances.solvedHandDisplacement <=
+            kMaximumSolvedHandDisplacement;
+}
+
 std::optional<NativeArmFireAnchorDistances>
 MeasureD3D8NativeArmFireAnchorDistances(
     const Matrix4& nativeFireMatrix,

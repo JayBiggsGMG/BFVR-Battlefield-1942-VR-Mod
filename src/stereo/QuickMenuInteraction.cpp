@@ -12,7 +12,6 @@ using bfvr::stereo::Pose;
 using bfvr::stereo::Quaternion;
 using bfvr::stereo::Vec3;
 
-constexpr float kHandForwardOffsetMeters = 0.16F;
 constexpr float kHandUpOffsetMeters = 0.09F;
 constexpr float kPositionDeadzoneMeters = 0.018F;
 constexpr float kOrientationDeadzoneRadians = 0.035F;
@@ -209,7 +208,9 @@ std::optional<Pose> MakeTargetPanelPose(
     target.position = Add(
         grip.position,
         Add(
-            Scale(*horizontalForward, kHandForwardOffsetMeters),
+            Scale(
+                *horizontalForward,
+                bfvr::stereo::kQuickMenuHandForwardOffsetMeters),
             {0.0F, kHandUpOffsetMeters, 0.0F}));
     const auto orientation = MakeHeadFacingOrientation(
         target.position,
@@ -370,7 +371,7 @@ bool IsQuickMenuUtilitySelection(
     QuickMenuSelection selection) noexcept
 {
     return selection >= QuickMenuSelection::MountedCameraDecouple &&
-        selection <= QuickMenuSelection::UtilityPlaceholder3;
+        selection <= QuickMenuSelection::VrSettings;
 }
 
 const wchar_t* QuickMenuSelectionName(
@@ -392,10 +393,10 @@ const wchar_t* QuickMenuSelectionName(
     case QuickMenuSelection::CameraF12: return L"F12 / camera";
     case QuickMenuSelection::MountedCameraDecouple:
         return L"mounted-camera decouple toggle";
-    case QuickMenuSelection::UtilityPlaceholder2:
-        return L"utility placeholder 2";
-    case QuickMenuSelection::UtilityPlaceholder3:
-        return L"utility placeholder 3";
+    case QuickMenuSelection::MapToggle:
+        return L"M / map size toggle";
+    case QuickMenuSelection::VrSettings:
+        return L"VR settings (not yet implemented)";
     default: return L"none";
     }
 }
