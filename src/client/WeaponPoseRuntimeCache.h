@@ -14,6 +14,8 @@ struct NativeArmWeaponVisualPose
     stereo::Matrix4 targetHandWorld = {};
     stereo::Matrix4 controllerGunWorld = {};
     const void* soldier = nullptr;
+    const void* activeItem = nullptr;
+    int activeItemIndex = -1;
     LONG controllerGeneration = 0;
 };
 
@@ -38,6 +40,8 @@ void PublishNativeArmWeaponVisualPose(
     const stereo::Matrix4& targetHandWorld,
     const stereo::Matrix4& controllerGunWorld,
     const void* soldier,
+    const void* activeItem,
+    int activeItemIndex,
     LONG controllerGeneration) noexcept;
 
 // Legacy view-offset-only publication remains available while callers migrate

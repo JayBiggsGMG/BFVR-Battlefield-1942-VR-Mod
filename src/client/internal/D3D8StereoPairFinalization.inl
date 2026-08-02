@@ -19,6 +19,33 @@ bool FinalizeFrameTargets(void* device)
             (!g_runUntilStopped &&
              GetTickCount() - g_presentationRun.startedAt >=
                  kPresentationDurationMs - 1000));
+    if (g_worldCrosshairFrame.valid)
+    {
+        bfvr::D3D8WorldCrosshairRenderFrame crosshairFrame = {};
+        crosshairFrame.device = device;
+        crosshairFrame.colorTargets[0] = g_frame.ownedColor[0];
+        crosshairFrame.colorTargets[1] = g_frame.ownedColor[1];
+        crosshairFrame.depthTargets[0] = g_frame.ownedDepth[0];
+        crosshairFrame.depthTargets[1] = g_frame.ownedDepth[1];
+        crosshairFrame.viewport = IsPresentationMode()
+            ? g_runtimeWorldViewport
+            : D3DViewport{
+                0,
+                0,
+                g_frame.colorDescription.width,
+                g_frame.colorDescription.height,
+                0.0F,
+                1.0F};
+        crosshairFrame.eyeViews[0] =
+            g_worldCrosshairFrame.eyeViews[0];
+        crosshairFrame.eyeViews[1] =
+            g_worldCrosshairFrame.eyeViews[1];
+        crosshairFrame.eyeProjections[0] =
+            g_worldCrosshairFrame.eyeProjections[0];
+        crosshairFrame.eyeProjections[1] =
+            g_worldCrosshairFrame.eyeProjections[1];
+        (void)bfvr::RenderD3D8WorldCrosshair(crosshairFrame);
+    }
     if (IsPresentationMode())
     {
         g_presentationFramePublished =

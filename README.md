@@ -119,8 +119,10 @@ buttons above:
   hand-down moves it up, as though the gun pivot were between the controller
   and barrel. Holding the hand still holds aim still; the stick remains the
   unrestricted control for continuous/360-degree traverse. These directions
-  and the initial sensitivity are currently fixed; a future in-game VR settings
-  menu is intended to expose horizontal/vertical inversion and sensitivity.
+  and the current 48.0-native-input-units-per-metre sensitivity are fixed; the
+  latter halves physical travel relative to the initial headset build. A future
+  in-game VR settings menu is intended to expose horizontal/vertical inversion
+  and sensitivity.
 - Aircraft: left Y is proportional throttle, left X is roll, right X is yaw,
   and right Y is pitch. Stick up uses BF1942's positive pitch/dive direction;
   stick down climbs.
@@ -180,9 +182,29 @@ replays only the exact game-selected skinned first-person arms through the
 existing stereo shader path; no bespoke assets, controller IK, manual reloads,
 or gameplay-state changes are involved. Set `BFVR_NATIVE_1P_ARMS=0` before
 launch to opt out and restore the prior arm suppression.
-The exact native CrossHair visibility setter is forced off without disabling the
-rest of the HUD. A truthful world-space infantry/vehicle reticle still requires
-the native aim/ray result and an isolated hit-feedback boundary.
+The exact native CrossHair visibility setter is forced off without disabling
+the rest of the HUD. BFVR replaces it with the supplied 64x64 world crosshair
+only for the gadget slots: grenades/TNT (4),
+mines/binoculars/medpack (5), and wrench (6). Knives, pistols, ordinary guns,
+launchers, and the detonator remain excluded. Unknown modded items which reuse
+slots 4/5/6 remain enabled by policy because those slots are conventionally
+gadget families; all other infantry slots remain excluded. A non-default
+vehicle or mounted control object additionally requires BF1942 itself to
+request its crosshair and expose a readable native weapon, so unarmed or
+unresolved stations fail closed. The gadget endpoint uses the exact direct
+controller-gun basis shared with local fire. Mounted endpoints query the
+current non-default control object's native PlayerControlObject weapon vector
+and use weapon zero's `FireArms::getFireArmsTransformation`, including the
+engine's special parent-firearm route. Both are independently projected into
+the two world-eye targets at a finite default 50 m. Because no continuous native surface query is
+yet proven, this is explicitly a no-hit range endpoint rather than a claimed
+collision point. `BFVR_CROSSHAIR_MAX_DISTANCE_METRES` adjusts it from 2..500 m,
+and `BFVR_CROSSHAIR_ANGULAR_DIAMETER_DEGREES` adjusts apparent size from
+0.25..8 degrees (default 2).
+
+The aligned `HitMarker.png` layer appears only while BF1942's own local network
+hit-indication timer is positive. BFVR reads that timer without changing or
+extending it; it does not infer hits from health, depth, or collision.
 
 ### Native arm ownership trace
 

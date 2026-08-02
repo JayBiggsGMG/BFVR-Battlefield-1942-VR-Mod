@@ -5,6 +5,7 @@
 #include "client/D3D8RuntimePosePolicy.h"
 #include "client/ControllerInputOverlay.h"
 #include "client/CrosshairOverlay.h"
+#include "client/D3D8WorldCrosshairRenderer.h"
 #include "client/MainMenuOverlay.h"
 #include "client/MenuPointerOverlay.h"
 #include "client/StartupMenuPresentation.h"
@@ -360,6 +361,20 @@ bool g_headCenteredWaterReflection = true;
 PresentationRunRecord g_presentationRun = {};
 DWORD g_lastPresentationTimingReportAt = 0;
 bool g_presentationTimingStarted = false;
+
+struct WorldCrosshairFrameTransforms
+{
+    D3DMatrix eyeViews[2] = {};
+    D3DMatrix eyeProjections[2] = {};
+    bool valid = false;
+};
+
+WorldCrosshairFrameTransforms g_worldCrosshairFrame = {};
+
+void ResetWorldCrosshairFrameTransforms() noexcept
+{
+    g_worldCrosshairFrame = {};
+}
 bool IsFullFrameMode()
 {
     return g_mode != ProbeMode::OneDraw;
@@ -959,6 +974,20 @@ FrameMirrorResult MirrorDrawIntoFrame(
             headCenteredWaterReflectionView);
     const auto compositionLayer =
         bfvr::stereo::SelectD3D8FrameCompositionLayer(snapshot.semanticClass);
+    if (compositionLayer ==
+            bfvr::stereo::D3D8FrameCompositionLayer::WorldEyes &&
+        snapshot.drawPolicy ==
+            bfvr::stereo::D3D8DrawPolicy::StereoPerspective &&
+        !firstPersonArmDraw &&
+        snapshot.semanticClass !=
+            bfvr::stereo::D3D8SemanticDrawClass::WaterSurface)
+    {
+        g_worldCrosshairFrame.eyeViews[0] = snapshot.leftView;
+        g_worldCrosshairFrame.eyeViews[1] = snapshot.rightView;
+        g_worldCrosshairFrame.eyeProjections[0] = snapshot.leftProjection;
+        g_worldCrosshairFrame.eyeProjections[1] = snapshot.rightProjection;
+        g_worldCrosshairFrame.valid = true;
+    }
     HRESULT eyeDrawResults[2] = {E_FAIL, E_FAIL};
     HRESULT menuDrawResult = E_FAIL;
     bool layerDrawn = true;
@@ -1183,6 +1212,7 @@ bool CompletePresentationFrame(void* device)
             // supersedes the unanswered sequence while continuing to submit
             // its last valid image, so the headset session never needs to end.
             bfvr::d3d8probe::ResetStereoFrameRecordForResourceReuse(g_frame);
+            ResetWorldCrosshairFrameTransforms();
             g_presentationFramePublished = false;
             g_runtimeRenderRequest = {};
             g_runtimeFramePosePolicy = {};
@@ -1224,6 +1254,7 @@ bool CompletePresentationFrame(void* device)
     }
 
     bfvr::d3d8probe::ResetStereoFrameRecordForResourceReuse(g_frame);
+    ResetWorldCrosshairFrameTransforms();
     g_presentationFramePublished = false;
     const std::int64_t requestWaitStarted =
         bfvr::d3d8probe::ReadPerformanceCounter();
@@ -1610,6 +1641,7 @@ HRESULT WINAPI HookPresent(
         // targets are process-lifetime resources and that teardown also stops
         // the owned OpenXR companion.
         bfvr::d3d8probe::ResetStereoFrameRecordForResourceReuse(g_frame);
+        ResetWorldCrosshairFrameTransforms();
         g_presentationFramePublished = false;
         g_runtimeRenderRequest = {};
         g_runtimeFramePosePolicy = {};

@@ -25,7 +25,7 @@ bool TestMirroredPivotDirectionsAndNoDuplicateSample()
         tracker,
         true,
         true,
-        {0.19F, 1.08F, -0.40F},
+        {0.195F, 1.09F, -0.40F},
         200);
     const auto duplicate = bfvr::stereo::UpdateVehicleMotionAim(
         tracker,
@@ -62,7 +62,7 @@ bool TestOppositeMovementAndJitterDeadzone()
         tracker,
         true,
         true,
-        {0.0100F, 1.0100F, 0.0F},
+        {0.0050F, 1.0050F, 0.0F},
         300);
     return NearlyEqual(jitter.mouseLookX, 0.0F) &&
         NearlyEqual(jitter.mouseLookY, 0.0F) &&
@@ -99,7 +99,7 @@ bool TestSlowMovementAccumulatesAcrossDeadzone()
         400);
     return NearlyEqual(first.mouseLookX, 0.0F) &&
         NearlyEqual(second.mouseLookX, 0.0F) &&
-        NearlyEqual(third.mouseLookX, 0.0144F);
+        NearlyEqual(third.mouseLookX, 0.0288F);
 }
 
 bool TestTrackingLossAndModePauseRebaseline()
@@ -163,7 +163,7 @@ bool TestTrackingJumpBecomesZeroInputReference()
         tracker,
         true,
         true,
-        {0.39F, 1.0F, 0.0F},
+        {0.395F, 1.0F, 0.0F},
         300);
     return jump.trackingAccepted && jump.sampleAdvanced &&
         NearlyEqual(jump.mouseLookX, 0.0F) &&

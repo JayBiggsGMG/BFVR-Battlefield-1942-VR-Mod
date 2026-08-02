@@ -45,6 +45,7 @@ HRESULT WINAPI HookReset(void* device, void* presentationParameters)
                     : bfvr::D3D8PresentationCompanion::OpenXR,
                 AppendPresentationLog);
         bfvr::d3d8probe::ResetStereoFrameRecordForResourceReuse(g_frame);
+        ResetWorldCrosshairFrameTransforms();
         g_frame.resetResult = result;
         InterlockedExchange(&g_frame.resetAborted, 1);
         g_runtimeRenderRequest = {};

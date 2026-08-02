@@ -723,7 +723,8 @@ private:
                 0) == 0)
         {
             WriteLog(
-                L"Surface/sea/mounted right-grip motion aim acquired a tracked zero-input reference. Relative hand movement now complements right-stick traverse/elevation: hand-left moves the barrel right and hand-down moves it up. Quick Menu hold, tracking loss, and control-mode changes rebaseline without a turret jump.");
+                L"Surface/sea/mounted right-grip motion aim acquired a tracked zero-input reference at %.1f native-input units/metre. Relative hand movement now complements right-stick traverse/elevation: hand-left moves the barrel right and hand-down moves it up. Quick Menu hold, tracking loss, and control-mode changes rebaseline without a turret jump.",
+                kSurfaceVehicleMotionAimConfiguration.inputPerMetre);
         }
 
         if (controlMode == ControllerControlMode::Infantry)

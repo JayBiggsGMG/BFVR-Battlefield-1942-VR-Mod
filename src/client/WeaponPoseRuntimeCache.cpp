@@ -11,6 +11,8 @@ struct WeaponViewOffsetState
     bfvr::stereo::Matrix4 targetHandWorld = {};
     bfvr::stereo::Matrix4 controllerGunWorld = {};
     const void* soldier = nullptr;
+    const void* activeItem = nullptr;
+    int activeItemIndex = -1;
     LONG controllerGeneration = 0;
     DWORD publishedAt = 0;
     bool viewOffsetValid = false;
@@ -31,6 +33,8 @@ void Publish(
     const bfvr::stereo::Matrix4& targetHandWorld = {},
     const bfvr::stereo::Matrix4& controllerGunWorld = {},
     const void* soldier = nullptr,
+    const void* activeItem = nullptr,
+    int activeItemIndex = -1,
     bool nativeArmPoseValid = false) noexcept
 {
     AcquireSRWLockExclusive(&g_lock);
@@ -40,6 +44,8 @@ void Publish(
     g_state.targetHandWorld = targetHandWorld;
     g_state.controllerGunWorld = controllerGunWorld;
     g_state.soldier = soldier;
+    g_state.activeItem = activeItem;
+    g_state.activeItemIndex = activeItemIndex;
     g_state.controllerGeneration = controllerGeneration;
     g_state.publishedAt = GetTickCount();
     g_state.viewOffsetValid = viewOffsetValid;
@@ -73,6 +79,8 @@ void PublishNativeArmWeaponVisualPose(
     const stereo::Matrix4& targetHandWorld,
     const stereo::Matrix4& controllerGunWorld,
     const void* soldier,
+    const void* activeItem,
+    int activeItemIndex,
     LONG controllerGeneration) noexcept
 {
     Publish(
@@ -85,6 +93,8 @@ void PublishNativeArmWeaponVisualPose(
         targetHandWorld,
         controllerGunWorld,
         soldier,
+        activeItem,
+        activeItemIndex,
         soldier != nullptr);
 }
 
@@ -160,6 +170,8 @@ bool ReadFreshNativeArmWeaponVisualPose(
         g_state.targetHandWorld,
         g_state.controllerGunWorld,
         g_state.soldier,
+        g_state.activeItem,
+        g_state.activeItemIndex,
         g_state.controllerGeneration};
     const DWORD publishedAt = g_state.publishedAt;
     const bool valid = g_state.nativeArmPoseValid;

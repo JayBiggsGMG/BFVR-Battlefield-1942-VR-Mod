@@ -143,8 +143,10 @@ add_library(BFVRClient SHARED
   client/ControllerInputCache.cpp
   client/ControllerInputOverlay.cpp
   client/CrosshairOverlay.cpp
+  client/D3D8WorldCrosshairRenderer.cpp
   client/MainMenuOverlay.cpp
   client/MenuPointerOverlay.cpp
+  client/MountedWeaponAimResolver.cpp
   client/StartupMenuPresentation.cpp
   client/D3D8ImportRoute.cpp
   client/D3D8PresentationConfiguration.cpp
@@ -216,6 +218,7 @@ add_library(BFVRStereoMath STATIC
   stereo/TreeAngleSlicePolicy.cpp
   stereo/UiPointerMath.cpp
   stereo/VehicleMotionAimMath.cpp
+  stereo/WorldCrosshairMath.cpp
   stereo/WeaponPoseMath.cpp
 )
 
@@ -285,11 +288,15 @@ add_executable(BFVRVehicleMotionAimMathTests
   stereo/VehicleMotionAimMathTests.cpp
 )
 
+add_executable(BFVRWorldCrosshairMathTests
+  stereo/WorldCrosshairMathTests.cpp
+)
+
 add_executable(BFVRRfaInspect
   tools/RfaInspect.cpp
 )
 
-foreach(target BFVRClient BFVRD3D8To9FlatClient BFVRLoader BFVROpenXRProbe BFVRSharedTextureProducerProbe BFVRD3D8To9SharedSurfaceProbe BFVRStereoMath BFVRStereoMathTests BFVRWeaponFireAimMathTests BFVROffHandSupportPolicyTests BFVRArmPoleVectorMathTests BFVRMainMenuOverlayTests BFVRQuickMenuTests BFVRVehicleMotionAimMathTests BFVRRfaInspect)
+foreach(target BFVRClient BFVRD3D8To9FlatClient BFVRLoader BFVROpenXRProbe BFVRSharedTextureProducerProbe BFVRD3D8To9SharedSurfaceProbe BFVRStereoMath BFVRStereoMathTests BFVRWeaponFireAimMathTests BFVROffHandSupportPolicyTests BFVRArmPoleVectorMathTests BFVRMainMenuOverlayTests BFVRQuickMenuTests BFVRVehicleMotionAimMathTests BFVRWorldCrosshairMathTests BFVRRfaInspect)
   target_compile_definitions(${target} PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
   set_property(TARGET ${target} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
   if(MSVC)
@@ -324,6 +331,7 @@ target_link_libraries(BFVRMainMenuOverlayTests PRIVATE
 target_link_libraries(BFVRQuickMenuTests PRIVATE
   BFVRStereoMath ole32 user32 windowscodecs)
 target_link_libraries(BFVRVehicleMotionAimMathTests PRIVATE BFVRStereoMath)
+target_link_libraries(BFVRWorldCrosshairMathTests PRIVATE BFVRStereoMath)
 target_include_directories(BFVRMainMenuOverlayTests PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}")
 target_include_directories(BFVRQuickMenuTests PRIVATE
@@ -352,6 +360,9 @@ if(BUILD_TESTING)
   add_test(
     NAME BFVRVehicleMotionAimMathTests
     COMMAND BFVRVehicleMotionAimMathTests)
+  add_test(
+    NAME BFVRWorldCrosshairMathTests
+    COMMAND BFVRWorldCrosshairMathTests)
 endif()
 
 foreach(target BFVRClient BFVROpenXRProbe)
@@ -392,6 +403,8 @@ add_custom_command(TARGET BFVRClient POST_BUILD
     "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_frame.png"
     "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_text.png"
     "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_Cursor.png"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../assets/Crosshair.png"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../assets/HitMarker.png"
     "$<TARGET_FILE_DIR:BFVRClient>/assets")
 
 target_include_directories(BFVRClient PRIVATE

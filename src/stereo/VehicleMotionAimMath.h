@@ -14,7 +14,7 @@ namespace bfvr::stereo
 // produces negative/up elevation in BF1942's mouse-look convention.
 struct VehicleMotionAimConfiguration
 {
-    float inputPerMetre = 24.0F;
+    float inputPerMetre = 48.0F;
     float movementDeadzoneMetres = 0.0005F;
     float maximumInputPerSample = 0.35F;
     float maximumTrackedStepMetres = 0.15F;

@@ -1274,8 +1274,7 @@ private:
                     nativeTargetWorld,
                     nativeTargetWorld,
                     controllerGunWorld,
-                    soldier,
-                    generation);
+                    soldier, nullptr, -1, generation);
                 return false;
             }
             const auto inverseSoldierTransform = Invert(*soldierTransform);
@@ -1506,8 +1505,8 @@ private:
                 nativeTargetWorld,
                 targetWorld,
                 controllerGunWorld,
-                soldier,
-                generation);
+                soldier, alignment.activeItem,
+                alignment.activeItemIndex, generation);
             frame.soldier = soldier;
             frame.activeItem = alignment.activeItem;
             frame.controllerRightHandWorld = targetWorld;
