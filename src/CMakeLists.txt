@@ -215,6 +215,7 @@ add_library(BFVRStereoMath STATIC
   stereo/StereoMath.cpp
   stereo/TreeAngleSlicePolicy.cpp
   stereo/UiPointerMath.cpp
+  stereo/VehicleMotionAimMath.cpp
   stereo/WeaponPoseMath.cpp
 )
 
@@ -280,11 +281,15 @@ add_executable(BFVRQuickMenuTests
   stereo/QuickMenuTests.cpp
 )
 
+add_executable(BFVRVehicleMotionAimMathTests
+  stereo/VehicleMotionAimMathTests.cpp
+)
+
 add_executable(BFVRRfaInspect
   tools/RfaInspect.cpp
 )
 
-foreach(target BFVRClient BFVRD3D8To9FlatClient BFVRLoader BFVROpenXRProbe BFVRSharedTextureProducerProbe BFVRD3D8To9SharedSurfaceProbe BFVRStereoMath BFVRStereoMathTests BFVRWeaponFireAimMathTests BFVROffHandSupportPolicyTests BFVRArmPoleVectorMathTests BFVRMainMenuOverlayTests BFVRQuickMenuTests BFVRRfaInspect)
+foreach(target BFVRClient BFVRD3D8To9FlatClient BFVRLoader BFVROpenXRProbe BFVRSharedTextureProducerProbe BFVRD3D8To9SharedSurfaceProbe BFVRStereoMath BFVRStereoMathTests BFVRWeaponFireAimMathTests BFVROffHandSupportPolicyTests BFVRArmPoleVectorMathTests BFVRMainMenuOverlayTests BFVRQuickMenuTests BFVRVehicleMotionAimMathTests BFVRRfaInspect)
   target_compile_definitions(${target} PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
   set_property(TARGET ${target} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
   if(MSVC)
@@ -318,6 +323,7 @@ target_link_libraries(BFVRMainMenuOverlayTests PRIVATE
   ole32 user32 windowscodecs)
 target_link_libraries(BFVRQuickMenuTests PRIVATE
   BFVRStereoMath ole32 user32 windowscodecs)
+target_link_libraries(BFVRVehicleMotionAimMathTests PRIVATE BFVRStereoMath)
 target_include_directories(BFVRMainMenuOverlayTests PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}")
 target_include_directories(BFVRQuickMenuTests PRIVATE
@@ -343,6 +349,9 @@ if(BUILD_TESTING)
     NAME BFVRQuickMenuTests
     COMMAND BFVRQuickMenuTests
       "${CMAKE_CURRENT_SOURCE_DIR}/../assets")
+  add_test(
+    NAME BFVRVehicleMotionAimMathTests
+    COMMAND BFVRVehicleMotionAimMathTests)
 endif()
 
 foreach(target BFVRClient BFVROpenXRProbe)

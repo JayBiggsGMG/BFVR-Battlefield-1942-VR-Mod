@@ -69,7 +69,8 @@ OpenXR session is focused, the x86 client has received a fresh matched
 controller sample, and the current input frame belongs to the alive local
 player. The cache expires quickly; death/spawn states do not receive controller
 input. Keyboard and mouse remain live throughout. Do not test vehicle behavior
-yet: BFVR has not recovered a safe WinPC on-foot/vehicle classifier.
+through the old input trace launcher; the normal VR launcher now owns the
+validated infantry/vehicle controller switch described below.
 
 OpenXR now starts before BF1942 creates its delayed gameplay D3D8 device. A
 temporary CPU startup bridge captures the native game window onto a
@@ -113,7 +114,13 @@ buttons above:
 
 - Land, sea, AA, and mounted guns: left Y is proportional gas/throttle or
   reverse, left X is proportional steering, and the right stick continuously
-  aims turret/station traverse and elevation.
+  aims turret/station traverse and elevation. Tracked right-controller movement
+  adds fine relative aim on the same axes: hand-left moves the barrel right and
+  hand-down moves it up, as though the gun pivot were between the controller
+  and barrel. Holding the hand still holds aim still; the stick remains the
+  unrestricted control for continuous/360-degree traverse. These directions
+  and the initial sensitivity are currently fixed; a future in-game VR settings
+  menu is intended to expose horizontal/vertical inversion and sensitivity.
 - Aircraft: left Y is proportional throttle, left X is roll, right X is yaw,
   and right Y is pitch. Stick up uses BF1942's positive pitch/dive direction;
   stick down climbs.
@@ -124,12 +131,15 @@ null pointer or configurable key binding. A soldier is the default
 objects. The controlled template's native `VCAir` category selects the aircraft
 axes, while land/sea and unreadable mod categories never acquire aircraft-only
 roll/yaw mapping. Entering or leaving a vehicle clears crouch/directional stick
-state so an infantry toggle cannot leak across the transition.
+state and captures a fresh zero-input motion reference so neither infantry state
+nor a stale hand position can leak across the transition.
 
 While the Quick Menu is open, controller fire, alt-fire, infantry stick-up/down
 actions, and face-button gameplay actions are suppressed; stick locomotion and
-vehicle control remain live. The x64 presenter emits one scan-code down/up pair
-only on A release with a valid hover and only while BF1942 is the foreground process.
+vehicle control remain live. Surface-weapon motion aim pauses and rebaselines on
+release so pointing at the panel cannot move a turret. The x64 presenter emits
+one scan-code down/up pair only on A release with a valid hover and only while
+BF1942 is the foreground process.
 The number keys retain BF1942's native context-sensitive weapon/vehicle-seat
 behavior, while Enter opens deployment, F9-F12 select cameras, and Escape opens
 the native main menu. Mouse and keyboard remain available.
@@ -143,12 +153,14 @@ or break this controller layout. The jump/parachute pair likewise bypasses the
 profile editor's duplicate-binding restriction by submitting both native
 actions in the same temporary input frame.
 
-Controller pose no longer writes BF1942 mouse-look; deliberate right-stick
-turn and ordinary keyboard/mouse look remain live. The opt-in weapon path uses
-the tracked right grip for the classified first-person viewmodel and feeds the
-same fresh grip-driven rendered orientation into ordinary alive-local-infantry
-fire. This follows the virtual weapon geometry instead of maintaining a
-parallel controller `aim` ray. The firing transform preserves BF1942's
+Controller pose does not write infantry look or aircraft flight axes; deliberate
+right-stick turn and ordinary keyboard/mouse look remain live. Only surface,
+sea, and mounted control objects translate newly timestamped right-grip position
+deltas into bounded native turret/station `mouseLookX/Y` input. The opt-in weapon
+path separately uses the tracked right grip for the classified first-person
+viewmodel and feeds the same fresh grip-driven rendered orientation into ordinary
+alive-local-infantry fire. This follows the virtual weapon geometry instead of
+maintaining a parallel controller `aim` ray. The firing transform preserves BF1942's
 per-weapon/per-barrel muzzle offsets, spread, cadence, projectile creation,
 and networking. Native-arm mode may move the native origin with the solved
 hand only when the fresh fire matrix belongs to the same soldier lifetime and

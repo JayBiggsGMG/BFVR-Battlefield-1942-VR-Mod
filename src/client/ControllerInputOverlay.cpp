@@ -2,6 +2,7 @@
 
 #include "client/ControllerInputCache.h"
 #include "presenter/SharedPresentationProtocol.h"
+#include "stereo/VehicleMotionAimMath.h"
 
 #include <MinHook.h>
 
@@ -67,6 +68,8 @@ constexpr float kWalkStickMagnitudeThreshold = 0.60F;
 constexpr float kStickTurnInputPerFrame = 0.70F;
 constexpr float kTurnStickResponseExponent = 1.65F;
 constexpr float kVehicleAimStickResponseExponent = 1.35F;
+constexpr bfvr::stereo::VehicleMotionAimConfiguration
+    kSurfaceVehicleMotionAimConfiguration = {};
 
 constexpr DWORD kVehicleCategoryAir = 2;
 
@@ -663,6 +666,7 @@ private:
         }
         rightStickVerticalDirection = 0;
         crouchToggled = false;
+        bfvr::stereo::ResetVehicleMotionAim(surfaceVehicleMotionAim);
         activeControlMode = controlMode;
 
         if ((controlMode == ControllerControlMode::SurfaceVehicle ||
@@ -684,7 +688,8 @@ private:
         float* destination,
         const bfvr::D3D8RuntimeControllerHand& left,
         const bfvr::D3D8RuntimeControllerHand& right,
-        ControllerControlMode controlMode) noexcept
+        ControllerControlMode controlMode,
+        std::int64_t predictedDisplayTime) noexcept
     {
         const bool quickMenuHeld = IsHandButtonPressed(
             right,
@@ -692,6 +697,34 @@ private:
         bool jumpAndParachutePressed = false;
         bool crouchTogglePressed = false;
         bool mouseLookEnabled = false;
+
+        constexpr DWORD requiredMotionAimFlags =
+            bfvr::shared::kControllerHandFlagGripActive |
+            bfvr::shared::kControllerHandFlagGripPositionValid |
+            bfvr::shared::kControllerHandFlagGripPositionTracked;
+        const bool motionAimTracked =
+            (right.flags & requiredMotionAimFlags) == requiredMotionAimFlags;
+        const bfvr::stereo::VehicleMotionAimOutput motionAim =
+            bfvr::stereo::UpdateVehicleMotionAim(
+                surfaceVehicleMotionAim,
+                controlMode == ControllerControlMode::SurfaceVehicle &&
+                    !quickMenuHeld,
+                motionAimTracked,
+                {
+                    right.gripPose.positionX,
+                    right.gripPose.positionY,
+                    right.gripPose.positionZ},
+                predictedDisplayTime,
+                kSurfaceVehicleMotionAimConfiguration);
+        if (motionAim.trackingAccepted &&
+            InterlockedCompareExchange(
+                &firstSurfaceMotionAimLogged,
+                1,
+                0) == 0)
+        {
+            WriteLog(
+                L"Surface/sea/mounted right-grip motion aim acquired a tracked zero-input reference. Relative hand movement now complements right-stick traverse/elevation: hand-left moves the barrel right and hand-down moves it up. Quick Menu hold, tracking loss, and control-mode changes rebaseline without a turret jump.");
+        }
 
         if (controlMode == ControllerControlMode::Infantry)
         {
@@ -804,6 +837,19 @@ private:
                             right.thumbstickY,
                             kVehicleAimStickResponseExponent));
                 }
+                // Relative grip movement is mouse-like: movement contributes a
+                // bounded fine delta, while holding the hand still contributes
+                // zero. It adds to, rather than replaces, unrestricted stick
+                // traverse/elevation. The mirrored signs model the controller
+                // on the opposite side of the gun's virtual pivot.
+                AddAxisInput(
+                    destination,
+                    kLogicalInputMouseLookX,
+                    motionAim.mouseLookX);
+                AddAxisInput(
+                    destination,
+                    kLogicalInputMouseLookY,
+                    motionAim.mouseLookY);
             }
             else if (controlMode == ControllerControlMode::AirVehicle)
             {
@@ -982,7 +1028,8 @@ private:
                 destination,
                 left,
                 right,
-                controlMode);
+                controlMode,
+                sample.predictedDisplayTime);
         }
         __except (EXCEPTION_EXECUTE_HANDLER)
         {
@@ -997,7 +1044,7 @@ private:
         if (InterlockedCompareExchange(&firstEligibleFrameLogged, 1, 0) == 0)
         {
             WriteLog(
-                L"Controller input overlay accepted its first fresh focused local frame. Infantry layout remains: left stick move; right stick smooth-turn, up jump+parachute, down crouch toggle. Non-default surface control objects use analogue left throttle/steer and right turret/station aim; VCAir objects use analogue left throttle/roll and right yaw/pitch (stick up dives). Stick clicks retain vehicle pitch hatch/dive actions. Right trigger fire; right grip alt-fire; left trigger use; A Quick Menu; B reload; X prone; Y native paired scoreboard; left grip off-hand support. Unknown control transitions enable no vehicle-only stick mapping. Logical actions remain independent of configurable keyboard/mouse bindings.");
+                L"Controller input overlay accepted its first fresh focused local frame. Infantry layout remains: left stick move; right stick smooth-turn, up jump+parachute, down crouch toggle. Non-default surface control objects use analogue left throttle/steer plus complementary right-stick and mirrored right-grip-motion turret/station aim; VCAir objects use analogue left throttle/roll and right yaw/pitch (stick up dives). Stick clicks retain vehicle pitch hatch/dive actions. Right trigger fire; right grip alt-fire; left trigger use; A Quick Menu; B reload; X prone; Y native paired scoreboard; left grip off-hand support. Unknown control transitions enable no vehicle-only stick mapping. Logical actions remain independent of configurable keyboard/mouse bindings.");
         }
     }
 
@@ -1050,6 +1097,7 @@ private:
         rightSecondaryWasDown = false;
         rightStickVerticalDirection = 0;
         crouchToggled = false;
+        bfvr::stereo::ResetVehicleMotionAim(surfaceVehicleMotionAim);
         activeControlMode = ControllerControlMode::Unknown;
     }
 
@@ -1140,6 +1188,7 @@ private:
     volatile LONG firstPlayerScoreboardFaultLogged = 0;
     volatile LONG firstVehicleModeLogged = 0;
     volatile LONG firstAirModeLogged = 0;
+    volatile LONG firstSurfaceMotionAimLogged = 0;
     volatile LONG lastGateDiagnosticsAt = 0;
     volatile LONG frameBuilderCalls = 0;
     volatile LONG normalizerCalls = 0;
@@ -1161,6 +1210,7 @@ private:
     bool rightSecondaryWasDown = false;
     int rightStickVerticalDirection = 0;
     bool crouchToggled = false;
+    bfvr::stereo::VehicleMotionAimTracker surfaceVehicleMotionAim = {};
     ControllerControlMode activeControlMode = ControllerControlMode::Unknown;
     bool controllerScoreboardWasHeld = false;
     bool ownsMinHook = false;
