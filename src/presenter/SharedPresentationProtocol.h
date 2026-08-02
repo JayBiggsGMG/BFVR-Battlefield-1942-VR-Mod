@@ -11,7 +11,7 @@ namespace bfvr::shared
 using SharedTextureLogCallback = void (*)(void* context, const wchar_t* message);
 
 constexpr DWORD kProtocolMagic = 0x52564642; // "BFVR"
-constexpr DWORD kProtocolVersion = 8;
+constexpr DWORD kProtocolVersion = 9;
 constexpr std::size_t kTextureCount = 3;
 constexpr std::size_t kSharedNameCapacity = 128;
 constexpr DWORD kProducerFlagRuntimeTimedRender = 0x1;
@@ -35,6 +35,7 @@ constexpr DWORD kControllerHandFlagGripOrientationTracked = 0x1000;
 constexpr DWORD kControllerHandButtonPrimary = 0x1;
 constexpr DWORD kControllerHandButtonSecondary = 0x2;
 constexpr DWORD kControllerHandButtonMenu = 0x4;
+constexpr DWORD kControllerHandButtonThumbstick = 0x8;
 
 enum class ProcessState : LONG
 {

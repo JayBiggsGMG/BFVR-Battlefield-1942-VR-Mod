@@ -5,6 +5,7 @@
 
 #include <MinHook.h>
 
+#include <intrin.h>
 #include <windows.h>
 
 #include <algorithm>
@@ -20,12 +21,22 @@ namespace
 {
 constexpr std::ptrdiff_t kFrameBuilderRva = 0x000B6A30;
 constexpr std::ptrdiff_t kNormalizerRva = 0x000913A0;
+constexpr std::ptrdiff_t kGameInputQueryRva = 0x00046490;
+constexpr std::ptrdiff_t kSetupScoreboardQueryReturnRva = 0x000469A2;
+constexpr std::ptrdiff_t kHudManagerSetShowScoreboardRva = 0x002A9C90;
+constexpr std::ptrdiff_t kHudManagerGlobalRva = 0x0065F1A8;
 constexpr std::ptrdiff_t kPlayerManagerGlobalRva = 0x0057D76C;
 constexpr std::size_t kPlayerManagerLocalPlayerOffset = 0x54;
 constexpr std::size_t kBFPlayerIsAliveOffset = 0xA9;
+constexpr std::size_t kBFPlayerCurrentControlObjectOffset = 0x64;
+constexpr std::size_t kBFPlayerDefaultControlObjectOffset = 0x98;
+constexpr std::size_t kPlayerControlObjectTemplateOffset = 0x124;
+constexpr std::size_t kPlayerControlObjectTemplateVehicleCategoryOffset = 0x2EC;
 constexpr std::size_t kLogicalInputEnableMaskLowOffset = 0xE0;
 constexpr std::size_t kLogicalInputEnableMaskHighOffset = 0xE4;
 constexpr DWORD kLogicalInputYaw = 0;
+constexpr DWORD kLogicalInputPitch = 1;
+constexpr DWORD kLogicalInputRoll = 2;
 constexpr DWORD kLogicalInputThrottle = 3;
 constexpr DWORD kLogicalInputMouseLookX = 4;
 constexpr DWORD kLogicalInputMouseLookY = 5;
@@ -34,11 +45,13 @@ constexpr DWORD kLogicalInputAction = 9;
 constexpr DWORD kLogicalInputUse = 10;
 constexpr DWORD kLogicalInputMouseLook = 11;
 constexpr DWORD kLogicalInputWalk = 12;
+constexpr DWORD kLogicalInputMenuSelect9 = 22;
 constexpr DWORD kLogicalInputAltFire = 23;
 constexpr DWORD kLogicalInputReload = 24;
 constexpr DWORD kLogicalInputProne = 28;
 constexpr DWORD kLogicalInputCrouch = 29;
 constexpr DWORD kLogicalInputCount = 55;
+constexpr DWORD kGameInputShowScoreboard = 35;
 constexpr DWORD kControllerHandLeft = 0;
 constexpr DWORD kControllerHandRight = 1;
 constexpr DWORD kControllerSampleMaximumAgeMs = 125;
@@ -53,6 +66,17 @@ constexpr float kThumbstickDirectionThreshold = 0.72F;
 constexpr float kWalkStickMagnitudeThreshold = 0.60F;
 constexpr float kStickTurnInputPerFrame = 0.70F;
 constexpr float kTurnStickResponseExponent = 1.65F;
+constexpr float kVehicleAimStickResponseExponent = 1.35F;
+
+constexpr DWORD kVehicleCategoryAir = 2;
+
+enum class ControllerControlMode : BYTE
+{
+    Unknown,
+    Infantry,
+    SurfaceVehicle,
+    AirVehicle,
+};
 
 constexpr BYTE kFrameBuilderPrefix[] = {
     0x81, 0xEC, 0x34, 0x01, 0x00, 0x00, 0x53, 0x55,
@@ -60,6 +84,13 @@ constexpr BYTE kFrameBuilderPrefix[] = {
 constexpr BYTE kNormalizerPrefix[] = {
     0x83, 0xEC, 0x10, 0x89, 0x4C, 0x24, 0x00, 0x33,
     0xC0, 0x8D, 0xA4, 0x24, 0x00, 0x00, 0x00, 0x00};
+constexpr BYTE kGameInputQueryPrefix[] = {
+    0x56, 0x57, 0x8B, 0x7C, 0x24, 0x0C, 0x83, 0xFF,
+    0x2F, 0x8B, 0xF1, 0x73, 0x43, 0xB8, 0x01, 0x00};
+constexpr BYTE kHudManagerSetShowScoreboardPrefix[] = {
+    0x8B, 0x44, 0x24, 0x04, 0x53, 0x56, 0x33, 0xDB,
+    0x3B, 0xC3, 0x57, 0x8B, 0x7C, 0x24, 0x14, 0x8B,
+    0xF1};
 
 bool HasExpectedPrefix(
     const void* target,
@@ -131,6 +162,9 @@ class ControllerInputOverlay
 public:
     using FrameBuilderFn = DWORD(__thiscall*)(void* owner, void* player, void* context);
     using NormalizeFn = DWORD(__thiscall*)(void* rawSource, float* destination);
+    using GameInputQueryFn = DWORD(__thiscall*)(void* gameInput, DWORD inputId);
+    using HudManagerSetShowScoreboardFn =
+        void(__thiscall*)(void* hudManager, int source, int state);
 
     void Start(void* image, void (*log)(const wchar_t* message))
     {
@@ -147,6 +181,13 @@ public:
         normalizerTarget = gameImage == nullptr
             ? nullptr
             : gameImage + kNormalizerRva;
+        gameInputQueryTarget = gameImage == nullptr
+            ? nullptr
+            : gameImage + kGameInputQueryRva;
+        hudManagerSetShowScoreboard = gameImage == nullptr
+            ? nullptr
+            : reinterpret_cast<HudManagerSetShowScoreboardFn>(
+                gameImage + kHudManagerSetShowScoreboardRva);
         if (!HasExpectedPrefix(
                 frameBuilderTarget,
                 kFrameBuilderPrefix,
@@ -154,12 +195,22 @@ public:
             !HasExpectedPrefix(
                 normalizerTarget,
                 kNormalizerPrefix,
-                sizeof(kNormalizerPrefix)))
+                sizeof(kNormalizerPrefix)) ||
+            !HasExpectedPrefix(
+                gameInputQueryTarget,
+                kGameInputQueryPrefix,
+                sizeof(kGameInputQueryPrefix)) ||
+            !HasExpectedPrefix(
+                reinterpret_cast<const void*>(hudManagerSetShowScoreboard),
+                kHudManagerSetShowScoreboardPrefix,
+                sizeof(kHudManagerSetShowScoreboardPrefix)))
         {
             WriteLog(
-                L"Controller input overlay rejected profiled targets frameBuilder=%p normalizer=%p: one or both prefixes differ.",
+                L"Controller input overlay rejected profiled targets frameBuilder=%p normalizer=%p gameInputQuery=%p setShowScoreboard=%p: one or more prefixes differ.",
                 frameBuilderTarget,
-                normalizerTarget);
+                normalizerTarget,
+                gameInputQueryTarget,
+                reinterpret_cast<void*>(hudManagerSetShowScoreboard));
             return;
         }
 
@@ -185,15 +236,25 @@ public:
                 reinterpret_cast<LPVOID>(&ControllerInputOverlay::NormalizeHook),
                 reinterpret_cast<LPVOID*>(&originalNormalize))
             : MH_ERROR_NOT_CREATED;
+        const MH_STATUS createGameInputQuery = createNormalizer == MH_OK
+            ? MH_CreateHook(
+                gameInputQueryTarget,
+                reinterpret_cast<LPVOID>(&ControllerInputOverlay::GameInputQueryHook),
+                reinterpret_cast<LPVOID*>(&originalGameInputQuery))
+            : MH_ERROR_NOT_CREATED;
         frameBuilderCreated = createFrameBuilder == MH_OK;
         normalizerCreated = createNormalizer == MH_OK;
+        gameInputQueryCreated = createGameInputQuery == MH_OK;
         if (createFrameBuilder != MH_OK || createNormalizer != MH_OK ||
-            originalFrameBuilder == nullptr || originalNormalize == nullptr)
+            createGameInputQuery != MH_OK ||
+            originalFrameBuilder == nullptr || originalNormalize == nullptr ||
+            originalGameInputQuery == nullptr)
         {
             WriteLog(
-                L"Controller input overlay could not create its native-frame hooks (frameBuilder=%d normalizer=%d).",
+                L"Controller input overlay could not create its native-frame hooks (frameBuilder=%d normalizer=%d gameInputQuery=%d).",
                 static_cast<int>(createFrameBuilder),
-                static_cast<int>(createNormalizer));
+                static_cast<int>(createNormalizer),
+                static_cast<int>(createGameInputQuery));
             RemoveHooks();
             return;
         }
@@ -202,19 +263,25 @@ public:
         const MH_STATUS enableNormalizer = enableFrameBuilder == MH_OK
             ? MH_EnableHook(normalizerTarget)
             : MH_ERROR_ENABLED;
+        const MH_STATUS enableGameInputQuery = enableNormalizer == MH_OK
+            ? MH_EnableHook(gameInputQueryTarget)
+            : MH_ERROR_ENABLED;
         frameBuilderEnabled = enableFrameBuilder == MH_OK;
         normalizerEnabled = enableNormalizer == MH_OK;
-        if (enableFrameBuilder != MH_OK || enableNormalizer != MH_OK)
+        gameInputQueryEnabled = enableGameInputQuery == MH_OK;
+        if (enableFrameBuilder != MH_OK || enableNormalizer != MH_OK ||
+            enableGameInputQuery != MH_OK)
         {
             WriteLog(
-                L"Controller input overlay could not enable its native-frame hooks (frameBuilder=%d normalizer=%d).",
+                L"Controller input overlay could not enable its native-frame hooks (frameBuilder=%d normalizer=%d gameInputQuery=%d).",
                 static_cast<int>(enableFrameBuilder),
-                static_cast<int>(enableNormalizer));
+                static_cast<int>(enableNormalizer),
+                static_cast<int>(enableGameInputQuery));
             RemoveHooks();
             return;
         }
         WriteLog(
-            L"Controller input overlay armed at 0x004B6A30/0x004913A0. It changes only the current alive local PlayerInput frame after normal construction, and only with a fresh focused OpenXR sample; keyboard/mouse and all game action dispatch remain native.");
+            L"Controller input overlay armed at 0x004B6A30/0x004913A0, native GameInput action query 0x00446490, and HudManager scoreboard state machine 0x006A9C90. At the exact Setup scoreboard branch, controller Y submits the missing player-side source-0 state, then makes global logical action 35 true so BF1942 performs its ordinary paired dispatch; keyboard/mouse bindings remain native.");
     }
 
     void Stop()
@@ -259,6 +326,134 @@ private:
         return result;
     }
 
+    static DWORD __fastcall GameInputQueryHook(
+        void* gameInput,
+        void*,
+        DWORD inputId)
+    {
+        ControllerInputOverlay* const overlay = active;
+        if (overlay == nullptr || overlay->originalGameInputQuery == nullptr)
+        {
+            return 0;
+        }
+
+        const void* const returnAddress = _ReturnAddress();
+        const DWORD nativeResult =
+            overlay->originalGameInputQuery(gameInput, inputId);
+        if (inputId != kGameInputShowScoreboard || overlay->gameImage == nullptr ||
+            returnAddress !=
+                overlay->gameImage + kSetupScoreboardQueryReturnRva)
+        {
+            return nativeResult;
+        }
+
+        bool controllerScoreboardHeld = false;
+        bfvr::D3D8RuntimeControllerSample sample = {};
+        LONG generation = 0;
+        if (bfvr::ReadFreshAcceptedControllerInput(
+                sample,
+                generation,
+                kControllerSampleMaximumAgeMs))
+        {
+            const bfvr::D3D8RuntimeControllerHand& left =
+                sample.hands[kControllerHandLeft];
+            const bfvr::D3D8RuntimeControllerHand& right =
+                sample.hands[kControllerHandRight];
+            const bool quickMenuHeld = IsHandButtonPressed(
+                right,
+                bfvr::shared::kControllerHandButtonPrimary);
+            controllerScoreboardHeld =
+                !quickMenuHeld && IsHandButtonPressed(
+                    left,
+                    bfvr::shared::kControllerHandButtonSecondary);
+        }
+
+        overlay->ApplyControllerScoreboardPlayerState(
+            controllerScoreboardHeld,
+            nativeResult != 0);
+        if (!controllerScoreboardHeld)
+        {
+            return nativeResult;
+        }
+
+        if (InterlockedCompareExchange(
+                &overlay->firstScoreboardQueryOverrideLogged,
+                1,
+                0) == 0)
+        {
+            overlay->WriteLog(
+                L"Controller Y made native GameInput action query 35 true at exact Setup::processGameInput return 0x004469A2. BF1942 will now execute its ordinary Tab scoreboard branch and HudManager timing.");
+        }
+        return 1;
+    }
+
+    void ApplyControllerScoreboardPlayerState(
+        bool controllerHeld,
+        bool nativeGlobalHeld) noexcept
+    {
+        const bool controllerReleased =
+            controllerScoreboardWasHeld && !controllerHeld;
+        controllerScoreboardWasHeld = controllerHeld;
+        if (!controllerHeld && !controllerReleased)
+        {
+            return;
+        }
+
+        if (hudManagerSetShowScoreboard == nullptr || gameImage == nullptr)
+        {
+            return;
+        }
+        __try
+        {
+            void* const hudManager = *reinterpret_cast<void**>(
+                gameImage + kHudManagerGlobalRva);
+            if (hudManager == nullptr)
+            {
+                return;
+            }
+
+            const bool requestedVisible = controllerHeld || nativeGlobalHeld;
+            // Tab is bound to both c_PIShowScoreBoard and
+            // c_GIShowScoreBoard.  The player-side HudManager::scoreBoard
+            // wrapper calls this exact function with source 0; the global
+            // Setup branch that follows uses source 1.
+            hudManagerSetShowScoreboard(
+                hudManager,
+                0,
+                requestedVisible ? 1 : 0);
+            if (controllerHeld &&
+                InterlockedCompareExchange(
+                    &firstPlayerScoreboardCallLogged,
+                    1,
+                    0) == 0)
+            {
+                const BYTE managerShow =
+                    *(reinterpret_cast<const BYTE*>(hudManager) + 0x50);
+                void* const scoreboard = *reinterpret_cast<void**>(
+                    reinterpret_cast<std::byte*>(hudManager) + 0x3C);
+                const BYTE scoreboardShow = scoreboard == nullptr
+                    ? 0xFF
+                    : *(reinterpret_cast<const BYTE*>(scoreboard) + 0xF8);
+                WriteLog(
+                    L"Controller Y submitted the missing player-side scoreboard state through HudManager::setShowScoreboard(0,1) before the native global branch: hudManager=%p managerShow=%u scoreboardShow=%u.",
+                    hudManager,
+                    static_cast<unsigned int>(managerShow),
+                    static_cast<unsigned int>(scoreboardShow));
+            }
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            if (InterlockedCompareExchange(
+                    &firstPlayerScoreboardFaultLogged,
+                    1,
+                    0) == 0)
+            {
+                WriteLog(
+                    L"Controller Y could not submit the prefix-verified player-side scoreboard state because the live HudManager was unreadable.");
+            }
+        }
+    }
+
     bool IsCurrentLocalAlivePlayer() noexcept
     {
         if (gameImage == nullptr || scopedPlayer == nullptr)
@@ -288,6 +483,7 @@ private:
             if (std::to_integer<BYTE>(playerBytes[kBFPlayerIsAliveOffset]) == 0)
             {
                 InterlockedIncrement(&notAliveFrames);
+                ResetControllerState();
                 return false;
             }
             InterlockedIncrement(&eligibleLocalPlayerFrames);
@@ -298,6 +494,69 @@ private:
             InterlockedIncrement(&unreadablePlayerFrames);
             return false;
         }
+    }
+
+    ControllerControlMode ReadCurrentControlMode() noexcept
+    {
+        if (scopedPlayer == nullptr)
+        {
+            return ControllerControlMode::Unknown;
+        }
+
+        void* currentControlObject = nullptr;
+        void* defaultControlObject = nullptr;
+        __try
+        {
+            const auto* const playerBytes =
+                static_cast<const std::byte*>(scopedPlayer);
+            currentControlObject = *reinterpret_cast<void* const*>(
+                playerBytes + kBFPlayerCurrentControlObjectOffset);
+            defaultControlObject = *reinterpret_cast<void* const*>(
+                playerBytes + kBFPlayerDefaultControlObjectOffset);
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            return ControllerControlMode::Unknown;
+        }
+
+        if (currentControlObject == nullptr || defaultControlObject == nullptr)
+        {
+            return ControllerControlMode::Unknown;
+        }
+        if (currentControlObject == defaultControlObject)
+        {
+            return ControllerControlMode::Infantry;
+        }
+
+        // PlayerControlObjectTemplate::vehicleCategory uses
+        // 0=land, 1=sea, 2=air. A non-default object whose category cannot be
+        // read safely remains on the surface mapping rather than acquiring
+        // aircraft-only roll/yaw controls.
+        __try
+        {
+            const auto* const controlBytes =
+                static_cast<const std::byte*>(currentControlObject);
+            const auto* const objectTemplate =
+                *reinterpret_cast<const std::byte* const*>(
+                    controlBytes + kPlayerControlObjectTemplateOffset);
+            if (objectTemplate != nullptr)
+            {
+                const DWORD vehicleCategory =
+                    *reinterpret_cast<const DWORD*>(
+                        objectTemplate +
+                        kPlayerControlObjectTemplateVehicleCategoryOffset);
+                if (vehicleCategory == kVehicleCategoryAir)
+                {
+                    return ControllerControlMode::AirVehicle;
+                }
+            }
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            // The current/default-object comparison has already established
+            // vehicle control. Fail closed only on the air specialization.
+        }
+        return ControllerControlMode::SurfaceVehicle;
     }
 
     static bool IsHandButtonPressed(
@@ -395,80 +654,187 @@ private:
         SetHeldInput(destination, input, pressed);
     }
 
-    void ApplyInfantryControls(
+    void UpdateControllerControlMode(
+        ControllerControlMode controlMode) noexcept
+    {
+        if (controlMode == activeControlMode)
+        {
+            return;
+        }
+        rightStickVerticalDirection = 0;
+        crouchToggled = false;
+        activeControlMode = controlMode;
+
+        if ((controlMode == ControllerControlMode::SurfaceVehicle ||
+             controlMode == ControllerControlMode::AirVehicle) &&
+            InterlockedCompareExchange(&firstVehicleModeLogged, 1, 0) == 0)
+        {
+            WriteLog(
+                L"Controller input switched from the default infantry control object to a non-default vehicle or mounted PlayerControlObject. Vehicle-only stick mapping is active; infantry stick state was cleared.");
+        }
+        if (controlMode == ControllerControlMode::AirVehicle &&
+            InterlockedCompareExchange(&firstAirModeLogged, 1, 0) == 0)
+        {
+            WriteLog(
+                L"Controller input read PlayerControlObjectTemplate vehicleCategory=VCAir. Aircraft stick mapping is active: left throttle/roll, right yaw/pitch.");
+        }
+    }
+
+    void ApplyControllerControls(
         float* destination,
         const bfvr::D3D8RuntimeControllerHand& left,
-        const bfvr::D3D8RuntimeControllerHand& right) noexcept
+        const bfvr::D3D8RuntimeControllerHand& right,
+        ControllerControlMode controlMode) noexcept
     {
         const bool quickMenuHeld = IsHandButtonPressed(
             right,
             bfvr::shared::kControllerHandButtonPrimary);
-        if ((left.flags & bfvr::shared::kControllerHandFlagThumbstickActive) != 0)
-        {
-            // The active Infantry profile binds D/A to c_PIYaw and W/S to
-            // c_PIThrottle, which agrees with OpenXR's +X right / +Y forward.
-            // BF1942 does not consume these two axes as analogue walking
-            // speed.  Use the verified native c_PIWalk action for the light
-            // deflection band and otherwise submit ordinary full-strength
-            // directional input, matching the game's keyboard semantics.
-            const float movementX = ApplyThumbstickDeadzone(left.thumbstickX);
-            const float movementY = ApplyThumbstickDeadzone(left.thumbstickY);
-            const float movementMagnitude = std::min(
-                std::hypot(movementX, movementY),
-                1.0F);
-            const bool moving = movementMagnitude != 0.0F;
-            SetHeldInput(
-                destination,
-                kLogicalInputWalk,
-                moving && movementMagnitude < kWalkStickMagnitudeThreshold);
-            if (movementX != 0.0F)
-            {
-                AddAxisInput(
-                    destination,
-                    kLogicalInputYaw,
-                    std::copysign(1.0F, movementX));
-            }
-            if (movementY != 0.0F)
-            {
-                AddAxisInput(
-                    destination,
-                    kLogicalInputThrottle,
-                    std::copysign(1.0F, movementY));
-            }
-        }
-
+        bool jumpAndParachutePressed = false;
+        bool crouchTogglePressed = false;
         bool mouseLookEnabled = false;
-        if ((right.flags & bfvr::shared::kControllerHandFlagThumbstickActive) != 0)
+
+        if (controlMode == ControllerControlMode::Infantry)
         {
-            const float turnInput =
-                ApplyThumbstickResponse(
-                    right.thumbstickX,
-                    kTurnStickResponseExponent) *
-                kStickTurnInputPerFrame;
-            if (turnInput != 0.0F)
+            if ((left.flags &
+                    bfvr::shared::kControllerHandFlagThumbstickActive) != 0)
             {
-                AddAxisInput(destination, kLogicalInputMouseLookX, turnInput);
-                mouseLookEnabled = true;
+                // The active Infantry profile binds D/A to c_PIYaw and W/S
+                // to c_PIThrottle, agreeing with OpenXR +X right / +Y
+                // forward. BF1942 does not consume them as analogue walking
+                // speed, so the light band uses c_PIWalk and directional
+                // motion remains the game's ordinary full-strength input.
+                const float movementX =
+                    ApplyThumbstickDeadzone(left.thumbstickX);
+                const float movementY =
+                    ApplyThumbstickDeadzone(left.thumbstickY);
+                const float movementMagnitude = std::min(
+                    std::hypot(movementX, movementY),
+                    1.0F);
+                const bool moving = movementMagnitude != 0.0F;
+                SetHeldInput(
+                    destination,
+                    kLogicalInputWalk,
+                    moving &&
+                        movementMagnitude < kWalkStickMagnitudeThreshold);
+                if (movementX != 0.0F)
+                {
+                    AddAxisInput(
+                        destination,
+                        kLogicalInputYaw,
+                        std::copysign(1.0F, movementX));
+                }
+                if (movementY != 0.0F)
+                {
+                    AddAxisInput(
+                        destination,
+                        kLogicalInputThrottle,
+                        std::copysign(1.0F, movementY));
+                }
             }
 
-            const int verticalDirection = quickMenuHeld
-                ? 0
-                : ThumbstickDirection(right.thumbstickY);
-            if (!quickMenuHeld && verticalDirection != 0 &&
-                verticalDirection != rightStickVerticalDirection)
+            if ((right.flags &
+                    bfvr::shared::kControllerHandFlagThumbstickActive) != 0)
             {
-                SetPulseInput(
-                    destination,
-                    verticalDirection > 0
-                        ? kLogicalInputAction
-                        : kLogicalInputProne,
-                    true);
+                const float turnInput =
+                    ApplyThumbstickResponse(
+                        right.thumbstickX,
+                        kTurnStickResponseExponent) *
+                    kStickTurnInputPerFrame;
+                if (turnInput != 0.0F)
+                {
+                    AddAxisInput(
+                        destination,
+                        kLogicalInputMouseLookX,
+                        turnInput);
+                    mouseLookEnabled = true;
+                }
+
+                const int verticalDirection = quickMenuHeld
+                    ? 0
+                    : ThumbstickDirection(right.thumbstickY);
+                if (!quickMenuHeld && verticalDirection != 0 &&
+                    verticalDirection != rightStickVerticalDirection)
+                {
+                    jumpAndParachutePressed = verticalDirection > 0;
+                    crouchTogglePressed = verticalDirection < 0;
+                }
+                rightStickVerticalDirection = verticalDirection;
             }
-            rightStickVerticalDirection = verticalDirection;
+            else
+            {
+                rightStickVerticalDirection = 0;
+            }
         }
         else
         {
             rightStickVerticalDirection = 0;
+            if (controlMode == ControllerControlMode::SurfaceVehicle)
+            {
+                if ((left.flags &
+                        bfvr::shared::kControllerHandFlagThumbstickActive) != 0)
+                {
+                    // Ground and sea engines bind c_PIYaw as steering and
+                    // c_PIThrottle as gas/reverse. Preserve the post-deadzone
+                    // analogue magnitude instead of reducing either axis to
+                    // an on/off key value.
+                    AddAxisInput(
+                        destination,
+                        kLogicalInputYaw,
+                        ApplyThumbstickDeadzone(left.thumbstickX));
+                    AddAxisInput(
+                        destination,
+                        kLogicalInputThrottle,
+                        ApplyThumbstickDeadzone(left.thumbstickY));
+                }
+                if ((right.flags &
+                        bfvr::shared::kControllerHandFlagThumbstickActive) != 0)
+                {
+                    // Stock tank, AA, naval-station, and mounted-gun object
+                    // templates bind traverse/elevation to mouse-look X/Y.
+                    AddAxisInput(
+                        destination,
+                        kLogicalInputMouseLookX,
+                        ApplyThumbstickResponse(
+                            right.thumbstickX,
+                            kVehicleAimStickResponseExponent));
+                    AddAxisInput(
+                        destination,
+                        kLogicalInputMouseLookY,
+                        ApplyThumbstickResponse(
+                            right.thumbstickY,
+                            kVehicleAimStickResponseExponent));
+                }
+            }
+            else if (controlMode == ControllerControlMode::AirVehicle)
+            {
+                if ((left.flags &
+                        bfvr::shared::kControllerHandFlagThumbstickActive) != 0)
+                {
+                    AddAxisInput(
+                        destination,
+                        kLogicalInputRoll,
+                        ApplyThumbstickDeadzone(left.thumbstickX));
+                    AddAxisInput(
+                        destination,
+                        kLogicalInputThrottle,
+                        ApplyThumbstickDeadzone(left.thumbstickY));
+                }
+                if ((right.flags &
+                        bfvr::shared::kControllerHandFlagThumbstickActive) != 0)
+                {
+                    // OpenXR +Y is stick-up. BF1942 positive c_PIPitch is
+                    // the stock dive/point-down direction, matching the
+                    // requested up=dive and down=climb layout.
+                    AddAxisInput(
+                        destination,
+                        kLogicalInputYaw,
+                        ApplyThumbstickDeadzone(right.thumbstickX));
+                    AddAxisInput(
+                        destination,
+                        kLogicalInputPitch,
+                        ApplyThumbstickDeadzone(right.thumbstickY));
+                }
+            }
         }
         if (mouseLookEnabled)
         {
@@ -476,12 +842,16 @@ private:
         }
 
         // Right A belongs exclusively to the BFVR Quick Menu. During its
-        // hold, retain only locomotion and horizontal turning; all combat and
+        // hold, retain stick locomotion/vehicle control; all combat and
         // face-button submissions remain absent from the native frame.
         if (quickMenuHeld)
         {
             triggerHeld = false;
+            leftTriggerHeld = false;
             rightSqueezeHeld = false;
+            leftPrimaryWasDown = IsHandButtonPressed(
+                left,
+                bfvr::shared::kControllerHandButtonPrimary);
             rightSecondaryWasDown = IsHandButtonPressed(
                 right,
                 bfvr::shared::kControllerHandButtonSecondary);
@@ -500,8 +870,19 @@ private:
                 kControllerTriggerReleaseThreshold,
                 triggerHeld));
 
-        // Left squeeze is reserved exclusively for off-hand support. Prone
-        // remains available on right-stick down.
+        const bool leftTriggerActive =
+            (left.flags & bfvr::shared::kControllerHandFlagTriggerActive) != 0;
+        SetHeldInput(
+            destination,
+            kLogicalInputUse,
+            UpdateAnalogHeld(
+                leftTriggerActive,
+                left.triggerValue,
+                kControllerTriggerPressThreshold,
+                kControllerTriggerReleaseThreshold,
+                leftTriggerHeld));
+
+        // Left squeeze remains reserved exclusively for off-hand support.
 
         const bool rightSqueezeActive =
             (right.flags & bfvr::shared::kControllerHandFlagSqueezeActive) != 0;
@@ -515,14 +896,42 @@ private:
                 kControllerSqueezeReleaseThreshold,
                 rightSqueezeHeld));
 
-        SetHeldInput(
+        const float vehiclePitch =
+            (IsHandButtonPressed(
+                left,
+                bfvr::shared::kControllerHandButtonThumbstick)
+                ? 1.0F
+                : 0.0F) +
+            (IsHandButtonPressed(
+                right,
+                bfvr::shared::kControllerHandButtonThumbstick)
+                ? -1.0F
+                : 0.0F);
+        AddAxisInput(destination, kLogicalInputPitch, vehiclePitch);
+
+        const bool pronePressed = TakeRisingEdge(
+            IsHandButtonPressed(
+                left,
+                bfvr::shared::kControllerHandButtonPrimary),
+            leftPrimaryWasDown);
+        if (crouchTogglePressed)
+        {
+            crouchToggled = !crouchToggled;
+        }
+        if (jumpAndParachutePressed || pronePressed)
+        {
+            crouchToggled = false;
+        }
+        SetPulseInput(
             destination,
-            kLogicalInputUse,
-            IsHandButtonPressed(left, bfvr::shared::kControllerHandButtonPrimary));
-        SetHeldInput(
+            kLogicalInputAction,
+            jumpAndParachutePressed);
+        SetPulseInput(
             destination,
-            kLogicalInputCrouch,
-            IsHandButtonPressed(left, bfvr::shared::kControllerHandButtonSecondary));
+            kLogicalInputMenuSelect9,
+            jumpAndParachutePressed);
+        SetPulseInput(destination, kLogicalInputProne, pronePressed);
+        SetHeldInput(destination, kLogicalInputCrouch, crouchToggled);
         SetPulseInput(
             destination,
             kLogicalInputReload,
@@ -565,12 +974,15 @@ private:
             sample.hands[kControllerHandLeft];
         const bfvr::D3D8RuntimeControllerHand& right =
             sample.hands[kControllerHandRight];
+        const ControllerControlMode controlMode = ReadCurrentControlMode();
+        UpdateControllerControlMode(controlMode);
         __try
         {
-            ApplyInfantryControls(
+            ApplyControllerControls(
                 destination,
                 left,
-                right);
+                right,
+                controlMode);
         }
         __except (EXCEPTION_EXECUTE_HANDLER)
         {
@@ -585,7 +997,7 @@ private:
         if (InterlockedCompareExchange(&firstEligibleFrameLogged, 1, 0) == 0)
         {
             WriteLog(
-                L"Controller input overlay accepted its first fresh focused local frame. Layout: left stick move; right stick smooth-turn with up jump/action and down prone; right trigger fire; right grip alt-fire; A is dedicated exclusively to the hold/release Quick Menu and submits no jump/action; B reload; X use; Y crouch; left grip is reserved exclusively for off-hand support. While Quick Menu A is held, only locomotion and horizontal turning survive. Controller poses do not write native camera-look input. All values remain temporary native PlayerInput fields.");
+                L"Controller input overlay accepted its first fresh focused local frame. Infantry layout remains: left stick move; right stick smooth-turn, up jump+parachute, down crouch toggle. Non-default surface control objects use analogue left throttle/steer and right turret/station aim; VCAir objects use analogue left throttle/roll and right yaw/pitch (stick up dives). Stick clicks retain vehicle pitch hatch/dive actions. Right trigger fire; right grip alt-fire; left trigger use; A Quick Menu; B reload; X prone; Y native paired scoreboard; left grip off-hand support. Unknown control transitions enable no vehicle-only stick mapping. Logical actions remain independent of configurable keyboard/mouse bindings.");
         }
     }
 
@@ -632,13 +1044,22 @@ private:
     void ResetControllerState() noexcept
     {
         triggerHeld = false;
+        leftTriggerHeld = false;
         rightSqueezeHeld = false;
+        leftPrimaryWasDown = false;
         rightSecondaryWasDown = false;
         rightStickVerticalDirection = 0;
+        crouchToggled = false;
+        activeControlMode = ControllerControlMode::Unknown;
     }
 
     void RemoveHooks()
     {
+        if (gameInputQueryEnabled)
+        {
+            MH_DisableHook(gameInputQueryTarget);
+            gameInputQueryEnabled = false;
+        }
         if (normalizerEnabled)
         {
             MH_DisableHook(normalizerTarget);
@@ -654,6 +1075,11 @@ private:
             MH_RemoveHook(normalizerTarget);
             normalizerCreated = false;
         }
+        if (gameInputQueryCreated)
+        {
+            MH_RemoveHook(gameInputQueryTarget);
+            gameInputQueryCreated = false;
+        }
         if (frameBuilderCreated)
         {
             MH_RemoveHook(frameBuilderTarget);
@@ -665,7 +1091,10 @@ private:
         }
         originalFrameBuilder = nullptr;
         originalNormalize = nullptr;
+        originalGameInputQuery = nullptr;
+        hudManagerSetShowScoreboard = nullptr;
         ResetControllerState();
+        controllerScoreboardWasHeld = false;
         if (ownsMinHook)
         {
             MH_Uninitialize();
@@ -699,10 +1128,18 @@ private:
     void (*appendLog)(const wchar_t* message) = nullptr;
     void* frameBuilderTarget = nullptr;
     void* normalizerTarget = nullptr;
+    void* gameInputQueryTarget = nullptr;
     FrameBuilderFn originalFrameBuilder = nullptr;
     NormalizeFn originalNormalize = nullptr;
+    GameInputQueryFn originalGameInputQuery = nullptr;
+    HudManagerSetShowScoreboardFn hudManagerSetShowScoreboard = nullptr;
     volatile LONG started = 0;
     volatile LONG firstEligibleFrameLogged = 0;
+    volatile LONG firstScoreboardQueryOverrideLogged = 0;
+    volatile LONG firstPlayerScoreboardCallLogged = 0;
+    volatile LONG firstPlayerScoreboardFaultLogged = 0;
+    volatile LONG firstVehicleModeLogged = 0;
+    volatile LONG firstAirModeLogged = 0;
     volatile LONG lastGateDiagnosticsAt = 0;
     volatile LONG frameBuilderCalls = 0;
     volatile LONG normalizerCalls = 0;
@@ -718,14 +1155,21 @@ private:
     volatile LONG unwritableDestinationFrames = 0;
     volatile LONG appliedFrames = 0;
     bool triggerHeld = false;
+    bool leftTriggerHeld = false;
     bool rightSqueezeHeld = false;
+    bool leftPrimaryWasDown = false;
     bool rightSecondaryWasDown = false;
     int rightStickVerticalDirection = 0;
+    bool crouchToggled = false;
+    ControllerControlMode activeControlMode = ControllerControlMode::Unknown;
+    bool controllerScoreboardWasHeld = false;
     bool ownsMinHook = false;
     bool frameBuilderCreated = false;
     bool normalizerCreated = false;
+    bool gameInputQueryCreated = false;
     bool frameBuilderEnabled = false;
     bool normalizerEnabled = false;
+    bool gameInputQueryEnabled = false;
 };
 
 ControllerInputOverlay* ControllerInputOverlay::active = nullptr;

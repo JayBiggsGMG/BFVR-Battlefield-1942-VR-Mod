@@ -75,6 +75,7 @@ struct OpenXRControllerHandState
     bool triggerActive = false;
     bool squeezeActive = false;
     bool thumbstickActive = false;
+    bool thumbstickPressed = false;
     bool primaryPressed = false;
     bool secondaryPressed = false;
     bool menuPressed = false;

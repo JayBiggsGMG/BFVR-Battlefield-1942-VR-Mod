@@ -930,6 +930,7 @@ public:
         controllerTriggerAction = XR_NULL_HANDLE;
         controllerSqueezeAction = XR_NULL_HANDLE;
         controllerThumbstickAction = XR_NULL_HANDLE;
+        controllerThumbstickClickAction = XR_NULL_HANDLE;
         controllerPrimaryAction = XR_NULL_HANDLE;
         controllerSecondaryAction = XR_NULL_HANDLE;
         controllerMenuAction = XR_NULL_HANDLE;
@@ -999,6 +1000,11 @@ public:
                 "BFVR thumbstick",
                 XR_ACTION_TYPE_VECTOR2F_INPUT) &&
             CreateControllerAction(
+                controllerThumbstickClickAction,
+                "bfvr_thumbstick_click",
+                "BFVR thumbstick click",
+                XR_ACTION_TYPE_BOOLEAN_INPUT) &&
+            CreateControllerAction(
                 controllerPrimaryAction,
                 "bfvr_primary",
                 "BFVR primary button",
@@ -1035,6 +1041,7 @@ public:
             AddSuggestedBinding(oculusBindings, controllerTriggerAction, (prefix + "/input/trigger/value").c_str());
             AddSuggestedBinding(oculusBindings, controllerSqueezeAction, (prefix + "/input/squeeze/value").c_str());
             AddSuggestedBinding(oculusBindings, controllerThumbstickAction, (prefix + "/input/thumbstick").c_str());
+            AddSuggestedBinding(oculusBindings, controllerThumbstickClickAction, (prefix + "/input/thumbstick/click").c_str());
             AddSuggestedBinding(
                 oculusBindings,
                 controllerPrimaryAction,
@@ -1337,6 +1344,8 @@ public:
                 destination.squeezeActive,
                 destination.squeezeValue);
             SampleThumbstickAction(handPath, destination);
+            destination.thumbstickPressed =
+                SampleBooleanAction(controllerThumbstickClickAction, handPath);
             destination.primaryPressed =
                 SampleBooleanAction(controllerPrimaryAction, handPath);
             destination.secondaryPressed =
@@ -2151,6 +2160,7 @@ public:
     XrAction controllerTriggerAction = XR_NULL_HANDLE;
     XrAction controllerSqueezeAction = XR_NULL_HANDLE;
     XrAction controllerThumbstickAction = XR_NULL_HANDLE;
+    XrAction controllerThumbstickClickAction = XR_NULL_HANDLE;
     XrAction controllerPrimaryAction = XR_NULL_HANDLE;
     XrAction controllerSecondaryAction = XR_NULL_HANDLE;
     XrAction controllerMenuAction = XR_NULL_HANDLE;

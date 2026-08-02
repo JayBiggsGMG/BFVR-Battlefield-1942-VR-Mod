@@ -88,28 +88,60 @@ The first live controller runs proved the OpenXR transport, local-frame gate,
 right-trigger fire, and controller look route. The current build packages the
 following one-pass infantry layout for a normal local/offline play test:
 
-- Left stick: move (strafe / forward-back).
-- Right stick: analogue smooth turn left-right; push up once to jump/action,
-  down once to go prone.
+- Left stick: move (strafe / forward-back); click for the native contextual
+  vehicle hatch/dive-down action.
+- Right stick: analogue smooth turn left-right; click for the native contextual
+  vehicle hatch/dive-up action; flick up once to submit jump and parachute
+  together; flick down once to toggle crouch on or off.
 - Right trigger / grip: fire / alt-fire.
+- Left trigger: use (hold).
 - Right A: dedicated Quick Menu hold; it never submits jump/action. Hold A to
   show the stabilized 0.266 m right-hand panel, point with the right aim ray,
   and release A to choose Escape, Enter, 1-6, or F9-F12. Releasing off-panel
   or losing focus/tracking cancels. Its authored stack is background, selected
   hover, text, then the frame as the final/top layer.
 - Right B: reload.
-- Left X / Y / grip: use (hold) / crouch (hold) / proximity-gated weapon
-  support.
+- Left X / Y / grip: prone / scoreboard (hold through BF1942's paired native
+  player/global HUD semantics) / proximity-gated weapon support.
+  Prone and jump clear a controller-toggled crouch.
 - Both sticks: a dead-zone-remapped analogue response curve; small deflections
   move/turn gently and full deflection reaches full native axis input.
 
-While the Quick Menu is open, controller fire, alt-fire, stick-up/down actions,
-and face-button gameplay actions are suppressed; locomotion and horizontal
-turning remain live. The x64 presenter emits one scan-code down/up pair only on
-A release with a valid hover and only while BF1942 is the foreground process.
+When the local player controls a non-default vehicle or mounted
+`PlayerControlObject`, BFVR switches only the stick axes while retaining the
+buttons above:
+
+- Land, sea, AA, and mounted guns: left Y is proportional gas/throttle or
+  reverse, left X is proportional steering, and the right stick continuously
+  aims turret/station traverse and elevation.
+- Aircraft: left Y is proportional throttle, left X is roll, right X is yaw,
+  and right Y is pitch. Stick up uses BF1942's positive pitch/dive direction;
+  stick down climbs.
+
+The switch uses BF1942's current-versus-default control-object relation, not a
+null pointer or configurable key binding. A soldier is the default
+`PlayerControlObject`; vehicles and stationary weapons are non-default control
+objects. The controlled template's native `VCAir` category selects the aircraft
+axes, while land/sea and unreadable mod categories never acquire aircraft-only
+roll/yaw mapping. Entering or leaving a vehicle clears crouch/directional stick
+state so an infantry toggle cannot leak across the transition.
+
+While the Quick Menu is open, controller fire, alt-fire, infantry stick-up/down
+actions, and face-button gameplay actions are suppressed; stick locomotion and
+vehicle control remain live. The x64 presenter emits one scan-code down/up pair
+only on A release with a valid hover and only while BF1942 is the foreground process.
 The number keys retain BF1942's native context-sensitive weapon/vehicle-seat
 behavior, while Enter opens deployment, F9-F12 select cameras, and Escape opens
 the native main menu. Mouse and keyboard remain available.
+
+Gameplay controller inputs are submitted as BF1942 logical actions, not as
+keyboard keys. Scoreboard Y submits the exact player-side source-0 state used
+by `HudManager::scoreBoard`, then overrides only logical action 35 at the native
+global branch so BF1942 completes its ordinary paired dispatch. Changing
+keyboard or mouse bindings in the native profile menu therefore does not change
+or break this controller layout. The jump/parachute pair likewise bypasses the
+profile editor's duplicate-binding restriction by submitting both native
+actions in the same temporary input frame.
 
 Controller pose no longer writes BF1942 mouse-look; deliberate right-stick
 turn and ordinary keyboard/mouse look remain live. The opt-in weapon path uses

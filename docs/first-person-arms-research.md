@@ -1051,9 +1051,10 @@ work is deferred.
 ### Support acquisition and input resolution
 
 At the owner's direction, left squeeze no longer submits native prone. It is
-exclusive to off-hand support, and right-stick-down remains the prone route.
-This removes the gameplay side effect instead of conditionally mediating two
-meanings on the same press.
+exclusive to off-hand support. At this stage right-stick-down remained the prone
+route; the later controller refinement moved prone to X and assigned
+right-stick-down to toggle crouch. This removes the gameplay side effect instead
+of conditionally mediating two meanings on the same press.
 
 The first runtime acquisition slice is visual-only for every item. It uses the
 right-authoritative gun matrix only to predict the authored support socket,

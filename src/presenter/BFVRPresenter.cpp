@@ -185,6 +185,9 @@ DWORD MakeControllerButtons(const bfvr::OpenXRControllerHandState& hand)
     buttons |= hand.menuPressed
         ? bfvr::shared::kControllerHandButtonMenu
         : 0;
+    buttons |= hand.thumbstickPressed
+        ? bfvr::shared::kControllerHandButtonThumbstick
+        : 0;
     return buttons;
 }
 
