@@ -124,7 +124,6 @@ public:
             return;
         }
         hookEnabled_ = true;
-        (void)bfvr::InitializeMountedWeaponAimResolver(gameImage, log);
         bfvr::InitializeD3D8WorldCrosshairRenderer(log);
         WriteLog(
             L"Native flat crosshair suppression and 3D reticle state armed at 0x006A97B0; maximumDistance=%.2f m angularDiameter=%.2f degrees. HudManager requests are observed before being forced off; global HUD and unrelated Ref2 draw families remain unchanged.",
@@ -154,7 +153,6 @@ public:
             InterlockedCompareExchange(&forcedHidden_, 0, 0));
         RemoveHook();
         bfvr::ShutdownD3D8WorldCrosshairRenderer();
-        bfvr::ShutdownMountedWeaponAimResolver();
         gameImage_ = nullptr;
         InterlockedExchange(&requestedVisible_, 0);
         InterlockedExchange(&started_, 0);

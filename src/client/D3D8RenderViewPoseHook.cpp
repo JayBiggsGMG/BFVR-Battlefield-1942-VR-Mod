@@ -1,11 +1,15 @@
 #include "client/D3D8RenderViewPoseHook.h"
 
+#include "client/MountedWeaponAimResolver.h"
+
+#include "stereo/MountedCameraMath.h"
 #include "stereo/StereoMath.h"
 
 #include <MinHook.h>
 
 #include <windows.h>
 
+#include <algorithm>
 #include <array>
 #include <cstdarg>
 #include <cstddef>
@@ -193,6 +197,13 @@ public:
     {
         referenceHead = newReferenceHead;
         currentHead = MakeD3D8RuntimeHeadReference(request);
+        if (request.controllerInput.valid &&
+            request.controllerInput.mountedCameraToggleSequence >= 0)
+        {
+            InterlockedExchange(
+                &requestedMountedCameraToggleSequence,
+                request.controllerInput.mountedCameraToggleSequence);
+        }
         MemoryBarrier();
         InterlockedExchange(&requestedSequence, request.sequence);
     }
@@ -203,6 +214,7 @@ public:
         currentHead = {};
         lastSource = {};
         lastSourceValid = false;
+        ResetMountedCameraAnchor(false);
         MemoryBarrier();
         InterlockedExchange(&requestedSequence, 0);
         InterlockedExchange(&appliedSequence, 0);
@@ -216,6 +228,14 @@ public:
                 const_cast<volatile LONG*>(&appliedSequence),
                 0,
                 0) == sequence;
+    }
+
+    bool IsMountedCameraDecoupled() const noexcept
+    {
+        return InterlockedCompareExchange(
+            const_cast<volatile LONG*>(&mountedCameraDecoupled),
+            0,
+            0) != 0;
     }
 
     void DisableAndRemove()
@@ -249,12 +269,16 @@ public:
         frustumTarget = nullptr;
         gameImage = nullptr;
         lastSourceValid = false;
+        ResetMountedCameraAnchor(false);
+        mountedCameraControl = {};
+        InterlockedExchange(&requestedMountedCameraToggleSequence, 0);
+        InterlockedExchange(&mountedCameraDecoupled, 0);
     }
 
     void LogSummary() const
     {
         WriteLog(
-            L"RenderView pose/frustum-hook summary: setterMatches=%ld setterApplied=%ld setterRejected=%ld frustumMatches=%ld frustumApplied=%ld frustumNoSource=%ld frustumRejected=%ld lastRequested=%ld lastApplied=%ld lastFrustum=%ld.",
+            L"RenderView pose/frustum-hook summary: setterMatches=%ld setterApplied=%ld setterRejected=%ld frustumMatches=%ld frustumApplied=%ld frustumNoSource=%ld frustumRejected=%ld mountedAnchorCaptures=%ld mountedDecoupled=%ld mountedRejected=%ld mountedResets=%ld mountedToggles=%ld mountedToggleIgnored=%ld lastRequested=%ld lastApplied=%ld lastFrustum=%ld.",
             matchingCalls,
             appliedCalls,
             rejectedTransforms,
@@ -262,6 +286,12 @@ public:
             frustumAppliedCalls,
             frustumNoSource,
             frustumRejected,
+            mountedAnchorCaptures,
+            mountedDecoupledCalls,
+            mountedRejected,
+            mountedResets,
+            mountedToggles,
+            mountedToggleIgnored,
             requestedSequence,
             appliedSequence,
             appliedFrustumSequence);
@@ -340,9 +370,108 @@ private:
             original(renderView, transformation);
             return;
         }
+
+        stereo::Matrix4 cameraSource = source;
+        MountedWeaponStationPose station = {};
+        const bool stationValid = readable &&
+            ReadOccupiedMountedWeaponStationPose(station);
+        const std::uint32_t toggleSequence = static_cast<std::uint32_t>(
+            (std::max)(
+                InterlockedCompareExchange(
+                    &requestedMountedCameraToggleSequence,
+                    0,
+                    0),
+                0L));
+        const stereo::MountedCameraControlTransition transition =
+            stereo::UpdateMountedCameraControl(
+                mountedCameraControl,
+                stationValid
+                    ? reinterpret_cast<std::uintptr_t>(
+                        station.controlObject)
+                    : 0,
+                toggleSequence);
+        if (transition.stationChanged || transition.decouplingChanged)
+        {
+            ResetMountedCameraAnchor(
+                mountedCameraAnchorValid &&
+                transition.decouplingChanged);
+        }
+        if (transition.toggleApplied)
+        {
+            InterlockedIncrement(&mountedToggles);
+            WriteLog(
+                mountedCameraControl.decoupled
+                    ? L"Mounted-camera decoupling enabled for current station=%p; right-stick and controller motion still drive BF1942's native weapon axes while the VR camera remains in the station frame."
+                    : L"Mounted-camera decoupling disabled for current station=%p; BF1942's native coupled camera is restored.",
+                station.controlObject);
+        }
+        if (transition.toggleIgnored)
+        {
+            InterlockedIncrement(&mountedToggleIgnored);
+            WriteLog(
+                L"Mounted-camera decouple toggle was ignored because no occupied weapon station resolved; default native coupling remains active.");
+        }
+        InterlockedExchange(
+            &mountedCameraDecoupled,
+            mountedCameraControl.decoupled ? 1 : 0);
+
+        if (mountedCameraControl.decoupled && stationValid)
+        {
+            if (!mountedCameraAnchorValid ||
+                mountedControlObject != station.controlObject)
+            {
+                const auto captured =
+                    stereo::CaptureD3D8MountedCameraAnchor(
+                        source,
+                        station.stationWorld);
+                if (captured.has_value())
+                {
+                    mountedCameraInStation = *captured;
+                    mountedControlObject = station.controlObject;
+                    mountedCameraAnchorValid = true;
+                    InterlockedIncrement(&mountedAnchorCaptures);
+                    WriteLog(
+                        L"Mounted-camera decoupling captured station=%p cameraLocal=(%.3f,%.3f,%.3f); gun yaw/pitch and pivot motion are now excluded until this occupied control object changes or the user disables decoupling.",
+                        station.controlObject,
+                        mountedCameraInStation.values[3][0],
+                        mountedCameraInStation.values[3][1],
+                        mountedCameraInStation.values[3][2]);
+                }
+                else
+                {
+                    InterlockedIncrement(&mountedRejected);
+                    mountedCameraControl.decoupled = false;
+                    InterlockedExchange(&mountedCameraDecoupled, 0);
+                    WriteLog(
+                        L"Mounted-camera decoupling failed closed to native coupling because the station-relative camera anchor was invalid.");
+                }
+            }
+
+            if (mountedCameraAnchorValid &&
+                mountedControlObject == station.controlObject)
+            {
+                const auto decoupled =
+                    stereo::ComposeD3D8MountedCameraFromAnchor(
+                        mountedCameraInStation,
+                        station.stationWorld);
+                if (decoupled.has_value())
+                {
+                    cameraSource = *decoupled;
+                    InterlockedIncrement(&mountedDecoupledCalls);
+                }
+                else
+                {
+                    InterlockedIncrement(&mountedRejected);
+                    ResetMountedCameraAnchor(true);
+                    mountedCameraControl.decoupled = false;
+                    InterlockedExchange(&mountedCameraDecoupled, 0);
+                }
+            }
+        }
+
         const auto adjusted = readable
             ? stereo::ComposeRuntimeHeadWithD3D8Camera(
-                source,
+                cameraSource,
                 ToPose(referenceHead),
                 ToPose(currentHead),
                 kWorldUnitsPerMeter)
@@ -420,6 +549,23 @@ private:
         }
     }
 
+    void ResetMountedCameraAnchor(bool logReset) noexcept
+    {
+        if (mountedCameraAnchorValid)
+        {
+            InterlockedIncrement(&mountedResets);
+            if (logReset)
+            {
+                WriteLog(
+                    L"Mounted-camera decoupling released station=%p and returned to BF1942's native coupled camera.",
+                    mountedControlObject);
+            }
+        }
+        mountedControlObject = nullptr;
+        mountedCameraInStation = {};
+        mountedCameraAnchorValid = false;
+    }
+
     void WriteLog(const wchar_t* format, ...) const
     {
         if (logCallback == nullptr)
@@ -449,7 +595,10 @@ private:
     D3D8RuntimeView referenceHead = {};
     D3D8RuntimeView currentHead = {};
     stereo::Matrix4 lastSource = {};
+    stereo::Matrix4 mountedCameraInStation = {};
+    const void* mountedControlObject = nullptr;
     bool lastSourceValid = false;
+    bool mountedCameraAnchorValid = false;
     volatile LONG requestedSequence = 0;
     volatile LONG appliedSequence = 0;
     volatile LONG matchingCalls = 0;
@@ -459,7 +608,16 @@ private:
     volatile LONG frustumAppliedCalls = 0;
     volatile LONG frustumNoSource = 0;
     volatile LONG frustumRejected = 0;
+    volatile LONG mountedAnchorCaptures = 0;
+    volatile LONG mountedDecoupledCalls = 0;
+    volatile LONG mountedRejected = 0;
+    volatile LONG mountedResets = 0;
+    volatile LONG mountedToggles = 0;
+    volatile LONG mountedToggleIgnored = 0;
+    volatile LONG requestedMountedCameraToggleSequence = 0;
+    volatile LONG mountedCameraDecoupled = 0;
     volatile LONG appliedFrustumSequence = 0;
+    stereo::MountedCameraControlState mountedCameraControl = {};
     bool created = false;
     bool frustumCreated = false;
     bool enabled = false;
@@ -509,6 +667,11 @@ void D3D8RenderViewPoseHook::ClearPose() noexcept
 bool D3D8RenderViewPoseHook::WasApplied(LONG sequence) const noexcept
 {
     return impl_ != nullptr && impl_->WasApplied(sequence);
+}
+
+bool D3D8RenderViewPoseHook::IsMountedCameraDecoupled() const noexcept
+{
+    return impl_ != nullptr && impl_->IsMountedCameraDecoupled();
 }
 
 void D3D8RenderViewPoseHook::DisableAndRemove()

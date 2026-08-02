@@ -54,6 +54,7 @@ public:
         OpenXRLogCallback logCallback,
         void* logContext);
     void Update(const OpenXRPresentationFrameState& frame) noexcept;
+    void SetMountedCameraDecoupled(bool decoupled) noexcept;
 
     std::size_t AppendLayers(
         XrSpace localSpace,
@@ -95,15 +96,19 @@ private:
     ID3D11DeviceContext* context_ = nullptr;
     std::array<ID3D11Texture2D*, stereo::kQuickMenuSelectionCount>
         menuSources_ = {};
+    std::array<ID3D11Texture2D*, 8> utilitySources_ = {};
     ID3D11Texture2D* cursorSource_ = nullptr;
     Swapchain menuSwapchain_ = {};
+    Swapchain utilitySwapchain_ = {};
     Swapchain cursorSwapchain_ = {};
     XrCompositionLayerQuad menuLayer_{XR_TYPE_COMPOSITION_LAYER_QUAD};
+    XrCompositionLayerQuad utilityLayer_{XR_TYPE_COMPOSITION_LAYER_QUAD};
     XrCompositionLayerQuad cursorLayer_{XR_TYPE_COMPOSITION_LAYER_QUAD};
     stereo::QuickMenuInteraction interaction_ = {};
     OpenXRLogCallback logCallback_ = nullptr;
     void* logContext_ = nullptr;
     bool firstVisibleFrameLogged_ = false;
+    bool mountedCameraDecoupled_ = false;
 };
 
 } // namespace bfvr

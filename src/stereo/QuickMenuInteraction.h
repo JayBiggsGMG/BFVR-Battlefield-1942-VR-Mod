@@ -23,6 +23,9 @@ enum class QuickMenuSelection : std::uint32_t
     CameraF10,
     CameraF11,
     CameraF12,
+    MountedCameraDecouple,
+    UtilityPlaceholder2,
+    UtilityPlaceholder3,
     Count
 };
 
@@ -32,6 +35,14 @@ constexpr std::uint32_t kQuickMenuTextureSize = 512;
 // Owner-requested 30% reduction from the initial 0.38 m square panel.
 constexpr float kQuickMenuWidthMeters = 0.266F;
 constexpr float kQuickMenuHeightMeters = 0.266F;
+constexpr std::uint32_t kQuickMenuUtilityTextureWidth = 510;
+constexpr std::uint32_t kQuickMenuUtilityTextureHeight = 108;
+constexpr std::size_t kQuickMenuUtilityButtonCount = 3;
+constexpr float kQuickMenuUtilityGapMeters = 0.010F;
+constexpr float kQuickMenuUtilityHeightMeters =
+    kQuickMenuWidthMeters *
+    static_cast<float>(kQuickMenuUtilityTextureHeight) /
+    static_cast<float>(kQuickMenuUtilityTextureWidth);
 constexpr float kQuickMenuCursorHotspotX = 0.0F;
 constexpr float kQuickMenuCursorHotspotY = 0.0F;
 
@@ -53,6 +64,7 @@ struct QuickMenuInteractionSnapshot
 {
     bool visible = false;
     bool pointerVisible = false;
+    bool pointerOnUtilityStrip = false;
     float pointerU = 0.0F;
     float pointerV = 0.0F;
     Pose panelPose = {};
@@ -82,6 +94,7 @@ private:
     float pointerV_ = 0.0F;
     bool visible_ = false;
     bool pointerVisible_ = false;
+    bool pointerOnUtilityStrip_ = false;
     bool blockedUntilRelease_ = false;
 };
 
@@ -89,12 +102,29 @@ private:
     float normalizedX,
     float normalizedY) noexcept;
 
+[[nodiscard]] QuickMenuSelection QuickMenuUtilitySelectionAt(
+    float normalizedX,
+    float normalizedY) noexcept;
+
+[[nodiscard]] bool IsQuickMenuUtilitySelection(
+    QuickMenuSelection selection) noexcept;
+
 [[nodiscard]] const wchar_t* QuickMenuSelectionName(
     QuickMenuSelection selection) noexcept;
 
 // Places the cursor texture so its authored top-left corner, rather than its
 // centre, coincides with the ray hit point on the panel.
 [[nodiscard]] Pose MakeQuickMenuCursorPose(
+    const Pose& panelPose,
+    float pointerU,
+    float pointerV,
+    float cursorWidthMeters,
+    float cursorHeightMeters) noexcept;
+
+[[nodiscard]] Pose MakeQuickMenuUtilityPose(
+    const Pose& panelPose) noexcept;
+
+[[nodiscard]] Pose MakeQuickMenuUtilityCursorPose(
     const Pose& panelPose,
     float pointerU,
     float pointerV,

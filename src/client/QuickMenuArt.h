@@ -35,6 +35,12 @@ public:
         std::vector<std::uint32_t>& pixels,
         UINT& width,
         UINT& height) const;
+    bool CopyUtilityStripPixels(
+        stereo::QuickMenuSelection hovered,
+        bool mountedCameraDecoupled,
+        std::vector<std::uint32_t>& pixels,
+        UINT& width,
+        UINT& height) const;
 
     [[nodiscard]] bool IsReady() const noexcept;
 

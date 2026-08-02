@@ -122,12 +122,16 @@ struct OpenXRQuickMenuMirrorState
     stereo::QuickMenuSelection hovered =
         stereo::QuickMenuSelection::None;
     OpenXRPresentationPose panelPose = {};
+    OpenXRPresentationPose utilityPose = {};
     OpenXRPresentationPose cursorPose = {};
     float panelWidthMeters = 0.0F;
     float panelHeightMeters = 0.0F;
+    float utilityWidthMeters = 0.0F;
+    float utilityHeightMeters = 0.0F;
     float cursorWidthMeters = 0.0F;
     float cursorHeightMeters = 0.0F;
     ID3D11Texture2D* menuTexture = nullptr;
+    ID3D11Texture2D* utilityTexture = nullptr;
     ID3D11Texture2D* cursorTexture = nullptr;
 };
 
@@ -208,6 +212,10 @@ public:
     // right-controller A hold. Rendering never dispatches keyboard input.
     [[nodiscard]] stereo::QuickMenuSelection
     TakeQuickMenuSelection() noexcept;
+
+    // The game-side camera hook owns this state. The presenter mirrors it
+    // only to render the left utility button's coupled/decoupled appearance.
+    void SetMountedCameraDecoupled(bool decoupled) noexcept;
 
     // Returns the current separately submitted menu/cursor state for the
     // right-eye desktop preview. The returned textures are borrowed.

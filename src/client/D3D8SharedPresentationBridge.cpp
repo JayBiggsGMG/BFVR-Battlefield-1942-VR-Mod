@@ -501,6 +501,8 @@ public:
                 static_cast<unsigned long>(source.flags));
             return false;
         }
+        destination.mountedCameraToggleSequence =
+            source.mountedCameraToggleSequence;
         for (std::size_t hand = 0; hand < destination.hands.size(); ++hand)
         {
             const shared::SharedControllerHandSample& sourceHand = source.hands[hand];
@@ -1099,6 +1101,9 @@ public:
         InterlockedExchange(
             &block->frameOverlayFlags,
             overlayFlags);
+        InterlockedExchange(
+            &block->mountedCameraDecoupled,
+            placement.mountedCameraDecoupled ? 1 : 0);
     }
 
     void WriteLog(const wchar_t* format, ...) const

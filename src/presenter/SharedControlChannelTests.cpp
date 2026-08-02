@@ -57,9 +57,36 @@ int main()
         producer.WaitForPresenterUpdate(0) == WAIT_TIMEOUT,
         L"presenter update event did not auto-reset") && passed;
 
+    bfvr::shared::ControlBlock* const producerBlock = producer.Get();
+    bfvr::shared::ControlBlock* const presenterBlock = presenter.Get();
+    presenterBlock->controllerSample.mountedCameraToggleSequence = 7;
+    MemoryBarrier();
+    InterlockedExchange(&presenterBlock->controllerSampleSequence, 11);
+    passed = Check(
+        presenter.SignalPresenterUpdate() &&
+            producer.WaitForPresenterUpdate(1000) == WAIT_OBJECT_0 &&
+            InterlockedCompareExchange(
+                &producerBlock->controllerSampleSequence,
+                0,
+                0) == 11 &&
+            producerBlock->controllerSample.mountedCameraToggleSequence == 7,
+        L"presenter-to-producer mounted-camera toggle payload failed") &&
+        passed;
+
+    InterlockedExchange(&producerBlock->mountedCameraDecoupled, 1);
+    passed = Check(
+        producer.SignalProducerUpdate() &&
+            presenter.WaitForProducerUpdate(1000) == WAIT_OBJECT_0 &&
+            InterlockedCompareExchange(
+                &presenterBlock->mountedCameraDecoupled,
+                0,
+                0) == 1,
+        L"producer-to-presenter mounted-camera state feedback failed") &&
+        passed;
+
     if (passed)
     {
-        wprintf(L"[PASS] Shared control channel update events are bidirectional and auto-reset.\n");
+        wprintf(L"[PASS] Shared control channel events and mounted-camera control/state payloads are bidirectional.\n");
     }
     return passed ? 0 : 1;
 }

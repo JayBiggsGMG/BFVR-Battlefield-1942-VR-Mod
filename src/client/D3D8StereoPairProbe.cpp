@@ -10,6 +10,7 @@
 #include "client/D3D8WorldCrosshairRenderer.h"
 #include "client/MainMenuOverlay.h"
 #include "client/MenuPointerOverlay.h"
+#include "client/MountedWeaponAimResolver.h"
 #include "client/StartupMenuPresentation.h"
 #include "client/D3D8WeaponMotionOverlay.h"
 #include "client/WeaponAimOverlay.h"
@@ -2216,6 +2217,21 @@ DWORD WINAPI RunProbe(void*)
         SignalCompletion();
         return 0;
     }
+    // InstallHooks establishes the executable image range consumed by the
+    // shared mounted-weapon resolver. Starting it earlier leaves that range
+    // null, which disables both the mounted-camera control and the mounted
+    // 3D-crosshair fire-pose source.
+    const bool mountedWeaponResolverStarted =
+        IsPresentationMode() && !g_offlinePresentation &&
+        bfvr::InitializeMountedWeaponAimResolver(
+            reinterpret_cast<void*>(g_gameImageBegin),
+            AppendPresentationLog);
+    if (IsPresentationMode() && !g_offlinePresentation &&
+        !mountedWeaponResolverStarted)
+    {
+        AppendLog(
+            L"Mounted-camera decouple control and mounted 3D-crosshair fire-pose source are unavailable because the mounted-weapon resolver rejected this executable profile; BF1942's native coupled camera remains unchanged.");
+    }
     if (IsPresentationMode() && !g_offlinePresentation)
     {
         // Startup pointer teardown clears this process-wide gate. Re-arm it
@@ -2342,6 +2358,10 @@ DWORD WINAPI RunProbe(void*)
     }
     bfvr::SetMainMenuOverlayAvailable(false);
     RemoveHooks();
+    if (mountedWeaponResolverStarted)
+    {
+        bfvr::ShutdownMountedWeaponAimResolver();
+    }
     MH_Uninitialize();
     AppendLog(
         IsFullFrameMode() && g_runUntilStopped

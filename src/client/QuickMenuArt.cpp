@@ -100,6 +100,83 @@ std::uint32_t BlendPremultiplied(
         blendChannel(Channel(source, 16U), Channel(destination, 16U)),
         blendChannel(sourceAlpha, Channel(destination, 24U)));
 }
+
+std::uint32_t MakePremultipliedPixel(
+    std::uint8_t blue,
+    std::uint8_t green,
+    std::uint8_t red,
+    std::uint8_t alpha) noexcept
+{
+    const auto premultiply = [alpha](std::uint8_t channel) {
+        return (static_cast<std::uint32_t>(channel) * alpha + 127U) / 255U;
+    };
+    return PackPixel(
+        premultiply(blue),
+        premultiply(green),
+        premultiply(red),
+        alpha);
+}
+
+void FillRectangle(
+    std::vector<std::uint32_t>& pixels,
+    UINT width,
+    UINT height,
+    UINT left,
+    UINT top,
+    UINT right,
+    UINT bottom,
+    std::uint32_t color) noexcept
+{
+    left = std::min(left, width);
+    right = std::min(right, width);
+    top = std::min(top, height);
+    bottom = std::min(bottom, height);
+    for (UINT y = top; y < bottom; ++y)
+    {
+        const std::size_t row = static_cast<std::size_t>(y) * width;
+        std::fill(
+            pixels.begin() + row + left,
+            pixels.begin() + row + right,
+            color);
+    }
+}
+
+void DrawPlaceholderGlyph(
+    std::vector<std::uint32_t>& pixels,
+    UINT width,
+    UINT height,
+    UINT button,
+    const std::array<std::uint8_t, 7>& rows,
+    std::uint32_t color) noexcept
+{
+    constexpr UINT scale = 7;
+    constexpr UINT glyphWidth = 5 * scale;
+    constexpr UINT glyphHeight = 7 * scale;
+    const UINT buttonWidth = width /
+        static_cast<UINT>(bfvr::stereo::kQuickMenuUtilityButtonCount);
+    const UINT originX = button * buttonWidth +
+        (buttonWidth - glyphWidth) / 2;
+    const UINT originY = (height - glyphHeight) / 2;
+    for (UINT row = 0; row < rows.size(); ++row)
+    {
+        for (UINT column = 0; column < 5; ++column)
+        {
+            if ((rows[row] & (1U << (4U - column))) == 0)
+            {
+                continue;
+            }
+            FillRectangle(
+                pixels,
+                width,
+                height,
+                originX + column * scale,
+                originY + row * scale,
+                originX + (column + 1) * scale - 1,
+                originY + (row + 1) * scale - 1,
+                color);
+        }
+    }
+}
 } // namespace
 
 namespace bfvr
@@ -225,8 +302,17 @@ bool QuickMenuArt::InitializeFromDirectory(
         }
         menus_[index + 1] = std::move(variant);
     }
+    for (std::size_t index = static_cast<std::size_t>(
+             stereo::QuickMenuSelection::MountedCameraDecouple);
+         index < menus_.size();
+         ++index)
+    {
+        // Utility hover is rendered in the separate strip, so the authored
+        // square menu remains on its neutral variant.
+        menus_[index] = base;
+    }
     WriteLog(
-        L"Quick Menu loaded background -> hover -> text -> final frame variants and a %ux%u top-left-hotspot cursor from %s.",
+        L"Quick Menu loaded background -> hover -> text -> final frame variants, a %ux%u top-left-hotspot cursor, and the temporary three-button utility strip from %s.",
         cursor_.width,
         cursor_.height,
         assetsDirectory.c_str());
@@ -277,6 +363,85 @@ bool QuickMenuArt::CopyCursorPixels(
     pixels = cursor_.pixels;
     width = cursor_.width;
     height = cursor_.height;
+    return true;
+}
+
+bool QuickMenuArt::CopyUtilityStripPixels(
+    stereo::QuickMenuSelection hovered,
+    bool mountedCameraDecoupled,
+    std::vector<std::uint32_t>& pixels,
+    UINT& width,
+    UINT& height) const
+{
+    width = stereo::kQuickMenuUtilityTextureWidth;
+    height = stereo::kQuickMenuUtilityTextureHeight;
+    pixels.assign(static_cast<std::size_t>(width) * height, 0U);
+    if (!IsReady())
+    {
+        pixels.clear();
+        width = 0;
+        height = 0;
+        return false;
+    }
+
+    constexpr UINT buttonWidth =
+        stereo::kQuickMenuUtilityTextureWidth /
+        static_cast<UINT>(stereo::kQuickMenuUtilityButtonCount);
+    const std::uint32_t outline = MakePremultipliedPixel(
+        174, 184, 188, 236);
+    const std::uint32_t glyph = MakePremultipliedPixel(
+        230, 238, 240, 244);
+    for (UINT button = 0;
+         button < stereo::kQuickMenuUtilityButtonCount;
+         ++button)
+    {
+        const stereo::QuickMenuSelection selection =
+            static_cast<stereo::QuickMenuSelection>(
+                static_cast<std::uint32_t>(
+                    stereo::QuickMenuSelection::MountedCameraDecouple) +
+                button);
+        const bool highlighted = hovered == selection;
+        const bool active = button == 0 && mountedCameraDecoupled;
+        const std::uint32_t fill = active
+            ? MakePremultipliedPixel(
+                highlighted ? 112 : 86,
+                highlighted ? 196 : 164,
+                highlighted ? 126 : 96,
+                226)
+            : MakePremultipliedPixel(
+                highlighted ? 88 : 54,
+                highlighted ? 104 : 66,
+                highlighted ? 114 : 74,
+                218);
+        const UINT left = button * buttonWidth + 4;
+        const UINT right = (button + 1) * buttonWidth - 4;
+        FillRectangle(pixels, width, height, left, 4, right, height - 4, outline);
+        FillRectangle(
+            pixels,
+            width,
+            height,
+            left + 3,
+            7,
+            right - 3,
+            height - 7,
+            fill);
+    }
+
+    constexpr std::array<std::uint8_t, 7> decoupleGlyph = {
+        0b11110, 0b10001, 0b10001, 0b10001,
+        0b10001, 0b10001, 0b11110};
+    constexpr std::array<std::uint8_t, 7> secondGlyph = {
+        0b11110, 0b00001, 0b00001, 0b11110,
+        0b10000, 0b10000, 0b11111};
+    constexpr std::array<std::uint8_t, 7> thirdGlyph = {
+        0b11110, 0b00001, 0b00001, 0b01110,
+        0b00001, 0b00001, 0b11110};
+    DrawPlaceholderGlyph(
+        pixels, width, height, 0, decoupleGlyph, glyph);
+    DrawPlaceholderGlyph(
+        pixels, width, height, 1, secondGlyph, glyph);
+    DrawPlaceholderGlyph(
+        pixels, width, height, 2, thirdGlyph, glyph);
     return true;
 }
 

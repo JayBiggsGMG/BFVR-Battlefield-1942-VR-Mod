@@ -6,6 +6,7 @@
 #include <cstdarg>
 #include <cstddef>
 #include <cstdint>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 
@@ -13,9 +14,15 @@ namespace
 {
 
 constexpr std::ptrdiff_t kFireArmsTransformationRva = 0x00139580;
+constexpr std::ptrdiff_t kPlayerManagerGlobalRva = 0x0057D76C;
 constexpr DWORD kPlayerControlObjectInterfaceId = 0x0000C4C5;
 constexpr std::size_t kQueryInterfaceVtableOffset = 0x08;
+constexpr std::size_t kGetTransformationVtableOffset = 0x3C;
 constexpr std::size_t kGetWeaponsVtableOffset = 0x58;
+constexpr std::size_t kPlayerManagerLocalPlayerOffset = 0x54;
+constexpr std::size_t kBFPlayerCurrentControlObjectOffset = 0x64;
+constexpr std::size_t kBFPlayerDefaultControlObjectOffset = 0x98;
+constexpr std::size_t kBFPlayerIsAliveOffset = 0xA9;
 constexpr std::uint32_t kMaximumPlausibleWeaponCount = 64;
 constexpr std::array<BYTE, 16> kFireArmsTransformationPrefix = {
     0x56, 0x8B, 0xF1, 0x8B, 0x46, 0x4C, 0x8A, 0x88,
@@ -23,6 +30,8 @@ constexpr std::array<BYTE, 16> kFireArmsTransformationPrefix = {
 
 using QueryInterfaceFn = void*(__thiscall*)(void*, DWORD);
 using GetWeaponsFn = void*(__thiscall*)(void*);
+using GetTransformationFn =
+    const bfvr::stereo::Matrix4*(__thiscall*)(void*);
 using GetFireArmsTransformationFn =
     const bfvr::stereo::Matrix4*(__thiscall*)(void*);
 
@@ -57,6 +66,21 @@ void WriteLog(const wchar_t* format, ...) noexcept
         arguments);
     va_end(arguments);
     g_appendLog(message.data());
+}
+
+bool IsFinite(const bfvr::stereo::Matrix4& matrix) noexcept
+{
+    for (const auto& row : matrix.values)
+    {
+        for (const float value : row)
+        {
+            if (!std::isfinite(value))
+            {
+                return false;
+            }
+        }
+    }
+    return true;
 }
 
 } // namespace
@@ -101,7 +125,7 @@ bool InitializeMountedWeaponAimResolver(
     g_getFireArmsTransformation =
         reinterpret_cast<GetFireArmsTransformationFn>(target);
     WriteLog(
-        L"Mounted weapon aim resolver armed at 0x00539580: occupied controls query PlayerControlObject interface 0xC4C5/getWeapons +0x58 and sample weapon zero through FireArms::getFireArmsTransformation.");
+        L"Mounted weapon resolver armed at 0x00539580: occupied controls query PlayerControlObject interface 0xC4C5/getWeapons +0x58, sample weapon zero through FireArms::getFireArmsTransformation, and expose the control object's stable world transform through its verified vtable +0x3C getter.");
     return true;
 }
 
@@ -197,6 +221,83 @@ bool ReadMountedWeaponFirePose(
     __except (EXCEPTION_EXECUTE_HANDLER)
     {
         firePose = {};
+        return false;
+    }
+}
+
+bool ReadOccupiedMountedWeaponStationPose(
+    MountedWeaponStationPose& stationPose) noexcept
+{
+    stationPose = {};
+    if (g_gameImage == nullptr || g_getFireArmsTransformation == nullptr)
+    {
+        return false;
+    }
+
+    __try
+    {
+        void* const manager = *reinterpret_cast<void* const*>(
+            g_gameImage + kPlayerManagerGlobalRva);
+        auto* const player = manager == nullptr
+            ? nullptr
+            : *reinterpret_cast<std::byte* const*>(
+                static_cast<const std::byte*>(manager) +
+                kPlayerManagerLocalPlayerOffset);
+        if (player == nullptr ||
+            std::to_integer<BYTE>(player[kBFPlayerIsAliveOffset]) == 0)
+        {
+            return false;
+        }
+
+        void* const currentControlObject =
+            *reinterpret_cast<void* const*>(
+                player + kBFPlayerCurrentControlObjectOffset);
+        void* const defaultControlObject =
+            *reinterpret_cast<void* const*>(
+                player + kBFPlayerDefaultControlObjectOffset);
+        if (currentControlObject == nullptr ||
+            defaultControlObject == nullptr ||
+            currentControlObject == defaultControlObject)
+        {
+            return false;
+        }
+
+        stereo::Matrix4 firePose = {};
+        if (!ReadMountedWeaponFirePose(currentControlObject, firePose))
+        {
+            return false;
+        }
+
+        void* const vtable =
+            *reinterpret_cast<void* const*>(currentControlObject);
+        void* const target = vtable == nullptr
+            ? nullptr
+            : *reinterpret_cast<void* const*>(
+                static_cast<const std::byte*>(vtable) +
+                kGetTransformationVtableOffset);
+        const auto getTransformation =
+            reinterpret_cast<GetTransformationFn>(target);
+        const stereo::Matrix4* const world = getTransformation == nullptr
+            ? nullptr
+            : getTransformation(currentControlObject);
+        if (world == nullptr)
+        {
+            return false;
+        }
+
+        stereo::Matrix4 copy = {};
+        std::memcpy(&copy, world, sizeof(copy));
+        if (!IsFinite(copy))
+        {
+            return false;
+        }
+        stationPose.controlObject = currentControlObject;
+        stationPose.stationWorld = copy;
+        return true;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        stationPose = {};
         return false;
     }
 }

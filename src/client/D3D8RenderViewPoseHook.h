@@ -30,6 +30,7 @@ public:
     // Reset so no pre-reset HMD pose can be replayed before the next request.
     void ClearPose() noexcept;
     [[nodiscard]] bool WasApplied(LONG sequence) const noexcept;
+    [[nodiscard]] bool IsMountedCameraDecoupled() const noexcept;
     void DisableAndRemove();
     void LogSummary() const;
 

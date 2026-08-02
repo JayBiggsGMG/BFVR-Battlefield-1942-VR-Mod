@@ -1833,7 +1833,7 @@ public:
         std::array<XrCompositionLayerProjectionView, 2> projectionViews = {};
         XrCompositionLayerQuad quadLayer{XR_TYPE_COMPOSITION_LAYER_QUAD};
         XrCompositionLayerCylinderKHR cylinderLayer{XR_TYPE_COMPOSITION_LAYER_CYLINDER_KHR};
-        std::array<const XrCompositionLayerBaseHeader*, 4> layers = {};
+        std::array<const XrCompositionLayerBaseHeader*, 5> layers = {};
         uint32_t layerCount = 0;
         bool copiedImages = false;
         if (pendingFrameState.shouldRender && pendingViewsValid)
@@ -2437,6 +2437,15 @@ OpenXRPresentation::TakeQuickMenuSelection() noexcept
     return impl_ == nullptr
         ? stereo::QuickMenuSelection::None
         : impl_->quickMenu.TakeReleasedSelection();
+}
+
+void OpenXRPresentation::SetMountedCameraDecoupled(
+    bool decoupled) noexcept
+{
+    if (impl_ != nullptr)
+    {
+        impl_->quickMenu.SetMountedCameraDecoupled(decoupled);
+    }
 }
 
 bool OpenXRPresentation::GetQuickMenuMirrorState(

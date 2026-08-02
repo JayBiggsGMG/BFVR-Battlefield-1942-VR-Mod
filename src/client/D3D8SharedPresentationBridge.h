@@ -64,6 +64,7 @@ struct D3D8RuntimeControllerSample
     bool valid = false;
     bool sessionFocused = false;
     std::int64_t predictedDisplayTime = 0;
+    LONG mountedCameraToggleSequence = 0;
     std::array<D3D8RuntimeControllerHand, 2> hands = {};
 };
 
@@ -93,6 +94,7 @@ struct D3D8RuntimeUiPlacement
     D3D8RuntimeView worldAnchor = {};
     bool backToGameVisible = false;
     bool backToGameHovered = false;
+    bool mountedCameraDecoupled = false;
 };
 
 class D3D8SharedPresentationBridge

@@ -11,7 +11,7 @@ namespace bfvr::shared
 using SharedTextureLogCallback = void (*)(void* context, const wchar_t* message);
 
 constexpr DWORD kProtocolMagic = 0x52564642; // "BFVR"
-constexpr DWORD kProtocolVersion = 9;
+constexpr DWORD kProtocolVersion = 10;
 constexpr std::size_t kTextureCount = 3;
 constexpr std::size_t kSharedNameCapacity = 128;
 constexpr DWORD kProducerFlagRuntimeTimedRender = 0x1;
@@ -171,6 +171,9 @@ struct SharedControllerSample
 {
     alignas(8) LONGLONG predictedDisplayTime = 0;
     DWORD flags = 0;
+    // Presenter-owned monotonic action edge. The x86 camera hook consumes a
+    // new value only for the currently verified occupied weapon station.
+    LONG mountedCameraToggleSequence = 0;
     SharedControllerHandSample hands[2] = {};
 };
 
@@ -209,6 +212,10 @@ struct ControlBlock
     // Published by the x86 producer before frameSequence. These flags control
     // only presenter-owned pixels composited into the copied Ref2 UI texture.
     volatile LONG frameOverlayFlags = 0;
+    // Published by the x86 camera owner. The presenter mirrors this actual
+    // seat-local state into the utility strip; it never assumes a toggle was
+    // accepted merely because the user released the UI button.
+    volatile LONG mountedCameraDecoupled = 0;
     PresentationRequirements requirements = {};
     SharedRenderRequest renderRequest = {};
     SharedControllerSample controllerSample = {};

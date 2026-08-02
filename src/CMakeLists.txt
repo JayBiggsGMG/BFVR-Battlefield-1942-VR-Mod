@@ -211,6 +211,7 @@ add_library(BFVRStereoMath STATIC
   stereo/D3D8WeaponDrawPolicy.cpp
   stereo/OffHandSupportPolicy.cpp
   stereo/OffHandWeaponSteeringMath.cpp
+  stereo/MountedCameraMath.cpp
   stereo/QuickMenuInteraction.cpp
   stereo/QuickMenuMirrorMath.cpp
   stereo/WeaponMotionPolicy.cpp
@@ -289,6 +290,10 @@ add_executable(BFVRVehicleMotionAimMathTests
   stereo/VehicleMotionAimMathTests.cpp
 )
 
+add_executable(BFVRMountedCameraMathTests
+  stereo/MountedCameraMathTests.cpp
+)
+
 add_executable(BFVRWorldCrosshairMathTests
   stereo/WorldCrosshairMathTests.cpp
 )
@@ -307,7 +312,7 @@ add_executable(BFVRRfaInspect
   tools/RfaInspect.cpp
 )
 
-foreach(target BFVRClient BFVRD3D8To9FlatClient BFVRLoader BFVROpenXRProbe BFVRSharedTextureProducerProbe BFVRD3D8To9SharedSurfaceProbe BFVRStereoMath BFVRStereoMathTests BFVRWeaponFireAimMathTests BFVROffHandSupportPolicyTests BFVRArmPoleVectorMathTests BFVRMainMenuOverlayTests BFVRQuickMenuTests BFVRVehicleMotionAimMathTests BFVRWorldCrosshairMathTests BFVRRuntimeDiagnosticsTests BFVRSharedControlChannelTests BFVRRfaInspect)
+foreach(target BFVRClient BFVRD3D8To9FlatClient BFVRLoader BFVROpenXRProbe BFVRSharedTextureProducerProbe BFVRD3D8To9SharedSurfaceProbe BFVRStereoMath BFVRStereoMathTests BFVRWeaponFireAimMathTests BFVROffHandSupportPolicyTests BFVRArmPoleVectorMathTests BFVRMainMenuOverlayTests BFVRQuickMenuTests BFVRVehicleMotionAimMathTests BFVRMountedCameraMathTests BFVRWorldCrosshairMathTests BFVRRuntimeDiagnosticsTests BFVRSharedControlChannelTests BFVRRfaInspect)
   target_compile_definitions(${target} PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
   set_property(TARGET ${target} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
   if(MSVC)
@@ -342,6 +347,7 @@ target_link_libraries(BFVRMainMenuOverlayTests PRIVATE
 target_link_libraries(BFVRQuickMenuTests PRIVATE
   BFVRStereoMath ole32 user32 windowscodecs)
 target_link_libraries(BFVRVehicleMotionAimMathTests PRIVATE BFVRStereoMath)
+target_link_libraries(BFVRMountedCameraMathTests PRIVATE BFVRStereoMath)
 target_link_libraries(BFVRWorldCrosshairMathTests PRIVATE BFVRStereoMath)
 target_include_directories(BFVRMainMenuOverlayTests PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}")
@@ -375,6 +381,9 @@ if(BUILD_TESTING)
   add_test(
     NAME BFVRVehicleMotionAimMathTests
     COMMAND BFVRVehicleMotionAimMathTests)
+  add_test(
+    NAME BFVRMountedCameraMathTests
+    COMMAND BFVRMountedCameraMathTests)
   add_test(
     NAME BFVRWorldCrosshairMathTests
     COMMAND BFVRWorldCrosshairMathTests)

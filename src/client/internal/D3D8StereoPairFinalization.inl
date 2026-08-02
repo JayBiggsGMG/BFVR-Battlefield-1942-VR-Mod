@@ -48,6 +48,8 @@ bool FinalizeFrameTargets(void* device)
     }
     if (IsPresentationMode())
     {
+        g_frameUiPlacement.mountedCameraDecoupled =
+            g_renderViewPoseHook.IsMountedCameraDecoupled();
         g_presentationFramePublished =
             bfvr::d3d8probe::TransferStereoFrameToSharedPresentation(
                 g_readbackApi,

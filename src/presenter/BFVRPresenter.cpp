@@ -263,6 +263,7 @@ bool SendQuickMenuKeyPress(
 void PublishControllerSample(
     bfvr::shared::ControlBlock& block,
     LONG sequence,
+    LONG mountedCameraToggleSequence,
     const bfvr::OpenXRControllerInputState& input)
 {
     bfvr::shared::SharedControllerSample& destination = block.controllerSample;
@@ -270,6 +271,8 @@ void PublishControllerSample(
     destination.flags = input.sessionFocused
         ? bfvr::shared::kControllerSampleFlagSessionFocused
         : 0;
+    destination.mountedCameraToggleSequence =
+        mountedCameraToggleSequence;
     for (std::size_t hand = 0; hand < input.hands.size(); ++hand)
     {
         const bfvr::OpenXRControllerHandState& sourceHand = input.hands[hand];
@@ -291,9 +294,14 @@ void PublishControllerSample(
 void PublishRenderRequest(
     bfvr::shared::ControlBlock& block,
     LONG sequence,
+    LONG mountedCameraToggleSequence,
     const bfvr::OpenXRPresentationFrameState& frame)
 {
-    PublishControllerSample(block, sequence, frame.controllerInput);
+    PublishControllerSample(
+        block,
+        sequence,
+        mountedCameraToggleSequence,
+        frame.controllerInput);
     block.renderRequest.predictedDisplayTime = frame.predictedDisplayTime;
     block.renderRequest.shouldRender = frame.shouldRender ? 1 : 0;
     block.renderRequest.viewsValid = frame.viewsValid ? 1 : 0;
@@ -494,6 +502,7 @@ int RunPresenter(
     LONG openXrBeginCount = 0;
     LONG openXrSubmitOrEndCount = 0;
     LONG predictedDisplayPeriodCount = 0;
+    LONG mountedCameraToggleSequence = 0;
     bool desktopMirrorSourceDirty = false;
     bool quickMenuWasVisibleInMirror = false;
     auto consumeSequence = [&](LONG availableSequence)
@@ -591,6 +600,38 @@ int RunPresenter(
         {
             return;
         }
+        if (selection ==
+            bfvr::stereo::QuickMenuSelection::MountedCameraDecouple)
+        {
+            if (!runtimeTimedProducer)
+            {
+                fwprintf(
+                    g_output,
+                    L"[PRESENTER] Offline transport ignored the mounted-camera decouple toggle.\n");
+            }
+            else
+            {
+                ++mountedCameraToggleSequence;
+                fwprintf(
+                    g_output,
+                    L"[PRESENTER] Quick Menu published mounted-camera toggle sequence %ld to the x86 station owner; no keyboard input was sent.\n",
+                    mountedCameraToggleSequence);
+            }
+            fflush(g_output);
+            return;
+        }
+        if (selection ==
+                bfvr::stereo::QuickMenuSelection::UtilityPlaceholder2 ||
+            selection ==
+                bfvr::stereo::QuickMenuSelection::UtilityPlaceholder3)
+        {
+            fwprintf(
+                g_output,
+                L"[PRESENTER] Quick Menu released inert %s; no command or keyboard input was sent.\n",
+                bfvr::stereo::QuickMenuSelectionName(selection));
+            fflush(g_output);
+            return;
+        }
         if (!runtimeTimedProducer)
         {
             fwprintf(
@@ -625,6 +666,11 @@ int RunPresenter(
     const auto beginFrame = [&](bfvr::OpenXRPresentationFrameState& frame)
     {
         const std::int64_t beginStarted = ReadPerformanceCounter();
+        presentation.SetMountedCameraDecoupled(
+            InterlockedCompareExchange(
+                &block->mountedCameraDecoupled,
+                0,
+                0) != 0);
         const bool began = presentation.BeginFrame(frame);
         dispatchQuickMenuCommand();
         totalOpenXrBeginQpcTicks +=
@@ -886,7 +932,11 @@ int RunPresenter(
                 endFrame({}, frame);
                 continue;
             }
-            PublishRenderRequest(*block, readySequence, frame);
+            PublishRenderRequest(
+                *block,
+                readySequence,
+                mountedCameraToggleSequence,
+                frame);
             (void)channel.SignalPresenterUpdate();
 
             const DWORD renderWaitStarted = GetTickCount();

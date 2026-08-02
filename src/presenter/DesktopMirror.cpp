@@ -313,6 +313,21 @@ void DesktopMirror::Render(
             *rightEyeView,
             crop.sourceScale,
             crop.sourceOffset);
+        if (quickMenuUtilityView_ != nullptr &&
+            quickMenu->utilityTexture != nullptr)
+        {
+            D3D11_TEXTURE2D_DESC utilityDescription = {};
+            quickMenu->utilityTexture->GetDesc(&utilityDescription);
+            DrawQuickMenuQuad(
+                quickMenu->utilityPose,
+                quickMenu->utilityWidthMeters,
+                quickMenu->utilityHeightMeters,
+                quickMenuUtilityView_,
+                IsSrgbFormat(utilityDescription.Format),
+                *rightEyeView,
+                crop.sourceScale,
+                crop.sourceOffset);
+        }
         if (quickMenu->pointerVisible &&
             quickMenuCursorView_ != nullptr &&
             quickMenu->cursorTexture != nullptr)
@@ -624,8 +639,10 @@ bool DesktopMirror::EnsureQuickMenuViews(
     const OpenXRQuickMenuMirrorState& quickMenu)
 {
     if (quickMenuTexture_ == quickMenu.menuTexture &&
+        quickMenuUtilityTexture_ == quickMenu.utilityTexture &&
         quickMenuCursorTexture_ == quickMenu.cursorTexture &&
         quickMenuView_ != nullptr &&
+        quickMenuUtilityView_ != nullptr &&
         (!quickMenu.pointerVisible || quickMenuCursorView_ != nullptr))
     {
         return true;
@@ -638,6 +655,15 @@ bool DesktopMirror::EnsureQuickMenuViews(
             quickMenu.menuTexture,
             nullptr,
             &quickMenuView_);
+    if (SUCCEEDED(result))
+    {
+        result = quickMenu.utilityTexture == nullptr
+            ? E_INVALIDARG
+            : device_->CreateShaderResourceView(
+                quickMenu.utilityTexture,
+                nullptr,
+                &quickMenuUtilityView_);
+    }
     if (SUCCEEDED(result) && quickMenu.cursorTexture != nullptr)
     {
         result = device_->CreateShaderResourceView(
@@ -656,6 +682,7 @@ bool DesktopMirror::EnsureQuickMenuViews(
         return false;
     }
     quickMenuTexture_ = quickMenu.menuTexture;
+    quickMenuUtilityTexture_ = quickMenu.utilityTexture;
     quickMenuCursorTexture_ = quickMenu.cursorTexture;
     return true;
 }
@@ -895,12 +922,18 @@ void DesktopMirror::ReleaseQuickMenuViews()
         quickMenuCursorView_->Release();
         quickMenuCursorView_ = nullptr;
     }
+    if (quickMenuUtilityView_ != nullptr)
+    {
+        quickMenuUtilityView_->Release();
+        quickMenuUtilityView_ = nullptr;
+    }
     if (quickMenuView_ != nullptr)
     {
         quickMenuView_->Release();
         quickMenuView_ = nullptr;
     }
     quickMenuTexture_ = nullptr;
+    quickMenuUtilityTexture_ = nullptr;
     quickMenuCursorTexture_ = nullptr;
 }
 

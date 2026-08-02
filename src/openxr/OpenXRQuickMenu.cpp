@@ -94,6 +94,26 @@ std::uint32_t SwapRedBlue(std::uint32_t bgra) noexcept
         ((bgra & 0x000000FFU) << 16U) |
         ((bgra & 0x00FF0000U) >> 16U);
 }
+
+std::size_t UtilityHoverIndex(
+    bfvr::stereo::QuickMenuSelection selection) noexcept
+{
+    if (!bfvr::stereo::IsQuickMenuUtilitySelection(selection))
+    {
+        return 0;
+    }
+    return 1 + static_cast<std::size_t>(selection) -
+        static_cast<std::size_t>(
+            bfvr::stereo::QuickMenuSelection::MountedCameraDecouple);
+}
+
+std::size_t UtilityVisualIndex(
+    bool mountedCameraDecoupled,
+    bfvr::stereo::QuickMenuSelection hovered) noexcept
+{
+    return (mountedCameraDecoupled ? 4U : 0U) +
+        UtilityHoverIndex(hovered);
+}
 } // namespace
 
 namespace bfvr
@@ -170,6 +190,37 @@ bool OpenXRQuickMenu::Initialize(
                 height,
                 &menuSources_[index]);
     }
+    for (std::size_t active = 0;
+         resourcesReady && active < 2;
+         ++active)
+    {
+        for (std::size_t hover = 0;
+             resourcesReady && hover < 4;
+             ++hover)
+        {
+            const stereo::QuickMenuSelection selection = hover == 0
+                ? stereo::QuickMenuSelection::None
+                : static_cast<stereo::QuickMenuSelection>(
+                    static_cast<std::uint32_t>(
+                        stereo::QuickMenuSelection::MountedCameraDecouple) +
+                    static_cast<std::uint32_t>(hover - 1));
+            std::vector<std::uint32_t> pixels;
+            UINT width = 0;
+            UINT height = 0;
+            const std::size_t index = active * 4 + hover;
+            resourcesReady = art.CopyUtilityStripPixels(
+                    selection,
+                    active != 0,
+                    pixels,
+                    width,
+                    height) &&
+                CreateSourceTexture(
+                    pixels,
+                    width,
+                    height,
+                    &utilitySources_[index]);
+        }
+    }
     std::vector<std::uint32_t> cursorPixels;
     UINT cursorWidth = 0;
     UINT cursorHeight = 0;
@@ -187,6 +238,10 @@ bool OpenXRQuickMenu::Initialize(
             menuSwapchain_,
             stereo::kQuickMenuTextureSize,
             stereo::kQuickMenuTextureSize) &&
+        CreateSwapchain(
+            utilitySwapchain_,
+            stereo::kQuickMenuUtilityTextureWidth,
+            stereo::kQuickMenuUtilityTextureHeight) &&
         CreateSwapchain(cursorSwapchain_, cursorWidth, cursorHeight);
     art.Reset();
     if (!resourcesReady || !IsReady())
@@ -196,9 +251,11 @@ bool OpenXRQuickMenu::Initialize(
         return false;
     }
     WriteLog(
-        L"Quick Menu OpenXR resources are ready: menu=%ux%u cursor=%ux%u panel=%.2fx%.2f m. Right A is the dedicated hold action.",
+        L"Quick Menu OpenXR resources are ready: menu=%ux%u utilityStrip=%ux%u cursor=%ux%u panel=%.2fx%.2f m. The strip has three equal placeholders; its left button defaults to coupled and toggles the current mounted camera only. Right A is the dedicated hold action.",
         menuSwapchain_.width,
         menuSwapchain_.height,
+        utilitySwapchain_.width,
+        utilitySwapchain_.height,
         cursorSwapchain_.width,
         cursorSwapchain_.height,
         stereo::kQuickMenuWidthMeters,
@@ -227,6 +284,12 @@ void OpenXRQuickMenu::Update(
     interaction_.Update(input);
 }
 
+void OpenXRQuickMenu::SetMountedCameraDecoupled(
+    bool decoupled) noexcept
+{
+    mountedCameraDecoupled_ = decoupled;
+}
+
 std::size_t OpenXRQuickMenu::AppendLayers(
     XrSpace localSpace,
     const XrCompositionLayerBaseHeader** destination,
@@ -235,7 +298,7 @@ std::size_t OpenXRQuickMenu::AppendLayers(
     const stereo::QuickMenuInteractionSnapshot state =
         interaction_.Snapshot();
     if (!IsReady() || !state.visible || localSpace == XR_NULL_HANDLE ||
-        destination == nullptr || capacity == 0)
+        destination == nullptr || capacity < 2)
     {
         return 0;
     }
@@ -267,7 +330,36 @@ std::size_t OpenXRQuickMenu::AppendLayers(
         &menuLayer_);
     std::size_t appended = 1;
 
-    if (state.pointerVisible && capacity >= 2 &&
+    const std::size_t utilityIndex = UtilityVisualIndex(
+        mountedCameraDecoupled_,
+        state.hovered);
+    if (utilityIndex >= utilitySources_.size() ||
+        !CopyToSwapchain(
+            utilitySwapchain_,
+            utilitySources_[utilityIndex],
+            L"Quick Menu utility strip"))
+    {
+        return appended;
+    }
+    utilityLayer_ = {XR_TYPE_COMPOSITION_LAYER_QUAD};
+    utilityLayer_.layerFlags =
+        XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+    utilityLayer_.space = localSpace;
+    utilityLayer_.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+    utilityLayer_.subImage.swapchain = utilitySwapchain_.handle;
+    utilityLayer_.subImage.imageRect.extent = {
+        static_cast<std::int32_t>(utilitySwapchain_.width),
+        static_cast<std::int32_t>(utilitySwapchain_.height)};
+    utilityLayer_.pose = ToXrPose(
+        stereo::MakeQuickMenuUtilityPose(state.panelPose));
+    utilityLayer_.size = {
+        stereo::kQuickMenuWidthMeters,
+        stereo::kQuickMenuUtilityHeightMeters};
+    destination[appended++] =
+        reinterpret_cast<const XrCompositionLayerBaseHeader*>(
+            &utilityLayer_);
+
+    if (state.pointerVisible && capacity > appended &&
         CopyToSwapchain(
             cursorSwapchain_,
             cursorSource_,
@@ -279,12 +371,19 @@ std::size_t OpenXRQuickMenu::AppendLayers(
         const float cursorHeightMeters = stereo::kQuickMenuHeightMeters *
             static_cast<float>(cursorSwapchain_.height) /
             static_cast<float>(menuSwapchain_.height);
-        const stereo::Pose cursorPose = stereo::MakeQuickMenuCursorPose(
-            state.panelPose,
-            state.pointerU,
-            state.pointerV,
-            cursorWidthMeters,
-            cursorHeightMeters);
+        const stereo::Pose cursorPose = state.pointerOnUtilityStrip
+            ? stereo::MakeQuickMenuUtilityCursorPose(
+                state.panelPose,
+                state.pointerU,
+                state.pointerV,
+                cursorWidthMeters,
+                cursorHeightMeters)
+            : stereo::MakeQuickMenuCursorPose(
+                state.panelPose,
+                state.pointerU,
+                state.pointerV,
+                cursorWidthMeters,
+                cursorHeightMeters);
         cursorLayer_ = {XR_TYPE_COMPOSITION_LAYER_QUAD};
         cursorLayer_.layerFlags =
             XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
@@ -338,7 +437,19 @@ bool OpenXRQuickMenu::GetMirrorState(
     state.panelPose = ToPresentationPose(snapshot.panelPose);
     state.panelWidthMeters = stereo::kQuickMenuWidthMeters;
     state.panelHeightMeters = stereo::kQuickMenuHeightMeters;
+    state.utilityPose = ToPresentationPose(
+        stereo::MakeQuickMenuUtilityPose(snapshot.panelPose));
+    state.utilityWidthMeters = stereo::kQuickMenuWidthMeters;
+    state.utilityHeightMeters = stereo::kQuickMenuUtilityHeightMeters;
     state.menuTexture = menuSources_[selectionIndex];
+    const std::size_t utilityIndex = UtilityVisualIndex(
+        mountedCameraDecoupled_,
+        snapshot.hovered);
+    if (utilityIndex >= utilitySources_.size())
+    {
+        return false;
+    }
+    state.utilityTexture = utilitySources_[utilityIndex];
     if (snapshot.pointerVisible && cursorSource_ != nullptr &&
         menuSwapchain_.width != 0 && menuSwapchain_.height != 0)
     {
@@ -349,12 +460,19 @@ bool OpenXRQuickMenu::GetMirrorState(
             static_cast<float>(cursorSwapchain_.height) /
             static_cast<float>(menuSwapchain_.height);
         state.cursorPose = ToPresentationPose(
-            stereo::MakeQuickMenuCursorPose(
-                snapshot.panelPose,
-                snapshot.pointerU,
-                snapshot.pointerV,
-                state.cursorWidthMeters,
-                state.cursorHeightMeters));
+            snapshot.pointerOnUtilityStrip
+                ? stereo::MakeQuickMenuUtilityCursorPose(
+                    snapshot.panelPose,
+                    snapshot.pointerU,
+                    snapshot.pointerV,
+                    state.cursorWidthMeters,
+                    state.cursorHeightMeters)
+                : stereo::MakeQuickMenuCursorPose(
+                    snapshot.panelPose,
+                    snapshot.pointerU,
+                    snapshot.pointerV,
+                    state.cursorWidthMeters,
+                    state.cursorHeightMeters));
         state.cursorTexture = cursorSource_;
     }
     return true;
@@ -364,11 +482,16 @@ bool OpenXRQuickMenu::IsReady() const noexcept
 {
     return session_ != XR_NULL_HANDLE && device_ != nullptr &&
         context_ != nullptr && menuSwapchain_.handle != XR_NULL_HANDLE &&
+        utilitySwapchain_.handle != XR_NULL_HANDLE &&
         cursorSwapchain_.handle != XR_NULL_HANDLE &&
         cursorSource_ != nullptr &&
         std::all_of(
             menuSources_.begin(),
             menuSources_.end(),
+            [](ID3D11Texture2D* texture) { return texture != nullptr; }) &&
+        std::all_of(
+            utilitySources_.begin(),
+            utilitySources_.end(),
             [](ID3D11Texture2D* texture) { return texture != nullptr; });
 }
 
@@ -376,9 +499,14 @@ void OpenXRQuickMenu::Shutdown()
 {
     interaction_.Reset();
     DestroySwapchain(cursorSwapchain_);
+    DestroySwapchain(utilitySwapchain_);
     DestroySwapchain(menuSwapchain_);
     ReleaseInterface(cursorSource_);
     for (ID3D11Texture2D*& source : menuSources_)
+    {
+        ReleaseInterface(source);
+    }
+    for (ID3D11Texture2D*& source : utilitySources_)
     {
         ReleaseInterface(source);
     }
@@ -388,8 +516,10 @@ void OpenXRQuickMenu::Shutdown()
     session_ = XR_NULL_HANDLE;
     swapchainFormat_ = DXGI_FORMAT_UNKNOWN;
     menuLayer_ = {XR_TYPE_COMPOSITION_LAYER_QUAD};
+    utilityLayer_ = {XR_TYPE_COMPOSITION_LAYER_QUAD};
     cursorLayer_ = {XR_TYPE_COMPOSITION_LAYER_QUAD};
     firstVisibleFrameLogged_ = false;
+    mountedCameraDecoupled_ = false;
     logCallback_ = nullptr;
     logContext_ = nullptr;
 }
