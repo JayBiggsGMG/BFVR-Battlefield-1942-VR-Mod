@@ -35,13 +35,16 @@ VertexOutput main(uint vertexId : SV_VertexID)
 
 constexpr char kTexturePixelShader[] = R"(
 Texture2D sourceTexture : register(t0);
+#if BFVR_AMBIENT_OCCLUSION
+Texture2D ambientOcclusionTexture : register(t1);
+#endif
 SamplerState sourceSampler : register(s0);
 cbuffer Configuration : register(b0)
 {
     float sourceAlreadyLinear;
     float bloomThreshold;
     float bloomIntensity;
-    float configurationPadding0;
+    float ambientOcclusionIntensity;
     float2 bloomTexelSize;
     float2 configurationPadding1;
 };
@@ -56,22 +59,30 @@ float3 SrgbToLinear(float3 color)
 float4 main(float4 position : SV_Position, float2 texcoord : TEXCOORD0) : SV_Target
 {
     const float4 encoded = sourceTexture.Sample(sourceSampler, texcoord);
-    const float3 linearColor = sourceAlreadyLinear > 0.5
+    float3 linearColor = sourceAlreadyLinear > 0.5
         ? encoded.rgb
         : SrgbToLinear(encoded.rgb);
+#if BFVR_AMBIENT_OCCLUSION
+    const float ao = ambientOcclusionTexture.SampleLevel(
+        sourceSampler, texcoord, 0.0).r;
+    linearColor *= lerp(1.0, ao, ambientOcclusionIntensity);
+#endif
     return float4(linearColor, encoded.a);
 }
 )";
 
 constexpr char kFxaaPixelShader[] = R"(
 Texture2D sourceTexture : register(t0);
+#if BFVR_AMBIENT_OCCLUSION
+Texture2D ambientOcclusionTexture : register(t1);
+#endif
 SamplerState sourceSampler : register(s0);
 cbuffer Configuration : register(b0)
 {
     float sourceAlreadyLinear;
     float bloomThreshold;
     float bloomIntensity;
-    float configurationPadding0;
+    float ambientOcclusionIntensity;
     float2 bloomTexelSize;
     float2 configurationPadding1;
 };
@@ -188,9 +199,14 @@ float4 main(float4 position : SV_Position, float2 texcoord : TEXCOORD0) : SV_Tar
         (center.rgb + northwest + northeast + southwest + southeast) * 0.2;
     filtered = lerp(filtered, neighbourhoodColor, subpixelBlend);
 
-    const float3 linearColor = sourceAlreadyLinear > 0.5
+    float3 linearColor = sourceAlreadyLinear > 0.5
         ? filtered
         : SrgbToLinear(filtered);
+#if BFVR_AMBIENT_OCCLUSION
+    const float ao = ambientOcclusionTexture.SampleLevel(
+        sourceSampler, texcoord, 0.0).r;
+    linearColor *= lerp(1.0, ao, ambientOcclusionIntensity);
+#endif
     return float4(linearColor, center.a);
 }
 )";
@@ -203,7 +219,7 @@ cbuffer Configuration : register(b0)
     float sourceAlreadyLinear;
     float bloomThreshold;
     float bloomIntensity;
-    float configurationPadding0;
+    float ambientOcclusionIntensity;
     float2 bloomTexelSize;
     float2 configurationPadding1;
 };
@@ -254,7 +270,7 @@ cbuffer Configuration : register(b0)
     float sourceAlreadyLinear;
     float bloomThreshold;
     float bloomIntensity;
-    float configurationPadding0;
+    float ambientOcclusionIntensity;
     float2 bloomTexelSize;
     float2 configurationPadding1;
 };
@@ -281,7 +297,7 @@ cbuffer Configuration : register(b0)
     float sourceAlreadyLinear;
     float bloomThreshold;
     float bloomIntensity;
-    float configurationPadding0;
+    float ambientOcclusionIntensity;
     float2 bloomTexelSize;
     float2 configurationPadding1;
 };
@@ -305,14 +321,18 @@ bool CompileShader(
     const char* target,
     ID3DBlob** bytecode,
     bfvr::shared::SharedTextureLogCallback logCallback,
-    void* logContext)
+    void* logContext,
+    bool ambientOcclusionVariant = false)
 {
+    const D3D_SHADER_MACRO defines[] = {
+        {"BFVR_AMBIENT_OCCLUSION", ambientOcclusionVariant ? "1" : "0"},
+        {nullptr, nullptr}};
     ID3DBlob* errors = nullptr;
     const HRESULT result = D3DCompile(
         source,
         strlen(source),
         "BFVR-D3D11TextureScaler",
-        nullptr,
+        defines,
         nullptr,
         "main",
         target,
@@ -362,7 +382,8 @@ bool D3D11TextureScaler::Initialize(
     ID3D11DeviceContext* context,
     SharedTextureLogCallback logCallback,
     void* logContext,
-    bool enableBloom)
+    bool enableBloom,
+    bool enableAmbientOcclusion)
 {
     Shutdown();
     logCallback_ = logCallback;
@@ -433,6 +454,50 @@ bool D3D11TextureScaler::Initialize(
     {
         pixelBytecode->Release();
         pixelBytecode = nullptr;
+    }
+
+    if (enableAmbientOcclusion)
+    {
+        if (SUCCEEDED(result) &&
+            CompileShader(
+                kTexturePixelShader,
+                "ps_4_0",
+                &pixelBytecode,
+                logCallback_,
+                logContext_,
+                true))
+        {
+            result = device->CreatePixelShader(
+                pixelBytecode->GetBufferPointer(),
+                pixelBytecode->GetBufferSize(),
+                nullptr,
+                &aoColorPixelShader_);
+        }
+        if (pixelBytecode != nullptr)
+        {
+            pixelBytecode->Release();
+            pixelBytecode = nullptr;
+        }
+        if (SUCCEEDED(result) &&
+            CompileShader(
+                kFxaaPixelShader,
+                "ps_4_0",
+                &pixelBytecode,
+                logCallback_,
+                logContext_,
+                true))
+        {
+            result = device->CreatePixelShader(
+                pixelBytecode->GetBufferPointer(),
+                pixelBytecode->GetBufferSize(),
+                nullptr,
+                &aoFxaaPixelShader_);
+        }
+        if (pixelBytecode != nullptr)
+        {
+            pixelBytecode->Release();
+            pixelBytecode = nullptr;
+        }
     }
 
     if (enableBloom)
@@ -522,6 +587,9 @@ bool D3D11TextureScaler::Initialize(
         vertexShader_ == nullptr ||
         colorPixelShader_ == nullptr ||
         fxaaPixelShader_ == nullptr ||
+        (enableAmbientOcclusion &&
+            (aoColorPixelShader_ == nullptr ||
+             aoFxaaPixelShader_ == nullptr)) ||
         (enableBloom &&
             (bloomDownsamplePixelShader_ == nullptr ||
              bloomBlurHorizontalPixelShader_ == nullptr ||
@@ -539,9 +607,11 @@ bool D3D11TextureScaler::Initialize(
     context_ = context;
     context_->AddRef();
     WriteLog(
-        enableBloom
+        enableAmbientOcclusion
+            ? L"D3D11 texture scaler initialized with separate default and AO-composite shaders, aspect-fit sampling, legacy-sRGB transfer correction, and world-only FXAA; bloom shaders are not compiled."
+            : enableBloom
             ? L"D3D11 texture scaler initialized with aspect-fit sampling, legacy-sRGB transfer correction, world-only FXAA (subpixel=0.75 edge=0.166 min=0.0833), and half-resolution bloom."
-            : L"D3D11 texture scaler initialized with aspect-fit sampling, legacy-sRGB transfer correction, and world-only FXAA (subpixel=0.75 edge=0.166 min=0.0833); bloom shaders are not compiled.");
+            : L"D3D11 texture scaler initialized with aspect-fit sampling, legacy-sRGB transfer correction, and world-only FXAA (subpixel=0.75 edge=0.166 min=0.0833); AO and bloom shaders are not compiled.");
     return true;
 }
 
@@ -555,6 +625,8 @@ bool D3D11TextureScaler::ScaleAspectFit(
     bool transparentPadding,
     bool sourceAlreadyLinear,
     bool applyAntialiasing,
+    ID3D11ShaderResourceView* ambientOcclusionView,
+    float ambientOcclusionIntensity,
     bool applyBloom,
     float bloomThreshold,
     float bloomIntensity)
@@ -573,6 +645,20 @@ bool D3D11TextureScaler::ScaleAspectFit(
 
     bloomThreshold = std::clamp(bloomThreshold, 0.0F, 1.0F);
     bloomIntensity = std::clamp(bloomIntensity, 0.0F, 1.0F);
+    ambientOcclusionIntensity = std::clamp(
+        ambientOcclusionIntensity,
+        0.0F,
+        1.0F);
+    if (ambientOcclusionView == nullptr)
+    {
+        ambientOcclusionIntensity = 0.0F;
+    }
+    const bool applyAmbientOcclusion = ambientOcclusionIntensity > 0.0F;
+    if (applyAmbientOcclusion &&
+        (aoColorPixelShader_ == nullptr || aoFxaaPixelShader_ == nullptr))
+    {
+        return false;
+    }
     if (applyBloom &&
         (!EnsureBloomResources(sourceWidth, sourceHeight) ||
          !BuildBloom(sourceView, sourceAlreadyLinear, bloomThreshold)))
@@ -608,21 +694,27 @@ bool D3D11TextureScaler::ScaleAspectFit(
     context_->VSSetShader(vertexShader_, nullptr, 0);
     UpdateConfiguration(
         sourceAlreadyLinear,
+        ambientOcclusionIntensity,
         bloomThreshold,
         applyBloom ? bloomIntensity : 0.0F,
         applyBloom ? 1.0F / static_cast<float>(bloomWidth_) : 0.0F,
         applyBloom ? 1.0F / static_cast<float>(bloomHeight_) : 0.0F);
     context_->PSSetShader(
-        applyAntialiasing ? fxaaPixelShader_ : colorPixelShader_,
+        applyAmbientOcclusion
+            ? applyAntialiasing ? aoFxaaPixelShader_ : aoColorPixelShader_
+            : applyAntialiasing ? fxaaPixelShader_ : colorPixelShader_,
         nullptr,
         0);
     context_->PSSetConstantBuffers(0, 1, &configurationBuffer_);
     context_->PSSetSamplers(0, 1, &sampler_);
-    context_->PSSetShaderResources(0, 1, &sourceView);
+    ID3D11ShaderResourceView* sourceViews[2] = {
+        sourceView,
+        ambientOcclusionView};
+    context_->PSSetShaderResources(0, 2, sourceViews);
     context_->Draw(3, 0);
 
-    ID3D11ShaderResourceView* nullView = nullptr;
-    context_->PSSetShaderResources(0, 1, &nullView);
+    ID3D11ShaderResourceView* nullViews[2] = {};
+    context_->PSSetShaderResources(0, 2, nullViews);
     ID3D11RenderTargetView* nullTarget = nullptr;
     context_->OMSetRenderTargets(1, &nullTarget, nullptr);
     return true;
@@ -723,6 +815,7 @@ bool D3D11TextureScaler::BuildBloom(
         }
         UpdateConfiguration(
             inputAlreadyLinear,
+            0.0F,
             threshold,
             0.0F,
             1.0F / static_cast<float>(bloomWidth_),
@@ -790,6 +883,7 @@ void D3D11TextureScaler::ReleaseBloomResources()
 
 void D3D11TextureScaler::UpdateConfiguration(
     bool sourceAlreadyLinear,
+    float ambientOcclusionIntensity,
     float bloomThreshold,
     float bloomIntensity,
     float bloomTexelWidth,
@@ -799,7 +893,7 @@ void D3D11TextureScaler::UpdateConfiguration(
         sourceAlreadyLinear ? 1.0F : 0.0F,
         bloomThreshold,
         bloomIntensity,
-        0.0F,
+        ambientOcclusionIntensity,
         bloomTexelWidth,
         bloomTexelHeight,
         0.0F,
@@ -830,6 +924,16 @@ void D3D11TextureScaler::Shutdown()
     {
         fxaaPixelShader_->Release();
         fxaaPixelShader_ = nullptr;
+    }
+    if (aoFxaaPixelShader_ != nullptr)
+    {
+        aoFxaaPixelShader_->Release();
+        aoFxaaPixelShader_ = nullptr;
+    }
+    if (aoColorPixelShader_ != nullptr)
+    {
+        aoColorPixelShader_->Release();
+        aoColorPixelShader_ = nullptr;
     }
     if (bloomBlurVerticalPixelShader_ != nullptr)
     {

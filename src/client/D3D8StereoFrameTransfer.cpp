@@ -17,17 +17,27 @@ bool TransferStereoFrameToSharedPresentation(
     D3D8SharedPresentationBridge& presentationBridge,
     const D3D8RuntimeRenderRequest& renderRequest,
     bool analyzePixels,
-    const D3D8RuntimeUiPlacement& uiPlacement)
+    const D3D8RuntimeUiPlacement& uiPlacement,
+    const D3D8RuntimeDepthFrame& depthFrame)
 {
     if (presentationBridge.UsesGpuSharedTargets())
     {
         frame.readbackQpcTicks = 0;
         const std::int64_t publishStarted = ReadPerformanceCounter();
+        const std::array<void*, shared::kDepthTextureCount> depthSurfaces = {
+            frame.ownedDepth[0],
+            frame.ownedDepth[1]};
+        const std::array<void*, shared::kDepthTextureCount> depthExports = {
+            frame.depthExport[0],
+            frame.depthExport[1]};
         const bool published = presentationBridge.PublishGpuFrame(
             device,
             renderRequest,
             2000,
-            uiPlacement);
+            uiPlacement,
+            depthFrame,
+            depthSurfaces,
+            depthExports);
         frame.uploadQpcTicks =
             ReadPerformanceCounter() - publishStarted;
         return published;

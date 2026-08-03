@@ -353,7 +353,7 @@ beside the x86 client, and run:
 
 ```powershell
 .\build\bfvr-cmake-validate\BFVRD3D8To9SharedSurfaceProbe.exe `
-  --consumer .\build\bfvr-cmake-validate\BFVRSharedTextureConsumerProbe.exe `
+  --consumer .\build\bfvr-presenter-x64\Release\BFVRSharedTextureConsumerProbe.exe `
   --consumer-log .\build\diagnostics\bfvr-d3d9ex-x64.log
 ```
 
@@ -362,6 +362,46 @@ translated D3D8/D3D9Ex, opens them in x64 D3D11, converts them to BGRA, waits
 for both APIs' GPU work before reuse, and verifies exact pixels without CPU
 pixel transport. The standalone helper-allocation regression can be selected
 for one process with `BFVR_D3D8TO9_FORCE_SHARED_HELPER=1`.
+
+The no-game ambient-occlusion depth prerequisite has its own x86 hardware
+probe. It validates texture-backed `INTZ` depth/stencil rendering, packed and
+float D3D9-to-D3D11 export, exact D3D8-visible state restoration, and GPU
+timestamps at the current native eye size:
+
+```powershell
+.\build\bfvr-cmake-validate\BFVRAmbientOcclusionDepthProbe.exe `
+  --width 1872 --height 2016 --iterations 64
+```
+
+The matching x64 control executes the native-resolution spatial AO and bilateral
+denoise shaders, verifies non-trivial output, and compares the existing stereo
+world conversion with and without the AO sample:
+
+```powershell
+.\build\bfvr-presenter-x64\Release\BFVRAmbientOcclusionGpuProbe.exe `
+  --width 1872 --height 2016 --iterations 64
+```
+
+Add `--ambient-occlusion` to `BFVRD3D8To9SharedSurfaceProbe` for the complete
+no-game INTZ -> packed D3D9 shared depth -> x64 AO -> world-composite control.
+The ordinary invocation above remains the exact no-AO regression.
+
+Live AO is experimental and default-off. Set `BFVR_OPENXR_AO=1` in the launch
+environment to request it. Unsupported adapters, depth allocation/resolve
+failures, invalid frame projections, or x64 AO setup failures retain the
+ordinary D24S8/color/UI path; the established three shared color textures stay
+mandatory. Ref2 UI and bloom are not processed by AO. Use the same build with
+the variable unset for the required headset A/B.
+The current owner-comparison build uses native-eye-resolution R16_FLOAT AO
+intermediates, world-composite intensity 1.0, and a per-pixel-rotated
+eight-sample 0.60 m view-space disk. Projected radii remain exact through 24
+pixels and use a C1-continuous transition over 24..72 pixels into a 48-pixel
+cap. The 3x3 bilateral denoiser uses its original absolute-plus-relative
+view-depth tolerance. The arbitrary view-distance fade is absent; AO fades only
+when its projected footprint becomes subpixel. Native resolution avoids
+stretching a half-resolution result through the ordinary color sampler. The AO
+pass explicitly installs its complete viewport/scissor/blend/depth/raster
+state, and packed-depth transport is unchanged.
 
 The live no-headset control combines the normal observer with the shared
 transport request:

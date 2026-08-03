@@ -97,6 +97,12 @@ struct D3D8RuntimeUiPlacement
     bool mountedCameraDecoupled = false;
 };
 
+struct D3D8RuntimeDepthFrame
+{
+    bool valid = false;
+    float projections[2][16] = {};
+};
+
 class D3D8SharedPresentationBridge
 {
 public:
@@ -115,7 +121,9 @@ public:
         bool forceCpuTransport = false);
     bool EnsureGpuFrameTargets(
         void* d3d8Device,
-        std::array<void*, 3>& surfaces);
+        std::array<void*, shared::kTextureCount>& surfaces,
+        std::array<void*, shared::kDepthTextureCount>& depthSurfaces,
+        std::array<void*, shared::kDepthTextureCount>& depthExportSurfaces);
     bool RequestRender(
         D3D8RuntimeRenderRequest& request,
         DWORD timeoutMs);
@@ -127,7 +135,11 @@ public:
         void* d3d8Device,
         const D3D8RuntimeRenderRequest& request,
         DWORD timeoutMs,
-        const D3D8RuntimeUiPlacement& uiPlacement);
+        const D3D8RuntimeUiPlacement& uiPlacement,
+        const D3D8RuntimeDepthFrame& depthFrame,
+        const std::array<void*, shared::kDepthTextureCount>& depthSurfaces,
+        const std::array<void*, shared::kDepthTextureCount>&
+            depthExportSurfaces);
     bool WaitForConsumption(LONG sequence, DWORD timeoutMs);
     bool WaitForPresentation(LONG sequence, DWORD timeoutMs);
     void PrepareForResourceRelease();

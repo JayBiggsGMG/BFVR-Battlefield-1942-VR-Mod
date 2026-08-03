@@ -155,6 +155,7 @@ struct StereoFrameRecord
 {
     void* ownedColor[2] = {};
     void* ownedDepth[2] = {};
+    void* depthExport[2] = {};
     void* menuColor = nullptr;
     void* menuDepth = nullptr;
     void* reusableReadback[3] = {};
@@ -214,6 +215,7 @@ struct StereoFrameRecord
     ReadbackResult menuReadback = {};
     ULONG ownedColorRelease[2] = {static_cast<ULONG>(-1), static_cast<ULONG>(-1)};
     ULONG ownedDepthRelease[2] = {static_cast<ULONG>(-1), static_cast<ULONG>(-1)};
+    ULONG depthExportRelease[2] = {static_cast<ULONG>(-1), static_cast<ULONG>(-1)};
     ULONG menuColorRelease = static_cast<ULONG>(-1);
     ULONG menuDepthRelease = static_cast<ULONG>(-1);
     ULONG reusableReadbackRelease[3] = {

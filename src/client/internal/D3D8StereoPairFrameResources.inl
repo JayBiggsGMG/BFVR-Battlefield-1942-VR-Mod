@@ -28,6 +28,12 @@ void ReleaseFrameOwnedResources()
     }
     for (std::size_t eye = 0; eye < 2; ++eye)
     {
+        if (g_frame.depthExport[eye] != nullptr)
+        {
+            g_frame.depthExportRelease[eye] =
+                ReleaseUnknown(g_frame.depthExport[eye]);
+            g_frame.depthExport[eye] = nullptr;
+        }
         if (g_frame.ownedDepth[eye] != nullptr)
         {
             g_frame.ownedDepthRelease[eye] =

@@ -6,7 +6,9 @@
 #include <dxgiformat.h>
 
 #include <array>
+#include <algorithm>
 #include <cstdio>
+#include <iterator>
 #include <string>
 #include <vector>
 
@@ -99,13 +101,18 @@ namespace bfvr::shared
 bool RunD3D8To9CrossProcessProbe(
     IDirect3DDevice8* device,
     BFVRD3D8To9CreateSharedRenderTargetFn createSharedTarget,
+    BFVRD3D8To9CreateTextureBackedDepthStencilFn createDepthTarget,
+    BFVRD3D8To9ResolveDepthToSharedTargetFn resolveDepthTarget,
     BFVRD3D8To9WaitForGpuFn waitForGpu,
     const wchar_t* consumerPath,
-    const wchar_t* consumerLogPath)
+    const wchar_t* consumerLogPath,
+    bool enableAmbientOcclusion)
 {
     if (device == nullptr ||
         createSharedTarget == nullptr ||
         waitForGpu == nullptr ||
+        (enableAmbientOcclusion &&
+            (createDepthTarget == nullptr || resolveDepthTarget == nullptr)) ||
         consumerPath == nullptr ||
         *consumerPath == L'\0')
     {
@@ -127,6 +134,9 @@ bool RunD3D8To9CrossProcessProbe(
 
     std::array<IDirect3DSurface8*, kTextureCount> surfaces = {};
     std::array<HANDLE, kTextureCount> handles = {};
+    std::array<IDirect3DSurface8*, kDepthTextureCount> depthSurfaces = {};
+    std::array<IDirect3DSurface8*, kDepthTextureCount> depthExports = {};
+    std::array<HANDLE, kDepthTextureCount> depthHandles = {};
     IDirect3DSurface8* priorColor = nullptr;
     IDirect3DSurface8* priorDepth = nullptr;
     D3DVIEWPORT8 priorViewport = {};
@@ -160,6 +170,37 @@ bool RunD3D8To9CrossProcessProbe(
             goto cleanup;
         }
     }
+    if (enableAmbientOcclusion)
+    {
+        for (std::size_t eye = 0; eye < depthSurfaces.size(); ++eye)
+        {
+            HRESULT result = createSharedTarget(
+                device,
+                kTextureWidth,
+                kTextureHeight,
+                D3DFMT_A8R8G8B8,
+                &depthHandles[eye],
+                reinterpret_cast<void**>(&depthExports[eye]));
+            result = SUCCEEDED(result)
+                ? createDepthTarget(
+                    device,
+                    kTextureWidth,
+                    kTextureHeight,
+                    D3DFMT_A2B10G10R10,
+                    reinterpret_cast<void**>(&depthSurfaces[eye]))
+                : result;
+            if (FAILED(result) || depthHandles[eye] == nullptr ||
+                depthExports[eye] == nullptr || depthSurfaces[eye] == nullptr)
+            {
+                fwprintf(
+                    stderr,
+                    L"[FAIL] Cross-process AO depth resources for eye %zu returned 0x%08lX.\n",
+                    eye,
+                    static_cast<unsigned long>(result));
+                goto cleanup;
+            }
+        }
+    }
 
     priorColorResult = device->GetRenderTarget(&priorColor);
     priorDepthResult = device->GetDepthStencilSurface(&priorDepth);
@@ -173,15 +214,20 @@ bool RunD3D8To9CrossProcessProbe(
     }
     for (std::size_t index = 0; index < surfaces.size(); ++index)
     {
-        HRESULT result = device->SetRenderTarget(surfaces[index], nullptr);
+        IDirect3DSurface8* const depth =
+            enableAmbientOcclusion && index < depthSurfaces.size()
+            ? depthSurfaces[index]
+            : nullptr;
+        HRESULT result = device->SetRenderTarget(surfaces[index], depth);
         if (SUCCEEDED(result))
         {
             result = device->Clear(
                 0,
                 nullptr,
-                D3DCLEAR_TARGET,
+                D3DCLEAR_TARGET |
+                    (depth != nullptr ? D3DCLEAR_ZBUFFER : 0),
                 kClearColors[index],
-                1.0F,
+                0.5F,
                 0);
         }
         if (FAILED(result))
@@ -195,10 +241,44 @@ bool RunD3D8To9CrossProcessProbe(
         }
     }
     if (FAILED(device->SetRenderTarget(priorColor, priorDepth)) ||
-        FAILED(device->SetViewport(&priorViewport)) ||
-        FAILED(waitForGpu(device, 5000)))
+        FAILED(device->SetViewport(&priorViewport)))
     {
-        fwprintf(stderr, L"[FAIL] Cross-process probe restore/GPU completion failed.\n");
+        fwprintf(stderr, L"[FAIL] Cross-process probe target restoration failed.\n");
+        goto cleanup;
+    }
+    if (enableAmbientOcclusion)
+    {
+        for (std::size_t eye = 0; eye < depthSurfaces.size(); ++eye)
+        {
+            BFVRD3D8To9DepthExportTiming timing = {};
+            timing.size = sizeof(timing);
+            const HRESULT result = resolveDepthTarget(
+                device,
+                depthSurfaces[eye],
+                depthExports[eye],
+                static_cast<DWORD>(
+                    BFVRD3D8To9DepthExportEncoding::PackedRgba8),
+                &timing);
+            if (FAILED(result))
+            {
+                fwprintf(
+                    stderr,
+                    L"[FAIL] Cross-process AO depth resolve for eye %zu returned 0x%08lX.\n",
+                    eye,
+                    static_cast<unsigned long>(result));
+                goto cleanup;
+            }
+            wprintf(
+                L"[AO-DEPTH] eye=%zu gpu=%.4f ms valid=%d disjoint=%d.\n",
+                eye,
+                timing.elapsedMilliseconds,
+                timing.gpuTimestampsValid ? 1 : 0,
+                timing.gpuTimestampDisjoint ? 1 : 0);
+        }
+    }
+    if (FAILED(waitForGpu(device, 5000)))
+    {
+        fwprintf(stderr, L"[FAIL] Cross-process probe GPU completion failed.\n");
         goto cleanup;
     }
 
@@ -253,6 +333,40 @@ bool RunD3D8To9CrossProcessProbe(
         description.transport =
             static_cast<DWORD>(SharedTextureTransport::D3D9LegacyHandle);
         StoreLegacySharedHandle(description, handles[index]);
+    }
+    if (enableAmbientOcclusion)
+    {
+        constexpr float nearPlane = 0.1F;
+        constexpr float farPlane = 100.0F;
+        const float depthScale = farPlane / (farPlane - nearPlane);
+        const float depthOffset = -nearPlane * farPlane /
+            (farPlane - nearPlane);
+        const float projection[16] = {
+            1.0F, 0.0F, 0.0F, 0.0F,
+            0.0F, 1.0F, 0.0F, 0.0F,
+            0.0F, 0.0F, depthScale, 1.0F,
+            0.0F, 0.0F, depthOffset, 0.0F};
+        for (std::size_t eye = 0; eye < depthSurfaces.size(); ++eye)
+        {
+            SharedTextureDescription& description = block->depthTextures[eye];
+            description.width = kTextureWidth;
+            description.height = kTextureHeight;
+            description.format = DXGI_FORMAT_B8G8R8A8_UNORM;
+            description.transport = static_cast<DWORD>(
+                SharedTextureTransport::D3D9LegacyHandle);
+            StoreLegacySharedHandle(description, depthHandles[eye]);
+            std::copy(
+                std::begin(projection),
+                std::end(projection),
+                block->frameDepth.projections[eye]);
+        }
+        InterlockedExchange(
+            &block->depthEncoding,
+            static_cast<LONG>(DepthEncoding::PackedDeviceDepthBgra8));
+        InterlockedExchange(
+            &block->depthTextureCount,
+            static_cast<LONG>(kDepthTextureCount));
+        InterlockedExchange(&block->frameDepthValid, 1);
     }
     PublishState(&block->producerState, ProcessState::TexturesReady);
     (void)channel.SignalProducerUpdate();
@@ -337,6 +451,10 @@ cleanup:
     {
         ReleaseInterface(surface);
     }
+    for (IDirect3DSurface8*& surface : depthExports)
+        ReleaseInterface(surface);
+    for (IDirect3DSurface8*& surface : depthSurfaces)
+        ReleaseInterface(surface);
     wprintf(
         succeeded
             ? L"[PASS] Cross-process D3D8->D3D9Ex shared targets opened and converted by the x64 D3D11 consumer without CPU pixel transport.\n"

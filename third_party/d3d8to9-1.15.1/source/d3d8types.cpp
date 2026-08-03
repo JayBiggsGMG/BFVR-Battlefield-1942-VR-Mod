@@ -22,7 +22,8 @@ bool IsDepthStencil(D3DFORMAT &Format) {
 		|| Format == D3DFMT_D15S1
 		|| Format == D3DFMT_D24X4S4
 		|| Format == D3DFMT_D24S8
-		|| Format == D3DFMT_D24X8;
+		|| Format == D3DFMT_D24X8
+		|| Format == D3DFMT_BFVR_INTZ;
 }
 
 DWORD GetDepthStencilBitCount(D3DFORMAT Format)
@@ -37,6 +38,7 @@ DWORD GetDepthStencilBitCount(D3DFORMAT Format)
 	case D3DFMT_D24X4S4:
 	case D3DFMT_D24S8:
 	case D3DFMT_D24X8:
+	case D3DFMT_BFVR_INTZ:
 		return 24;
 	case D3DFMT_D32:
 		return 32;
@@ -112,6 +114,7 @@ static UINT CalcTextureSize(UINT Width, UINT Height, UINT Depth, D3DFORMAT Forma
 		case D3DFMT_D24S8:
 		case D3DFMT_D24X8:
 		case D3DFMT_D24X4S4:
+		case D3DFMT_BFVR_INTZ:
 			return Width * 4 * Height * Depth;
 		case D3DFMT_DXT1:
 			assert(Depth <= 1);

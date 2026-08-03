@@ -8,7 +8,13 @@
 
 #include <windows.h>
 
-constexpr UINT BFVR_D3D8TO9_SHARED_BRIDGE_VERSION = 5;
+constexpr UINT BFVR_D3D8TO9_SHARED_BRIDGE_VERSION = 6;
+constexpr DWORD BFVR_D3D8TO9_DEPTH_EXPORT_TIMING_VERSION = 1;
+constexpr DWORD BFVR_D3DFMT_INTZ =
+	static_cast<DWORD>('I') |
+	(static_cast<DWORD>('N') << 8) |
+	(static_cast<DWORD>('T') << 16) |
+	(static_cast<DWORD>('Z') << 24);
 
 enum class BFVRD3D8To9SharedHelperStage : DWORD
 {
@@ -44,6 +50,39 @@ using BFVRD3D8To9WaitForGpuFn =
 	HRESULT(WINAPI*)(
 		void* d3d8Device,
 		DWORD timeoutMilliseconds);
+
+enum class BFVRD3D8To9DepthExportEncoding : DWORD
+{
+	PackedRgba8 = 1,
+	FloatRgba16 = 2,
+};
+
+struct BFVRD3D8To9DepthExportTiming
+{
+	DWORD size;
+	DWORD version;
+	BOOL gpuTimestampsValid;
+	BOOL gpuTimestampDisjoint;
+	ULONGLONG timestampFrequency;
+	ULONGLONG elapsedTicks;
+	double elapsedMilliseconds;
+};
+
+using BFVRD3D8To9CreateTextureBackedDepthStencilFn =
+	HRESULT(WINAPI*)(
+		void* d3d8Device,
+		UINT width,
+		UINT height,
+		DWORD renderTargetFormat,
+		void** d3d8DepthSurface);
+
+using BFVRD3D8To9ResolveDepthToSharedTargetFn =
+	HRESULT(WINAPI*)(
+		void* d3d8Device,
+		void* d3d8DepthSurface,
+		void* d3d8TargetSurface,
+		DWORD encoding,
+		BFVRD3D8To9DepthExportTiming* timing);
 
 struct BFVRD3D8To9SharedDeviceDiagnostics
 {

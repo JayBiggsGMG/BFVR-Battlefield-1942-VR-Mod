@@ -62,7 +62,7 @@ verified the exact logical RGBA clear color. No game-directory proxy is
 installed, and the extension remains unavailable unless BFVR explicitly loads
 this renamed translator.
 
-The current shared bridge ABI is version 5. In addition to target creation and
+The current shared bridge ABI is version 6. In addition to target creation and
 the bounded producer event-query wait, it exposes read-only diagnostics for:
 
 - whether the translated device is D3D9Ex-backed and cooperative;
@@ -70,13 +70,34 @@ the bounded producer event-query wait, it exposes read-only diagnostics for:
 - the last helper stage and its `CreateDeviceEx`, `CreateTexture`, and
   game-device-open HRESULTs.
 
-ABI 5 also preserves stable programmable-vertex-shader identity across the
+ABI 5 added stable programmable-vertex-shader identity across the
 translator's pointer-derived emulated handles. At successful D3D8 shader
 creation it records a 64-bit FNV-1a hash and byte count of the original shader
 function plus a creation ordinal. A validated read-only export returns that
 metadata for a live emulated handle; native/foreign devices and stale handles
 fail closed. BFVR uses the metadata for exact semantic policies and does not
 infer shader identity from the high handle bit.
+
+ABI 6 adds a capability-gated texture-backed `INTZ` depth/stencil constructor
+and a bounded fullscreen depth-export operation. The translator recognizes
+the FOURCC as a logical 24-bit format so D3D8 Z-bias conversion does not fall
+back to a zero-bit depth buffer. The export accepts only a validated translator
+device and its own matching surfaces, samples depth only after unbinding it,
+and restores the captured D3D9 state plus render target, depth target, and
+viewport before returning. Embedded ps_3_0 shaders export either packed
+`A8R8G8B8` or `A16B16G16R16F`, and optional D3D9 timestamp queries measure the
+GPU interval.
+
+`BFVRAmbientOcclusionDepthProbe` validates ABI 6 without launching BF1942. On
+the RTX 4070 Ti at 1872x2016 it proved depth, stencil, clear/overlap values,
+logical Z bias, D3D8-visible state restoration, and D3D11 reconstruction. The
+64-iteration packed path measured 0.0256 ms/eye p95 and the float path 0.0410
+ms/eye p95. Shared `A8B8G8R8` was rejected by the adapter; the proven packed
+mapping is D3D9 `A8R8G8B8` to D3D11 `B8G8R8A8_UNORM`. Live BF1942 uses this
+ABI only when `BFVR_OPENXR_AO=1` requests the default-off prototype. The
+extended D3D8 cross-process control proves both optional packed depths can be
+opened, evaluated, composited, and acknowledged by the x64 consumer; live
+headset gameplay validation remains pending.
 
 Target creation first uses the translated game device. A diagnostic fallback
 can create the allocation on a temporary windowed D3D9Ex helper device and

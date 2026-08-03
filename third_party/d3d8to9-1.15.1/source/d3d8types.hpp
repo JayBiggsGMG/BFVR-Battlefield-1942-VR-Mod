@@ -8,6 +8,9 @@ struct IUnknown;
 
 #include <d3d9.h>
 
+constexpr D3DFORMAT D3DFMT_BFVR_INTZ =
+	static_cast<D3DFORMAT>(MAKEFOURCC('I', 'N', 'T', 'Z'));
+
 #define D3DFMT_W11V11U10 65
 
 #define D3DRS_LINEPATTERN 10

@@ -8,4 +8,6 @@ EXPORTS
 	BFVRD3D8To9GetSharedDeviceDiagnostics
 	BFVRD3D8To9GetVertexShaderIdentity
 	BFVRD3D8To9CreateSharedRenderTarget
+	BFVRD3D8To9CreateTextureBackedDepthStencil
+	BFVRD3D8To9ResolveDepthToSharedTarget
 	BFVRD3D8To9WaitForGpu

@@ -5,6 +5,9 @@ project(d3d8to9 CXX)
 set(SRCS
   source/bfvr_runtime_diagnostics.cpp
   source/bfvr_runtime_diagnostics.hpp
+  source/bfvr_depth_export.cpp
+  source/bfvr_depth_export.hlsl
+  source/bfvr_depth_export_shaders.hpp
   source/bfvr_shared_bridge.cpp
   source/bfvr_shared_bridge.hpp
   source/d3d8.hpp
@@ -27,6 +30,9 @@ set(SRCS
 )
 
 set(CMAKE_CXX_STANDARD 17)
+set_source_files_properties(
+  source/bfvr_depth_export.hlsl
+  PROPERTIES HEADER_FILE_ONLY TRUE)
 
 option(D3D8TO9_STATIC "Build as a static library" OFF)
 

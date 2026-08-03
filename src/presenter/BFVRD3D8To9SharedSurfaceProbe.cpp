@@ -357,6 +357,7 @@ int wmain(int argc, wchar_t** argv)
         D3DFMT_A2B10G10R10;
     const wchar_t* consumerPath = nullptr;
     const wchar_t* consumerLogPath = nullptr;
+    bool enableAmbientOcclusion = false;
     for (int index = 1; index < argc; ++index)
     {
         if (wcscmp(argv[index], L"--consumer") == 0 && index + 1 < argc)
@@ -368,11 +369,15 @@ int wmain(int argc, wchar_t** argv)
         {
             consumerLogPath = argv[++index];
         }
+        else if (wcscmp(argv[index], L"--ambient-occlusion") == 0)
+        {
+            enableAmbientOcclusion = true;
+        }
         else
         {
             fwprintf(
                 stderr,
-                L"Usage: BFVRD3D8To9SharedSurfaceProbe [--consumer <x64-path> [--consumer-log <path>]]\n");
+                L"Usage: BFVRD3D8To9SharedSurfaceProbe [--consumer <x64-path> [--consumer-log <path>] [--ambient-occlusion]]\n");
             return 2;
         }
     }
@@ -412,6 +417,16 @@ int wmain(int argc, wchar_t** argv)
             GetProcAddress(
                 translator,
                 "BFVRD3D8To9CreateSharedRenderTarget"));
+    const auto createDepthTarget =
+        reinterpret_cast<BFVRD3D8To9CreateTextureBackedDepthStencilFn>(
+            GetProcAddress(
+                translator,
+                "BFVRD3D8To9CreateTextureBackedDepthStencil"));
+    const auto resolveDepthTarget =
+        reinterpret_cast<BFVRD3D8To9ResolveDepthToSharedTargetFn>(
+            GetProcAddress(
+                translator,
+                "BFVRD3D8To9ResolveDepthToSharedTarget"));
     const auto waitForGpu =
         reinterpret_cast<BFVRD3D8To9WaitForGpuFn>(
             GetProcAddress(
@@ -421,6 +436,8 @@ int wmain(int argc, wchar_t** argv)
         getRuntimeDiagnostics == nullptr ||
         getBridgeVersion == nullptr ||
         createSharedTarget == nullptr ||
+        (enableAmbientOcclusion &&
+            (createDepthTarget == nullptr || resolveDepthTarget == nullptr)) ||
         waitForGpu == nullptr ||
         getBridgeVersion() != BFVR_D3D8TO9_SHARED_BRIDGE_VERSION)
     {
@@ -720,9 +737,12 @@ int wmain(int argc, wchar_t** argv)
         bfvr::shared::RunD3D8To9CrossProcessProbe(
             device8,
             createSharedTarget,
+            createDepthTarget,
+            resolveDepthTarget,
             waitForGpu,
             consumerPath,
-            consumerLogPath)
+            consumerLogPath,
+            enableAmbientOcclusion)
         ? 0
         : 1;
 

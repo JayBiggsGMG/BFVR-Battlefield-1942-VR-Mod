@@ -67,6 +67,9 @@ bool SharedTextureConsumer::Initialize(
     ID3D11DeviceContext* context,
     const SharedTextureDescription* descriptions,
     std::size_t count,
+    const SharedTextureDescription* depthDescriptions,
+    std::size_t depthCount,
+    DepthEncoding depthEncoding,
     const PresentationRequirements& destinationRequirements,
     SharedTextureLogCallback logCallback,
     void* logContext)
@@ -99,7 +102,7 @@ bool SharedTextureConsumer::Initialize(
     context_->AddRef();
     worldFxaaEnabled_ = ReadWorldFxaaEnabled();
     // Bloom is intentionally disabled: it was not perceptible in-headset and
-    // adds three half-resolution GPU passes per world eye. Keep the feature
+    // adds three GPU passes per world eye. Keep the feature
     // code dormant rather than allocating its resources or compiling shaders.
     worldBloomEnabled_ = false;
     worldBloomThreshold_ = 0.0F;
@@ -135,19 +138,80 @@ bool SharedTextureConsumer::Initialize(
             break;
         }
     }
+    bool depthOpened =
+        depthDescriptions != nullptr &&
+        depthCount == depthTextures_.size() &&
+        depthEncoding == DepthEncoding::PackedDeviceDepthBgra8;
+    if (depthOpened)
+    {
+        for (std::size_t index = 0; index < depthTextures_.size(); ++index)
+        {
+            depthOpened = OpenDepthTexture(
+                device1,
+                index,
+                depthDescriptions[index]);
+            if (!depthOpened)
+                break;
+        }
+    }
     device1->Release();
     if (!opened)
     {
         Shutdown();
         return false;
     }
-    if (scalerRequired_ &&
-        !scaler_.Initialize(
+    if (depthOpened && ambientOcclusion_.Initialize(
+            device_,
+            context_,
+            logCallback_,
+            logContext_))
+    {
+        ambientOcclusionEnabled_ = true;
+        scalerRequired_ = true;
+        for (std::size_t index = 0; index < depthTextures_.size(); ++index)
+        {
+            textures_[index].requiresScaling = true;
+            requiresLegacyCompletionWait_ =
+                requiresLegacyCompletionWait_ ||
+                static_cast<SharedTextureTransport>(
+                    depthDescriptions[index].transport) ==
+                    SharedTextureTransport::D3D9LegacyHandle;
+        }
+    }
+    else
+    {
+        for (DepthTexture& texture : depthTextures_)
+            ReleaseDepthTexture(texture);
+        if (depthCount != 0 || depthEncoding != DepthEncoding::None)
+        {
+            WriteLog(
+                L"Shared texture consumer could not enable the optional AO depth path; color/UI presentation remains active.");
+        }
+    }
+    bool scalerReady = !scalerRequired_ || scaler_.Initialize(
+        device_,
+        context_,
+        logCallback_,
+        logContext_,
+        worldBloomEnabled_,
+        ambientOcclusionEnabled_);
+    if (!scalerReady && ambientOcclusionEnabled_)
+    {
+        WriteLog(
+            L"Shared texture consumer could not initialize the AO composite variant; retrying the mandatory color/UI scaler with AO disabled.");
+        ambientOcclusion_.Shutdown();
+        ambientOcclusionEnabled_ = false;
+        for (DepthTexture& texture : depthTextures_)
+            ReleaseDepthTexture(texture);
+        scalerReady = scaler_.Initialize(
             device_,
             context_,
             logCallback_,
             logContext_,
-            worldBloomEnabled_))
+            worldBloomEnabled_,
+            false);
+    }
+    if (!scalerReady)
     {
         Shutdown();
         return false;
@@ -181,9 +245,12 @@ bool SharedTextureConsumer::Initialize(
     if (scalerRequired_)
     {
         WriteLog(
-            worldFxaaEnabled_
-                ? L"Shared texture consumer opened all three x86-produced resources and enabled x64 aspect-fit conversion with world FXAA; bloom is fully disabled."
-                : L"Shared texture consumer opened all three x86-produced resources and enabled x64 aspect-fit conversion with world FXAA disabled by BFVR_OPENXR_FXAA=0; bloom is fully disabled.");
+            ambientOcclusionEnabled_
+                ? L"Shared texture consumer opened the three color resources plus two packed-depth resources; native-resolution world AO is active at intensity %.2f, temporal history and bloom are disabled."
+                : worldFxaaEnabled_
+                ? L"Shared texture consumer opened all three x86-produced resources and enabled x64 aspect-fit conversion with world FXAA; AO and bloom are disabled."
+                : L"Shared texture consumer opened all three x86-produced resources and enabled x64 aspect-fit conversion with world FXAA disabled by BFVR_OPENXR_FXAA=0; AO and bloom are disabled.",
+            ambientOcclusionIntensity_);
     }
     else
     {
@@ -192,7 +259,10 @@ bool SharedTextureConsumer::Initialize(
     return true;
 }
 
-bool SharedTextureConsumer::ConsumeFrame(LONG frameOverlayFlags)
+bool SharedTextureConsumer::ConsumeFrame(
+    LONG frameOverlayFlags,
+    bool depthValid,
+    const SharedDepthFrameParameters* depthFrame)
 {
     if (context_ == nullptr)
     {
@@ -200,6 +270,9 @@ bool SharedTextureConsumer::ConsumeFrame(LONG frameOverlayFlags)
     }
 
     std::array<bool, kTextureCount> acquired = {};
+    std::array<bool, kDepthTextureCount> depthAcquired = {};
+    const bool useDepth =
+        ambientOcclusionEnabled_ && depthValid && depthFrame != nullptr;
     for (std::size_t index = 0; index < textures_.size(); ++index)
     {
         if (textures_[index].keyedMutex == nullptr)
@@ -225,11 +298,73 @@ bool SharedTextureConsumer::ConsumeFrame(LONG frameOverlayFlags)
         acquired[index] = true;
     }
 
-    bool copied = true;
-    for (const Texture& texture : textures_)
+    if (useDepth)
     {
+        for (std::size_t index = 0; index < depthTextures_.size(); ++index)
+        {
+            if (depthTextures_[index].keyedMutex == nullptr)
+                continue;
+            const HRESULT result =
+                depthTextures_[index].keyedMutex->AcquireSync(1, 500);
+            if (FAILED(result))
+            {
+                WriteLog(
+                    L"Shared texture consumer could not acquire depth slot %zu (HRESULT=0x%08lX).",
+                    index,
+                    static_cast<unsigned long>(result));
+                for (std::size_t releaseIndex = 0;
+                     releaseIndex < index;
+                     ++releaseIndex)
+                {
+                    if (depthAcquired[releaseIndex])
+                    {
+                        depthTextures_[releaseIndex].keyedMutex->ReleaseSync(0);
+                    }
+                }
+                for (std::size_t releaseIndex = 0;
+                     releaseIndex < textures_.size();
+                     ++releaseIndex)
+                {
+                    if (acquired[releaseIndex])
+                        textures_[releaseIndex].keyedMutex->ReleaseSync(0);
+                }
+                return false;
+            }
+            depthAcquired[index] = true;
+        }
+    }
+
+    bool aoFrameStarted = false;
+    bool applyAmbientOcclusion = false;
+    if (useDepth)
+    {
+        aoFrameStarted = ambientOcclusion_.BeginFrame();
+        applyAmbientOcclusion = aoFrameStarted;
+        for (std::size_t eye = 0;
+             eye < depthTextures_.size() && applyAmbientOcclusion;
+             ++eye)
+        {
+            applyAmbientOcclusion = ambientOcclusion_.BuildEye(
+                eye,
+                depthTextures_[eye].sharedView,
+                depthTextures_[eye].width,
+                depthTextures_[eye].height,
+                depthFrame->projections[eye]);
+        }
+    }
+
+    bool copied = true;
+    for (std::size_t index = 0; index < textures_.size(); ++index)
+    {
+        if (applyAmbientOcclusion && index == 0)
+            ambientOcclusion_.BeginApplicationTiming();
+        const Texture& texture = textures_[index];
         if (texture.requiresScaling)
         {
+            ID3D11ShaderResourceView* const aoView =
+                applyAmbientOcclusion && index < depthTextures_.size()
+                ? ambientOcclusion_.GetEyeView(index)
+                : nullptr;
             copied = scaler_.ScaleAspectFit(
                 texture.sharedView,
                 texture.sourceWidth,
@@ -240,6 +375,8 @@ bool SharedTextureConsumer::ConsumeFrame(LONG frameOverlayFlags)
                 texture.transparentPadding,
                 texture.sourceAlreadyLinear,
                 texture.applyAntialiasing,
+                aoView,
+                aoView != nullptr ? ambientOcclusionIntensity_ : 0.0F,
                 texture.applyBloom,
                 worldBloomThreshold_,
                 worldBloomIntensity_) && copied;
@@ -247,6 +384,23 @@ bool SharedTextureConsumer::ConsumeFrame(LONG frameOverlayFlags)
         else
         {
             context_->CopyResource(texture.local, texture.shared);
+        }
+        if (applyAmbientOcclusion &&
+            index + 1 == depthTextures_.size())
+        {
+            ambientOcclusion_.EndApplicationTiming();
+        }
+    }
+    if (aoFrameStarted)
+        ambientOcclusion_.EndFrame();
+    if (useDepth && !applyAmbientOcclusion)
+    {
+        ++ambientOcclusionFrameFailures_;
+        if (ambientOcclusionFrameFailures_ <= 3)
+        {
+            WriteLog(
+                L"Shared texture consumer rejected AO inputs for frame failure %ld; presenting color/UI without AO.",
+                ambientOcclusionFrameFailures_);
         }
     }
     const Texture& uiTexture =
@@ -305,8 +459,18 @@ bool SharedTextureConsumer::ConsumeFrame(LONG frameOverlayFlags)
                 L"Shared texture consumer timed out waiting for legacy-handle GPU reads to complete.");
         }
     }
+    if (aoFrameStarted)
+        ambientOcclusion_.CollectFrameTimings();
 
     bool released = true;
+    for (std::size_t index = 0; index < depthTextures_.size(); ++index)
+    {
+        if (depthAcquired[index])
+        {
+            released = SUCCEEDED(
+                depthTextures_[index].keyedMutex->ReleaseSync(0)) && released;
+        }
+    }
     for (Texture& texture : textures_)
     {
         if (texture.keyedMutex != nullptr)
@@ -344,16 +508,24 @@ bool SharedTextureConsumer::ReadCenterPixels(DWORD* pixels, std::size_t count)
 void SharedTextureConsumer::Shutdown()
 {
     mainMenuOverlay_.Shutdown();
+    ambientOcclusion_.Shutdown();
     scaler_.Shutdown();
     scalerRequired_ = false;
     requiresLegacyCompletionWait_ = false;
     worldFxaaEnabled_ = true;
     worldBloomEnabled_ = false;
+    ambientOcclusionEnabled_ = false;
+    ambientOcclusionIntensity_ = 1.0F;
+    ambientOcclusionFrameFailures_ = 0;
     worldBloomThreshold_ = 0.0F;
     worldBloomIntensity_ = 0.0F;
     for (Texture& texture : textures_)
     {
         ReleaseTexture(texture);
+    }
+    for (DepthTexture& texture : depthTextures_)
+    {
+        ReleaseDepthTexture(texture);
     }
     if (legacyCompletionQuery_ != nullptr)
     {
@@ -516,6 +688,93 @@ bool SharedTextureConsumer::OpenTexture(
     return true;
 }
 
+bool SharedTextureConsumer::OpenDepthTexture(
+    ID3D11Device1* device,
+    std::size_t index,
+    const SharedTextureDescription& description)
+{
+    if (device == nullptr || index >= depthTextures_.size() ||
+        description.width == 0 || description.height == 0 ||
+        static_cast<DXGI_FORMAT>(description.format) !=
+            DXGI_FORMAT_B8G8R8A8_UNORM)
+    {
+        return false;
+    }
+
+    DepthTexture& texture = depthTextures_[index];
+    const SharedTextureTransport transport =
+        static_cast<SharedTextureTransport>(description.transport);
+    HRESULT result = E_INVALIDARG;
+    if (transport == SharedTextureTransport::NamedNtHandle &&
+        description.name[0] != L'\0')
+    {
+        result = device->OpenSharedResourceByName(
+            description.name,
+            DXGI_SHARED_RESOURCE_READ | DXGI_SHARED_RESOURCE_WRITE,
+            __uuidof(ID3D11Texture2D),
+            reinterpret_cast<void**>(&texture.shared));
+        if (SUCCEEDED(result))
+        {
+            result = texture.shared->QueryInterface(
+                __uuidof(IDXGIKeyedMutex),
+                reinterpret_cast<void**>(&texture.keyedMutex));
+        }
+    }
+    else if (transport == SharedTextureTransport::D3D9LegacyHandle)
+    {
+        const HANDLE sharedHandle = LoadLegacySharedHandle(description);
+        result = sharedHandle == nullptr
+            ? E_INVALIDARG
+            : device_->OpenSharedResource(
+                sharedHandle,
+                __uuidof(ID3D11Texture2D),
+                reinterpret_cast<void**>(&texture.shared));
+    }
+
+    D3D11_TEXTURE2D_DESC sourceDescription = {};
+    if (SUCCEEDED(result))
+    {
+        texture.shared->GetDesc(&sourceDescription);
+        if (sourceDescription.Width != description.width ||
+            sourceDescription.Height != description.height ||
+            sourceDescription.Format != DXGI_FORMAT_B8G8R8A8_UNORM ||
+            sourceDescription.SampleDesc.Count != 1 ||
+            sourceDescription.ArraySize != 1)
+        {
+            result = E_INVALIDARG;
+        }
+    }
+    if (SUCCEEDED(result))
+    {
+        result = device_->CreateShaderResourceView(
+            texture.shared,
+            nullptr,
+            &texture.sharedView);
+    }
+    if (FAILED(result) || texture.sharedView == nullptr)
+    {
+        WriteLog(
+            L"Shared texture consumer could not open optional packed-depth slot %zu (HRESULT=0x%08lX).",
+            index,
+            static_cast<unsigned long>(result));
+        ReleaseDepthTexture(texture);
+        return false;
+    }
+    texture.width = sourceDescription.Width;
+    texture.height = sourceDescription.Height;
+    WriteLog(
+        transport == SharedTextureTransport::D3D9LegacyHandle
+            ? L"Shared texture consumer opened legacy D3D9 packed-depth slot %zu handle=%p at %ux%u."
+            : L"Shared texture consumer opened named packed-depth slot %zu '%s' at %ux%u.",
+        index,
+        transport == SharedTextureTransport::D3D9LegacyHandle
+            ? LoadLegacySharedHandle(description)
+            : description.name,
+        texture.width,
+        texture.height);
+    return true;
+}
+
 bool SharedTextureConsumer::ReadCenterPixel(const Texture& texture, DWORD& pixel)
 {
     if (device_ == nullptr || context_ == nullptr || texture.local == nullptr)
@@ -616,5 +875,26 @@ void SharedTextureConsumer::ReleaseTexture(Texture& texture)
     texture.sourceAlreadyLinear = false;
     texture.applyAntialiasing = false;
     texture.applyBloom = false;
+}
+
+void SharedTextureConsumer::ReleaseDepthTexture(DepthTexture& texture)
+{
+    if (texture.keyedMutex != nullptr)
+    {
+        texture.keyedMutex->Release();
+        texture.keyedMutex = nullptr;
+    }
+    if (texture.sharedView != nullptr)
+    {
+        texture.sharedView->Release();
+        texture.sharedView = nullptr;
+    }
+    if (texture.shared != nullptr)
+    {
+        texture.shared->Release();
+        texture.shared = nullptr;
+    }
+    texture.width = 0;
+    texture.height = 0;
 }
 } // namespace bfvr::shared

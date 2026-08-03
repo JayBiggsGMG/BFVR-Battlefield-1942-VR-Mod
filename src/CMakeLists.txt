@@ -36,6 +36,7 @@ if(BFVR_PRESENTER_ONLY)
     client/QuickMenuArt.cpp
     presenter/BFVRPresenter.cpp
     presenter/DesktopMirror.cpp
+    presenter/D3D11AmbientOcclusion.cpp
     presenter/D3D11MainMenuOverlay.cpp
     presenter/D3D11TextureScaler.cpp
     presenter/SharedControlChannel.cpp
@@ -49,12 +50,18 @@ if(BFVR_PRESENTER_ONLY)
   add_executable(BFVRSharedTextureConsumerProbe
     client/MainMenuOverlay.cpp
     presenter/BFVRSharedTextureConsumerProbe.cpp
+    presenter/D3D11AmbientOcclusion.cpp
     presenter/D3D11MainMenuOverlay.cpp
     presenter/D3D11TextureScaler.cpp
     presenter/SharedControlChannel.cpp
     presenter/SharedTextureConsumer.cpp
   )
-  foreach(target BFVRPresenter BFVRSharedTextureConsumerProbe)
+  add_executable(BFVRAmbientOcclusionGpuProbe
+    presenter/BFVRAmbientOcclusionGpuProbe.cpp
+    presenter/D3D11AmbientOcclusion.cpp
+    presenter/D3D11TextureScaler.cpp
+  )
+  foreach(target BFVRPresenter BFVRSharedTextureConsumerProbe BFVRAmbientOcclusionGpuProbe)
     target_compile_definitions(${target} PRIVATE
       WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
     target_include_directories(${target} PRIVATE
@@ -274,6 +281,11 @@ add_executable(BFVRD3D8To9SharedSurfaceProbe
   presenter/SharedControlChannel.cpp
 )
 
+add_executable(BFVRAmbientOcclusionDepthProbe
+  presenter/BFVRAmbientOcclusionDepthProbe.cpp
+  presenter/D3DSystemRuntime.cpp
+)
+
 add_executable(BFVRStereoMathTests
   client/D3D8RuntimePosePolicy.cpp
   client/D3D8SpriteShaderTransform.cpp
@@ -360,7 +372,7 @@ add_executable(BFVRRfaInspect
   tools/RfaInspect.cpp
 )
 
-foreach(target BFVRClient BFVROpenALHrtfRouter BFVRD3D8To9FlatClient BFVRLoader BFVROpenXRProbe BFVRSharedTextureProducerProbe BFVRD3D8To9SharedSurfaceProbe BFVRStereoMath BFVRStereoMathTests BFVRWeaponFireAimMathTests BFVROffHandSupportPolicyTests BFVRArmPoleVectorMathTests BFVRMainMenuOverlayTests BFVRQuickMenuTests BFVRVehicleMotionAimMathTests BFVRMountedCameraMathTests BFVRWorldCrosshairMathTests BFVRRuntimeDiagnosticsTests BFVRHrtfListenerMathTests BFVRHrtfBufferPolicyTests BFVRHrtfMenuSoundPolicyTests BFVRHrtfBackendProbe BFVRDirectSoundImportRouteTests BFVRSharedControlChannelTests BFVRRfaInspect)
+foreach(target BFVRClient BFVROpenALHrtfRouter BFVRD3D8To9FlatClient BFVRLoader BFVROpenXRProbe BFVRSharedTextureProducerProbe BFVRD3D8To9SharedSurfaceProbe BFVRAmbientOcclusionDepthProbe BFVRStereoMath BFVRStereoMathTests BFVRWeaponFireAimMathTests BFVROffHandSupportPolicyTests BFVRArmPoleVectorMathTests BFVRMainMenuOverlayTests BFVRQuickMenuTests BFVRVehicleMotionAimMathTests BFVRMountedCameraMathTests BFVRWorldCrosshairMathTests BFVRRuntimeDiagnosticsTests BFVRHrtfListenerMathTests BFVRHrtfBufferPolicyTests BFVRHrtfMenuSoundPolicyTests BFVRHrtfBackendProbe BFVRDirectSoundImportRouteTests BFVRSharedControlChannelTests BFVRRfaInspect)
   target_compile_definitions(${target} PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
   set_property(TARGET ${target} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
   if(MSVC)
@@ -376,9 +388,13 @@ target_link_libraries(BFVROpenXRProbe PRIVATE
   kernel32 ole32 windowscodecs d3d11 dxgi BFVRStereoMath)
 target_link_libraries(BFVRSharedTextureProducerProbe PRIVATE kernel32)
 target_link_libraries(BFVRD3D8To9SharedSurfaceProbe PRIVATE kernel32 user32)
+target_link_libraries(BFVRAmbientOcclusionDepthProbe PRIVATE kernel32 user32)
 target_include_directories(BFVRSharedTextureProducerProbe PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}")
 target_include_directories(BFVRD3D8To9SharedSurfaceProbe PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}"
+  "${BFVR_D3D8TO9_ROOT}/source")
+target_include_directories(BFVRAmbientOcclusionDepthProbe PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}"
   "${BFVR_D3D8TO9_ROOT}/source")
 target_include_directories(BFVROpenALHrtfRouter PRIVATE
@@ -553,13 +569,15 @@ set_target_properties(BFVRSharedTextureProducerProbe PROPERTIES
   OUTPUT_NAME "BFVRSharedTextureProducerProbe")
 set_target_properties(BFVRD3D8To9SharedSurfaceProbe PROPERTIES
   OUTPUT_NAME "BFVRD3D8To9SharedSurfaceProbe")
+set_target_properties(BFVRAmbientOcclusionDepthProbe PROPERTIES
+  OUTPUT_NAME "BFVRAmbientOcclusionDepthProbe")
 
 add_custom_target(BFVRD3D8To9RuntimeCopy ALL
   COMMAND ${CMAKE_COMMAND} -E copy_if_different
     "$<TARGET_FILE:d3d8to9>"
     "$<TARGET_FILE_DIR:BFVRClient>/BFVRD3D8To9.dll"
   DEPENDS d3d8to9)
-foreach(target BFVRClient BFVRD3D8To9FlatClient BFVRD3D8To9SharedSurfaceProbe)
+foreach(target BFVRClient BFVRD3D8To9FlatClient BFVRD3D8To9SharedSurfaceProbe BFVRAmbientOcclusionDepthProbe)
   add_dependencies(${target} BFVRD3D8To9RuntimeCopy)
 endforeach()
 

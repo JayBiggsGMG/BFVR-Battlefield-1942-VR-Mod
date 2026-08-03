@@ -171,12 +171,26 @@ int RunConsumer(const wchar_t* channelName, DWORD durationMs)
         }
     }
 
+    const LONG publishedDepthCount = InterlockedCompareExchange(
+        &block->depthTextureCount,
+        0,
+        0);
+    const LONG publishedDepthEncoding = InterlockedCompareExchange(
+        &block->depthEncoding,
+        0,
+        0);
     bfvr::shared::SharedTextureConsumer consumer;
     if (!consumer.Initialize(
             device,
             context,
             block->textures,
             bfvr::shared::kTextureCount,
+            block->depthTextures,
+            publishedDepthCount > 0
+                ? static_cast<std::size_t>(publishedDepthCount)
+                : 0,
+            static_cast<bfvr::shared::DepthEncoding>(
+                publishedDepthEncoding),
             block->requirements,
             WriteLog,
             nullptr))
@@ -300,7 +314,18 @@ int RunConsumer(const wchar_t* channelName, DWORD durationMs)
             &block->frameOverlayFlags,
             0,
             0);
-        if (!consumer.ConsumeFrame(frameOverlayFlags))
+        const bool frameDepthValid = InterlockedCompareExchange(
+            &block->frameDepthValid,
+            0,
+            0) != 0;
+        const bfvr::shared::SharedDepthFrameParameters frameDepth =
+            frameDepthValid
+            ? block->frameDepth
+            : bfvr::shared::SharedDepthFrameParameters{};
+        if (!consumer.ConsumeFrame(
+                frameOverlayFlags,
+                frameDepthValid,
+                frameDepthValid ? &frameDepth : nullptr))
         {
             healthy = false;
             break;

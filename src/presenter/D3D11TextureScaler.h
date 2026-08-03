@@ -20,7 +20,8 @@ public:
         ID3D11DeviceContext* context,
         SharedTextureLogCallback logCallback,
         void* logContext,
-        bool enableBloom);
+        bool enableBloom,
+        bool enableAmbientOcclusion);
     bool ScaleAspectFit(
         ID3D11ShaderResourceView* sourceView,
         UINT sourceWidth,
@@ -31,6 +32,8 @@ public:
         bool transparentPadding,
         bool sourceAlreadyLinear,
         bool applyAntialiasing,
+        ID3D11ShaderResourceView* ambientOcclusionView,
+        float ambientOcclusionIntensity,
         bool applyBloom,
         float bloomThreshold,
         float bloomIntensity);
@@ -45,6 +48,7 @@ private:
     void ReleaseBloomResources();
     void UpdateConfiguration(
         bool sourceAlreadyLinear,
+        float ambientOcclusionIntensity,
         float bloomThreshold,
         float bloomIntensity,
         float bloomTexelWidth,
@@ -56,6 +60,8 @@ private:
     ID3D11VertexShader* vertexShader_ = nullptr;
     ID3D11PixelShader* colorPixelShader_ = nullptr;
     ID3D11PixelShader* fxaaPixelShader_ = nullptr;
+    ID3D11PixelShader* aoColorPixelShader_ = nullptr;
+    ID3D11PixelShader* aoFxaaPixelShader_ = nullptr;
     ID3D11PixelShader* bloomDownsamplePixelShader_ = nullptr;
     ID3D11PixelShader* bloomBlurHorizontalPixelShader_ = nullptr;
     ID3D11PixelShader* bloomBlurVerticalPixelShader_ = nullptr;

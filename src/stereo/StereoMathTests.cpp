@@ -2717,6 +2717,8 @@ void TestStereoFrameResourceReuseReset()
     record.ownedColor[1] = reinterpret_cast<void*>(2);
     record.ownedDepth[0] = reinterpret_cast<void*>(3);
     record.ownedDepth[1] = reinterpret_cast<void*>(4);
+    record.depthExport[0] = reinterpret_cast<void*>(10);
+    record.depthExport[1] = reinterpret_cast<void*>(11);
     record.menuColor = reinterpret_cast<void*>(5);
     record.menuDepth = reinterpret_cast<void*>(6);
     record.reusableReadback[0] = reinterpret_cast<void*>(7);
@@ -2740,6 +2742,8 @@ void TestStereoFrameResourceReuseReset()
         record.ownedColor[1] != reinterpret_cast<void*>(2) ||
         record.ownedDepth[0] != reinterpret_cast<void*>(3) ||
         record.ownedDepth[1] != reinterpret_cast<void*>(4) ||
+        record.depthExport[0] != reinterpret_cast<void*>(10) ||
+        record.depthExport[1] != reinterpret_cast<void*>(11) ||
         record.menuColor != reinterpret_cast<void*>(5) ||
         record.menuDepth != reinterpret_cast<void*>(6) ||
         record.reusableReadback[0] != reinterpret_cast<void*>(7) ||

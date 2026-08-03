@@ -21,7 +21,7 @@
 namespace
 {
 constexpr DWORD kD3DFormatA8R8G8B8 = 21;
-constexpr DWORD kD3DFormatA2B10G10R10 = 35;
+constexpr DWORD kD3DFormatA2B10G10R10 = 31;
 constexpr DWORD kD3DFormatA16B16G16R16F = 113;
 
 std::wstring QuoteArgument(const std::wstring& argument)
@@ -102,6 +102,17 @@ UINT ScaleWorldDimension(UINT dimension, float scale)
         ++result;
     }
     return result;
+}
+
+bool ReadAmbientOcclusionRequested()
+{
+    wchar_t value[16] = {};
+    const DWORD length = GetEnvironmentVariableW(
+        L"BFVR_OPENXR_AO",
+        value,
+        static_cast<DWORD>(std::size(value)));
+    return length != 0 &&
+        !(length == 1 && value[0] == L'0');
 }
 
 bfvr::shared::SharedTextureRequirements MakeProducerRequirements(
@@ -227,7 +238,11 @@ public:
             return false;
         }
         block = channel.Get();
-        block->producerFlags = shared::kProducerFlagRuntimeTimedRender;
+        ambientOcclusionRequested = ReadAmbientOcclusionRequested();
+        block->producerFlags = shared::kProducerFlagRuntimeTimedRender |
+            (ambientOcclusionRequested
+                ? shared::kProducerFlagAmbientOcclusionRequested
+                : 0);
 
         const std::wstring presenterLog = moduleDirectory +
             (companion == D3D8PresentationCompanion::OfflineTransport
@@ -384,7 +399,9 @@ public:
 
     bool EnsureGpuFrameTargets(
         void* d3d8Device,
-        std::array<void*, shared::kTextureCount>& surfaces)
+        std::array<void*, shared::kTextureCount>& surfaces,
+        std::array<void*, shared::kDepthTextureCount>& depthSurfaces,
+        std::array<void*, shared::kDepthTextureCount>& depthExportSurfaces)
     {
         if (!initialized || block == nullptr)
         {
@@ -396,10 +413,20 @@ public:
         }
         if (texturesPublished)
         {
-            return std::all_of(
+            const bool colorTargetsReady = std::all_of(
                 surfaces.begin(),
                 surfaces.end(),
                 [](const void* surface) { return surface != nullptr; });
+            const bool depthTargetsReady = !depthTexturesPublished ||
+                (std::all_of(
+                    depthSurfaces.begin(),
+                    depthSurfaces.end(),
+                    [](const void* surface) { return surface != nullptr; }) &&
+                 std::all_of(
+                    depthExportSurfaces.begin(),
+                    depthExportSurfaces.end(),
+                    [](const void* surface) { return surface != nullptr; }));
+            return colorTargetsReady && depthTargetsReady;
         }
 
         std::array<shared::SharedTextureDescription, shared::kTextureCount>
@@ -454,6 +481,53 @@ public:
         for (std::size_t index = 0; index < descriptions.size(); ++index)
         {
             block->textures[index] = descriptions[index];
+        }
+
+        depthTexturesPublished = false;
+        if (ambientOcclusionRequested)
+        {
+            std::array<
+                shared::SharedTextureDescription,
+                shared::kDepthTextureCount> depthDescriptions = {};
+            depthTexturesPublished = gpuProducer.CreateDepthTargets(
+                d3d8Device,
+                requirements,
+                depthSurfaces,
+                depthExportSurfaces,
+                depthDescriptions);
+            if (depthTexturesPublished)
+            {
+                for (std::size_t index = 0;
+                    index < depthDescriptions.size();
+                    ++index)
+                {
+                    block->depthTextures[index] = depthDescriptions[index];
+                }
+                InterlockedExchange(
+                    &block->depthEncoding,
+                    static_cast<LONG>(
+                        shared::DepthEncoding::PackedDeviceDepthBgra8));
+                InterlockedExchange(
+                    &block->depthTextureCount,
+                    static_cast<LONG>(shared::kDepthTextureCount));
+                WriteLog(
+                    L"Published optional packed INTZ depth exports: left=%ux%u right=%ux%u D3D9 A8R8G8B8/D3D11 B8G8R8A8_UNORM.",
+                    requirements.leftWorldWidth,
+                    requirements.leftWorldHeight,
+                    requirements.rightWorldWidth,
+                    requirements.rightWorldHeight);
+            }
+            else
+            {
+                InterlockedExchange(
+                    &block->depthEncoding,
+                    static_cast<LONG>(shared::DepthEncoding::None));
+                InterlockedExchange(&block->depthTextureCount, 0);
+                WriteLog(
+                    L"Optional INTZ depth targets are unavailable (HRESULT=0x%08lX); continuing with ordinary D24S8 and AO disabled.",
+                    static_cast<unsigned long>(
+                        gpuProducer.LastDepthCreateResult()));
+            }
         }
         shared::PublishState(
             &block->producerState,
@@ -802,7 +876,11 @@ public:
         void* d3d8Device,
         const D3D8RuntimeRenderRequest& request,
         DWORD timeoutMs,
-        const D3D8RuntimeUiPlacement& uiPlacement)
+        const D3D8RuntimeUiPlacement& uiPlacement,
+        const D3D8RuntimeDepthFrame& depthFrame,
+        const std::array<void*, shared::kDepthTextureCount>& depthSurfaces,
+        const std::array<void*, shared::kDepthTextureCount>&
+            depthExportSurfaces)
     {
         if (!initialized ||
             block == nullptr ||
@@ -812,6 +890,62 @@ public:
         {
             return false;
         }
+
+        bool frameDepthValid = false;
+        if (depthTexturesPublished && depthFrame.valid)
+        {
+            std::array<
+                BFVRD3D8To9DepthExportTiming,
+                shared::kDepthTextureCount> timings = {};
+            frameDepthValid = gpuProducer.ResolveDepthTargets(
+                d3d8Device,
+                depthSurfaces,
+                depthExportSurfaces,
+                timings);
+            if (frameDepthValid)
+            {
+                block->frameDepth = {};
+                std::memcpy(
+                    block->frameDepth.projections,
+                    depthFrame.projections,
+                    sizeof(block->frameDepth.projections));
+                for (std::size_t eye = 0; eye < timings.size(); ++eye)
+                {
+                    if (timings[eye].gpuTimestampsValid &&
+                        !timings[eye].gpuTimestampDisjoint &&
+                        std::isfinite(timings[eye].elapsedMilliseconds) &&
+                        depthExportGpuMilliseconds[eye].size() < 8192)
+                    {
+                        depthExportGpuMilliseconds[eye].push_back(
+                            timings[eye].elapsedMilliseconds);
+                    }
+                }
+                if (!depthResolveSuccessLogged)
+                {
+                    WriteLog(
+                        L"First live packed depth resolve succeeded: leftGpu=%.4f ms rightGpu=%.4f ms.",
+                        timings[0].elapsedMilliseconds,
+                        timings[1].elapsedMilliseconds);
+                    depthResolveSuccessLogged = true;
+                }
+            }
+            else
+            {
+                ++depthResolveFailures;
+                if (depthResolveFailures <= 3)
+                {
+                    WriteLog(
+                        L"Packed depth resolve failed for frame %ld (HRESULT=0x%08lX); publishing color/UI with AO disabled for this frame.",
+                        request.sequence,
+                        static_cast<unsigned long>(
+                            gpuProducer.LastDepthResolveResult()));
+                }
+            }
+        }
+        MemoryBarrier();
+        InterlockedExchange(
+            &block->frameDepthValid,
+            frameDepthValid ? 1 : 0);
         if (!gpuProducer.WaitForGpu(d3d8Device, timeoutMs))
         {
             WriteLog(
@@ -994,6 +1128,12 @@ public:
         companion = D3D8PresentationCompanion::OpenXR;
         gpuSharedTargets = false;
         texturesPublished = false;
+        ambientOcclusionRequested = false;
+        depthTexturesPublished = false;
+        depthResolveSuccessLogged = false;
+        depthTimingReported = false;
+        depthResolveFailures = 0;
+        depthExportGpuMilliseconds = {};
         companionStopped = false;
         pendingRenderRequest = 0;
         lastControllerFlags = 0;
@@ -1009,6 +1149,7 @@ public:
         {
             return;
         }
+        ReportDepthExportTimings();
         if (block != nullptr)
         {
             shared::PublishState(
@@ -1106,6 +1247,36 @@ public:
             placement.mountedCameraDecoupled ? 1 : 0);
     }
 
+    void ReportDepthExportTimings()
+    {
+        if (depthTimingReported)
+        {
+            return;
+        }
+        depthTimingReported = true;
+        for (std::size_t eye = 0;
+            eye < depthExportGpuMilliseconds.size();
+            ++eye)
+        {
+            if (depthExportGpuMilliseconds[eye].empty())
+            {
+                continue;
+            }
+            std::vector<double> sorted = depthExportGpuMilliseconds[eye];
+            std::sort(sorted.begin(), sorted.end());
+            const std::size_t p95Index = static_cast<std::size_t>(
+                std::ceil(static_cast<double>(sorted.size()) * 0.95)) - 1;
+            WriteLog(
+                L"Packed depth-export GPU summary eye=%zu samples=%zu median=%.4f ms p95=%.4f ms max=%.4f ms failures=%ld.",
+                eye,
+                sorted.size(),
+                sorted[sorted.size() / 2],
+                sorted[(std::min)(p95Index, sorted.size() - 1)],
+                sorted.back(),
+                depthResolveFailures);
+        }
+    }
+
     void WriteLog(const wchar_t* format, ...) const
     {
         if (logCallback == nullptr)
@@ -1134,6 +1305,13 @@ public:
         D3D8PresentationCompanion::OpenXR;
     bool gpuSharedTargets = false;
     bool texturesPublished = false;
+    bool ambientOcclusionRequested = false;
+    bool depthTexturesPublished = false;
+    bool depthResolveSuccessLogged = false;
+    bool depthTimingReported = false;
+    LONG depthResolveFailures = 0;
+    std::array<std::vector<double>, shared::kDepthTextureCount>
+        depthExportGpuMilliseconds = {};
     bool companionStopped = false;
     LONG pendingRenderRequest = 0;
     DWORD lastControllerFlags = 0;
@@ -1172,10 +1350,16 @@ bool D3D8SharedPresentationBridge::Initialize(
 
 bool D3D8SharedPresentationBridge::EnsureGpuFrameTargets(
     void* d3d8Device,
-    std::array<void*, 3>& surfaces)
+    std::array<void*, shared::kTextureCount>& surfaces,
+    std::array<void*, shared::kDepthTextureCount>& depthSurfaces,
+    std::array<void*, shared::kDepthTextureCount>& depthExportSurfaces)
 {
     return impl_ != nullptr &&
-        impl_->EnsureGpuFrameTargets(d3d8Device, surfaces);
+        impl_->EnsureGpuFrameTargets(
+            d3d8Device,
+            surfaces,
+            depthSurfaces,
+            depthExportSurfaces);
 }
 
 bool D3D8SharedPresentationBridge::RequestRender(
@@ -1198,14 +1382,20 @@ bool D3D8SharedPresentationBridge::PublishGpuFrame(
     void* d3d8Device,
     const D3D8RuntimeRenderRequest& request,
     DWORD timeoutMs,
-    const D3D8RuntimeUiPlacement& uiPlacement)
+    const D3D8RuntimeUiPlacement& uiPlacement,
+    const D3D8RuntimeDepthFrame& depthFrame,
+    const std::array<void*, shared::kDepthTextureCount>& depthSurfaces,
+    const std::array<void*, shared::kDepthTextureCount>& depthExportSurfaces)
 {
     return impl_ != nullptr &&
         impl_->PublishGpuFrame(
             d3d8Device,
             request,
             timeoutMs,
-            uiPlacement);
+            uiPlacement,
+            depthFrame,
+            depthSurfaces,
+            depthExportSurfaces);
 }
 
 bool D3D8SharedPresentationBridge::WaitForConsumption(

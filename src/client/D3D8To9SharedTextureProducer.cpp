@@ -5,6 +5,7 @@
 namespace
 {
 constexpr DWORD kD3DFormatA2B10G10R10 = 31;
+constexpr DWORD kD3DFormatA8R8G8B8 = 21;
 constexpr DWORD kD3DFormatA16B16G16R16F = 113;
 
 void ReleaseSurface(void*& surface)
@@ -22,6 +23,8 @@ namespace bfvr
 bool D3D8To9SharedTextureProducer::Resolve() noexcept
 {
     createSharedTarget_ = nullptr;
+    createDepthTarget_ = nullptr;
+    resolveDepthTarget_ = nullptr;
     waitForGpu_ = nullptr;
     const HMODULE translator = GetModuleHandleW(L"BFVRD3D8To9.dll");
     if (translator == nullptr)
@@ -38,6 +41,16 @@ bool D3D8To9SharedTextureProducer::Resolve() noexcept
             GetProcAddress(
                 translator,
                 "BFVRD3D8To9CreateSharedRenderTarget"));
+    createDepthTarget_ =
+        reinterpret_cast<BFVRD3D8To9CreateTextureBackedDepthStencilFn>(
+            GetProcAddress(
+                translator,
+                "BFVRD3D8To9CreateTextureBackedDepthStencil"));
+    resolveDepthTarget_ =
+        reinterpret_cast<BFVRD3D8To9ResolveDepthToSharedTargetFn>(
+            GetProcAddress(
+                translator,
+                "BFVRD3D8To9ResolveDepthToSharedTarget"));
     waitForGpu_ =
         reinterpret_cast<BFVRD3D8To9WaitForGpuFn>(
             GetProcAddress(
@@ -51,13 +64,124 @@ bool D3D8To9SharedTextureProducer::Resolve() noexcept
     if (getVersion == nullptr ||
         getVersion() != BFVR_D3D8TO9_SHARED_BRIDGE_VERSION ||
         createSharedTarget_ == nullptr ||
+        createDepthTarget_ == nullptr ||
+        resolveDepthTarget_ == nullptr ||
         waitForGpu_ == nullptr ||
         getDeviceDiagnostics_ == nullptr)
     {
         createSharedTarget_ = nullptr;
+        createDepthTarget_ = nullptr;
+        resolveDepthTarget_ = nullptr;
         waitForGpu_ = nullptr;
         getDeviceDiagnostics_ = nullptr;
         return false;
+    }
+    return true;
+}
+
+bool D3D8To9SharedTextureProducer::CreateDepthTargets(
+    void* d3d8Device,
+    const shared::SharedTextureRequirements& requirements,
+    std::array<void*, shared::kDepthTextureCount>& depthSurfaces,
+    std::array<void*, shared::kDepthTextureCount>& exportSurfaces,
+    std::array<
+        shared::SharedTextureDescription,
+        shared::kDepthTextureCount>& descriptions) const
+{
+    depthSurfaces = {};
+    exportSurfaces = {};
+    descriptions = {};
+    lastDepthCreateResult_ = E_PENDING;
+    if (!IsAvailable() || d3d8Device == nullptr)
+    {
+        lastDepthCreateResult_ = E_NOINTERFACE;
+        return false;
+    }
+
+    const std::array<UINT, shared::kDepthTextureCount> widths = {
+        requirements.leftWorldWidth,
+        requirements.rightWorldWidth};
+    const std::array<UINT, shared::kDepthTextureCount> heights = {
+        requirements.leftWorldHeight,
+        requirements.rightWorldHeight};
+    bool created = true;
+    for (std::size_t index = 0; index < depthSurfaces.size(); ++index)
+    {
+        HANDLE handle = nullptr;
+        HRESULT result = createSharedTarget_(
+            d3d8Device,
+            widths[index],
+            heights[index],
+            kD3DFormatA8R8G8B8,
+            &handle,
+            &exportSurfaces[index]);
+        result = SUCCEEDED(result)
+            ? createDepthTarget_(
+                d3d8Device,
+                widths[index],
+                heights[index],
+                kD3DFormatA2B10G10R10,
+                &depthSurfaces[index])
+            : result;
+        lastDepthCreateResult_ = result;
+        created = created &&
+            SUCCEEDED(result) &&
+            handle != nullptr &&
+            exportSurfaces[index] != nullptr &&
+            depthSurfaces[index] != nullptr;
+        if (!created)
+        {
+            if (SUCCEEDED(lastDepthCreateResult_))
+                lastDepthCreateResult_ = E_FAIL;
+            break;
+        }
+
+        shared::SharedTextureDescription& description = descriptions[index];
+        description.width = widths[index];
+        description.height = heights[index];
+        description.format = DXGI_FORMAT_B8G8R8A8_UNORM;
+        description.transport = static_cast<DWORD>(
+            shared::SharedTextureTransport::D3D9LegacyHandle);
+        shared::StoreLegacySharedHandle(description, handle);
+    }
+    if (!created)
+    {
+        for (void*& surface : depthSurfaces)
+            ReleaseSurface(surface);
+        for (void*& surface : exportSurfaces)
+            ReleaseSurface(surface);
+        descriptions = {};
+    }
+    return created;
+}
+
+bool D3D8To9SharedTextureProducer::ResolveDepthTargets(
+    void* d3d8Device,
+    const std::array<void*, shared::kDepthTextureCount>& depthSurfaces,
+    const std::array<void*, shared::kDepthTextureCount>& exportSurfaces,
+    std::array<
+        BFVRD3D8To9DepthExportTiming,
+        shared::kDepthTextureCount>& timings) const
+{
+    timings = {};
+    lastDepthResolveResult_ = E_PENDING;
+    if (!IsAvailable() || d3d8Device == nullptr)
+    {
+        lastDepthResolveResult_ = E_NOINTERFACE;
+        return false;
+    }
+    for (std::size_t eye = 0; eye < depthSurfaces.size(); ++eye)
+    {
+        timings[eye].size = sizeof(timings[eye]);
+        lastDepthResolveResult_ = resolveDepthTarget_(
+            d3d8Device,
+            depthSurfaces[eye],
+            exportSurfaces[eye],
+            static_cast<DWORD>(
+                BFVRD3D8To9DepthExportEncoding::PackedRgba8),
+            &timings[eye]);
+        if (FAILED(lastDepthResolveResult_))
+            return false;
     }
     return true;
 }
@@ -174,7 +298,20 @@ bool D3D8To9SharedTextureProducer::WaitForGpu(
 
 bool D3D8To9SharedTextureProducer::IsAvailable() const noexcept
 {
-    return createSharedTarget_ != nullptr && waitForGpu_ != nullptr;
+    return createSharedTarget_ != nullptr &&
+        createDepthTarget_ != nullptr &&
+        resolveDepthTarget_ != nullptr &&
+        waitForGpu_ != nullptr;
+}
+
+HRESULT D3D8To9SharedTextureProducer::LastDepthCreateResult() const noexcept
+{
+    return lastDepthCreateResult_;
+}
+
+HRESULT D3D8To9SharedTextureProducer::LastDepthResolveResult() const noexcept
+{
+    return lastDepthResolveResult_;
 }
 
 HRESULT D3D8To9SharedTextureProducer::LastCreateResult() const noexcept

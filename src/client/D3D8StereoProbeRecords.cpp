@@ -12,6 +12,9 @@ void ResetStereoFrameRecordForResourceReuse(
     void* const depths[2] = {
         record.ownedDepth[0],
         record.ownedDepth[1]};
+    void* const depthExports[2] = {
+        record.depthExport[0],
+        record.depthExport[1]};
     void* const menuColor = record.menuColor;
     void* const menuDepth = record.menuDepth;
     void* const readbacks[3] = {
@@ -34,6 +37,8 @@ void ResetStereoFrameRecordForResourceReuse(
     record.ownedColor[1] = colors[1];
     record.ownedDepth[0] = depths[0];
     record.ownedDepth[1] = depths[1];
+    record.depthExport[0] = depthExports[0];
+    record.depthExport[1] = depthExports[1];
     record.menuColor = menuColor;
     record.menuDepth = menuDepth;
     record.reusableReadback[0] = readbacks[0];

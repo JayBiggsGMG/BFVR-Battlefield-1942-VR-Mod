@@ -11,10 +11,12 @@ namespace bfvr::shared
 using SharedTextureLogCallback = void (*)(void* context, const wchar_t* message);
 
 constexpr DWORD kProtocolMagic = 0x52564642; // "BFVR"
-constexpr DWORD kProtocolVersion = 10;
+constexpr DWORD kProtocolVersion = 11;
 constexpr std::size_t kTextureCount = 3;
+constexpr std::size_t kDepthTextureCount = 2;
 constexpr std::size_t kSharedNameCapacity = 128;
 constexpr DWORD kProducerFlagRuntimeTimedRender = 0x1;
+constexpr DWORD kProducerFlagAmbientOcclusionRequested = 0x2;
 constexpr LONG kFrameOverlayBackToGameVisible = 0x1;
 constexpr LONG kFrameOverlayBackToGameHovered = 0x2;
 
@@ -54,6 +56,18 @@ enum class TextureSlot : std::size_t
     LeftWorld = 0,
     RightWorld = 1,
     Ref2Ui = 2
+};
+
+enum class DepthTextureSlot : std::size_t
+{
+    LeftWorld = 0,
+    RightWorld = 1
+};
+
+enum class DepthEncoding : LONG
+{
+    None = 0,
+    PackedDeviceDepthBgra8 = 1
 };
 
 enum class SharedTextureTransport : DWORD
@@ -149,6 +163,14 @@ struct SharedRenderRequest
     SharedPresentationView views[2] = {};
 };
 
+struct SharedDepthFrameParameters
+{
+    // Exact row-major D3D8 projection matrices used for the two world replays.
+    // The x64 AO stage reconstructs view position from the matching packed
+    // device depth; it must not substitute an approximate runtime projection.
+    float projections[2][16] = {};
+};
+
 // Controller payloads are sampled by the x64 OpenXR owner at the render
 // request's predicted display time. The x86 client must reject a sample unless
 // its sequence and timestamp match that request exactly. The protocol carries
@@ -216,10 +238,18 @@ struct ControlBlock
     // seat-local state into the utility strip; it never assumes a toggle was
     // accepted merely because the user released the UI button.
     volatile LONG mountedCameraDecoupled = 0;
+    // Optional AO depth transport is additive to the three established color
+    // slots. The producer publishes descriptors before TexturesReady and
+    // publishes the per-frame matrix payload before frameSequence.
+    volatile LONG depthTextureCount = 0;
+    volatile LONG depthEncoding = static_cast<LONG>(DepthEncoding::None);
+    volatile LONG frameDepthValid = 0;
+    SharedDepthFrameParameters frameDepth = {};
     PresentationRequirements requirements = {};
     SharedRenderRequest renderRequest = {};
     SharedControllerSample controllerSample = {};
     SharedTextureDescription textures[kTextureCount] = {};
+    SharedTextureDescription depthTextures[kDepthTextureCount] = {};
     DWORD firstConsumedPixels[kTextureCount] = {};
 };
 

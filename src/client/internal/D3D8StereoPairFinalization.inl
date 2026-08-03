@@ -48,6 +48,21 @@ bool FinalizeFrameTargets(void* device)
     }
     if (IsPresentationMode())
     {
+        bfvr::D3D8RuntimeDepthFrame depthFrame = {};
+        if (g_worldCrosshairFrame.valid)
+        {
+            static_assert(
+                sizeof(depthFrame.projections[0]) == sizeof(D3DMatrix));
+            std::memcpy(
+                depthFrame.projections[0],
+                &g_worldCrosshairFrame.eyeProjections[0],
+                sizeof(D3DMatrix));
+            std::memcpy(
+                depthFrame.projections[1],
+                &g_worldCrosshairFrame.eyeProjections[1],
+                sizeof(D3DMatrix));
+            depthFrame.valid = true;
+        }
         g_frameUiPlacement.mountedCameraDecoupled =
             g_renderViewPoseHook.IsMountedCameraDecoupled();
         g_presentationFramePublished =
@@ -60,7 +75,8 @@ bool FinalizeFrameTargets(void* device)
                 g_presentationBridge,
                 g_runtimeRenderRequest,
                 analyzePixels,
-                g_frameUiPlacement);
+                g_frameUiPlacement,
+                depthFrame);
     }
     else
     {

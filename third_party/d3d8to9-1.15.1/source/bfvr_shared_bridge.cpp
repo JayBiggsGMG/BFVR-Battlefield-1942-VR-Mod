@@ -52,6 +52,7 @@ bool IsSupportedSharedFormat(D3DFORMAT format)
 {
 	return format == D3DFMT_A2B10G10R10 ||
 		format == D3DFMT_A16B16G16R16F ||
+		format == D3DFMT_A8R8G8B8 ||
 		format == D3DFMT_A8B8G8R8;
 }
 

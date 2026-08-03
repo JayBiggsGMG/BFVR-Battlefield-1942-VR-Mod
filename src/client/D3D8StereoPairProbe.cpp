@@ -1523,14 +1523,28 @@ HRESULT WINAPI HookPresent(
             g_frame.ownedColor[0],
             g_frame.ownedColor[1],
             g_frame.menuColor};
+        std::array<void*, bfvr::shared::kDepthTextureCount>
+            presentationDepthTargets = {
+                g_frame.ownedDepth[0],
+                g_frame.ownedDepth[1]};
+        std::array<void*, bfvr::shared::kDepthTextureCount>
+            presentationDepthExports = {
+                g_frame.depthExport[0],
+                g_frame.depthExport[1]};
         const bool transportReady =
             !IsPresentationMode() ||
             g_presentationBridge.EnsureGpuFrameTargets(
                 device,
-                presentationTargets);
+                presentationTargets,
+                presentationDepthTargets,
+                presentationDepthExports);
         g_frame.ownedColor[0] = presentationTargets[0];
         g_frame.ownedColor[1] = presentationTargets[1];
         g_frame.menuColor = presentationTargets[2];
+        g_frame.ownedDepth[0] = presentationDepthTargets[0];
+        g_frame.ownedDepth[1] = presentationDepthTargets[1];
+        g_frame.depthExport[0] = presentationDepthExports[0];
+        g_frame.depthExport[1] = presentationDepthExports[1];
         // The process-lifetime OpenXR route must present Ref2-only startup,
         // spawn, death, and pause frames. Gameplay overlays retain their own
         // alive-local-player gates; only frame production starts before spawn.
