@@ -1,0 +1,4 @@
+LIBRARY dsoal-aldrv
+EXPORTS
+    BFVRGetOpenALHrtfRouterDiagnostics=BFVRGetOpenALHrtfRouterDiagnostics
+    alcCreateContext=BFVRAlcCreateContext

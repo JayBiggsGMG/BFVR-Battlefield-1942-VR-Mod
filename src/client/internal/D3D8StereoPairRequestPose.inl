@@ -89,6 +89,16 @@ void PrepareRuntimeRenderRequestPose()
     const bool hasTrackedHead =
         g_runtimeRenderRequest.headPoseValid &&
         g_runtimeRenderRequest.headPoseTracked;
+    const bfvr::stereo::Pose hrtfHeadPose = {
+        {currentHead.positionX, currentHead.positionY, currentHead.positionZ},
+        {
+            currentHead.orientationX,
+            currentHead.orientationY,
+            currentHead.orientationZ,
+            currentHead.orientationW}};
+    bfvr::audio::PublishHrtfHeadPose(
+        hrtfHeadPose,
+        hasTrackedHead);
     g_runtimeFramePosePolicy = bfvr::MakeD3D8RuntimeFramePosePolicy(
         currentHead,
         hasTrackedHead);

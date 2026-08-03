@@ -45,6 +45,29 @@ It verifies the executable and profiled root-module hashes, reports unprofiled
 DLLs, and never launches, attaches to, patches, replaces, or moves game files.
 See `docs\safety-and-compatibility.md` for the coexistence policy.
 
+## Experimental HRTF audio
+
+BFVR now enables its folder-local DSOAL/OpenAL Soft headphone-HRTF prototype by
+default for the normal VR launcher. Set `BFVR_HRTF=0` before launch for an
+immediate original-audio opt-out. It leaves the existing game-root
+`dsound.dll`, `Sound.con`, and user OpenAL configuration untouched; startup
+accepts the alternate path only after a real DirectSound3D listener reports
+HRTF enabled, otherwise it preserves the original audio route. Tracked HMD
+motion is composed with BF1942's native listener and expires back to the native
+values after 250 ms without tracking.
+
+This has passed build, listener-math, mono-buffer-policy, ordinal-IAT, and
+standalone audio-backend tests. The first owner headset run confirmed a subtle
+audible effect and exposed head-relative menu-click/weapon-switch-style
+feedback. BFVR now centres mono 3D sounds only while its engine-observed native
+frontend menu is visible, so replacement sounds in mods are covered without
+flattening gameplay audio. Exact stock-sample fingerprints provide an
+early-start fallback and a bounded window for the stock click's shared firearm
+layers. That correction still needs a headset re-test. Use ordinary stereo
+headphones with any other virtual-surround stage disabled. See
+[docs/hrtf-audio.md](docs/hrtf-audio.md) for architecture, pinned runtime
+versions, validation evidence, and opt-out controls.
+
 ## Player-input boundary trace
 
 `Trace-BFVR-PlayerInput.bat` in the game root starts a separate local/offline

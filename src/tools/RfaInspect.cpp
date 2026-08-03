@@ -8,7 +8,9 @@
 #include <filesystem>
 #include <fstream>
 #include <optional>
+#include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace
@@ -20,6 +22,7 @@ struct ArchiveEntry
     std::uint32_t packedSize = 0;
     std::uint32_t unpackedSize = 0;
     std::uint32_t offset = 0;
+    bool storedRaw = false;
 };
 
 struct LzoBlock
@@ -70,7 +73,7 @@ std::optional<ArchiveEntry> FindEntry(
     std::uint32_t indexOffset = 0;
     std::uint32_t version = 0;
     if (!ReadU32(stream, indexOffset) || !ReadU32(stream, version) ||
-        version != 1)
+        version > 1)
     {
         return std::nullopt;
     }
@@ -90,6 +93,7 @@ std::optional<ArchiveEntry> FindEntry(
             return std::nullopt;
         }
         ArchiveEntry entry = {};
+        entry.storedRaw = version == 0;
         entry.name.resize(nameLength);
         stream.read(entry.name.data(), static_cast<std::streamsize>(nameLength));
         std::uint32_t ignored[3] = {};
@@ -408,6 +412,18 @@ bool ExtractEntry(
     std::vector<std::uint8_t>& contents)
 {
     stream.seekg(entry.offset, std::ios::beg);
+    if (entry.storedRaw)
+    {
+        if (entry.packedSize != entry.unpackedSize)
+        {
+            return false;
+        }
+        contents.resize(entry.unpackedSize);
+        stream.read(
+            reinterpret_cast<char*>(contents.data()),
+            static_cast<std::streamsize>(contents.size()));
+        return static_cast<std::size_t>(stream.gcount()) == contents.size();
+    }
     std::uint32_t blockCount = 0;
     if (!ReadU32(stream, blockCount) || blockCount == 0U ||
         blockCount > 100000U)
@@ -463,15 +479,98 @@ bool ExtractEntry(
     return contents.size() == entry.unpackedSize;
 }
 
+std::uint16_t ReadU16(const std::uint8_t* bytes)
+{
+    return static_cast<std::uint16_t>(bytes[0]) |
+        static_cast<std::uint16_t>(bytes[1] << 8U);
+}
+
+std::uint32_t ReadU32(const std::uint8_t* bytes)
+{
+    return static_cast<std::uint32_t>(bytes[0]) |
+        (static_cast<std::uint32_t>(bytes[1]) << 8U) |
+        (static_cast<std::uint32_t>(bytes[2]) << 16U) |
+        (static_cast<std::uint32_t>(bytes[3]) << 24U);
+}
+
+bool PrintWaveSignature(const std::vector<std::uint8_t>& contents)
+{
+    constexpr std::uint64_t kFnvOffset = 14695981039346656037ULL;
+    constexpr std::uint64_t kFnvPrime = 1099511628211ULL;
+    if (contents.size() < 12 ||
+        std::string_view(
+            reinterpret_cast<const char*>(contents.data()),
+            4) != "RIFF" ||
+        std::string_view(
+            reinterpret_cast<const char*>(contents.data() + 8),
+            4) != "WAVE")
+    {
+        return false;
+    }
+
+    std::uint16_t channels = 0;
+    std::uint16_t bitsPerSample = 0;
+    std::uint32_t samplesPerSecond = 0;
+    std::span<const std::uint8_t> pcm = {};
+    std::size_t offset = 12;
+    while (offset + 8 <= contents.size())
+    {
+        const std::string_view id(
+            reinterpret_cast<const char*>(contents.data() + offset),
+            4);
+        const std::uint32_t chunkBytes = ReadU32(contents.data() + offset + 4);
+        const std::size_t dataOffset = offset + 8;
+        if (chunkBytes > contents.size() - dataOffset)
+        {
+            return false;
+        }
+        if (id == "fmt " && chunkBytes >= 16)
+        {
+            channels = ReadU16(contents.data() + dataOffset + 2);
+            samplesPerSecond = ReadU32(contents.data() + dataOffset + 4);
+            bitsPerSample = ReadU16(contents.data() + dataOffset + 14);
+        }
+        else if (id == "data")
+        {
+            pcm = std::span<const std::uint8_t>(
+                contents.data() + dataOffset,
+                chunkBytes);
+        }
+        offset = dataOffset + chunkBytes + (chunkBytes & 1U);
+    }
+    if (pcm.empty() || channels == 0 || samplesPerSecond == 0 ||
+        bitsPerSample == 0)
+    {
+        return false;
+    }
+
+    std::uint64_t hash = kFnvOffset;
+    for (const std::uint8_t value : pcm)
+    {
+        hash ^= value;
+        hash *= kFnvPrime;
+    }
+    std::printf(
+        "fnv64=0x%016llX bytes=%llu channels=%u rate=%lu bits=%u\n",
+        static_cast<unsigned long long>(hash),
+        static_cast<unsigned long long>(pcm.size()),
+        static_cast<unsigned int>(channels),
+        static_cast<unsigned long>(samplesPerSecond),
+        static_cast<unsigned int>(bitsPerSample));
+    return true;
+}
+
 } // namespace
 
 int wmain(int argumentCount, wchar_t** arguments)
 {
-    if (argumentCount != 3)
+    const bool printWaveSignature = argumentCount == 4 &&
+        std::wstring_view(arguments[3]) == L"--wave-signature";
+    if (argumentCount != 3 && !printWaveSignature)
     {
         std::fwprintf(
             stderr,
-            L"Usage: BFVRRfaInspect <archive.rfa> <entry/path>\n");
+            L"Usage: BFVRRfaInspect <archive.rfa> <entry/path> [--wave-signature]\n");
         return 2;
     }
     std::ifstream archive(
@@ -501,6 +600,18 @@ int wmain(int argumentCount, wchar_t** arguments)
             L"Could not decompress entry: %ls\n",
             arguments[2]);
         return 1;
+    }
+    if (printWaveSignature)
+    {
+        if (!PrintWaveSignature(contents))
+        {
+            std::fwprintf(
+                stderr,
+                L"Entry is not a supported PCM WAVE file: %ls\n",
+                arguments[2]);
+            return 1;
+        }
+        return 0;
     }
     if (_setmode(_fileno(stdout), _O_BINARY) == -1)
     {

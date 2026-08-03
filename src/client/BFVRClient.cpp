@@ -1,4 +1,5 @@
 #include "openxr/OpenXRBootstrap.h"
+#include "audio/HrtfAudioBridge.h"
 #include "client/D3D8CallInventory.h"
 #include "client/D3D8ImportRoute.h"
 #include "client/D3D8RuntimeRedirect.h"
@@ -1633,6 +1634,15 @@ extern "C" __declspec(dllexport) DWORD WINAPI BFVRInitializeObserver(LPVOID init
         isD3D8To9ObserverProbe ||
         isD3D8To9SharedFrameProbe ||
         isD3D8To9OpenXRPresentationProbe;
+    if (isD3D8To9OpenXRPresentationProbe &&
+        bfvr::audio::IsHrtfAudioRequested() &&
+        !bfvr::audio::InitializeHrtfAudio(
+            g_module,
+            AppendD3D8ObserverLog))
+    {
+        AppendLog(
+            L"BFVR HRTF initialization failed closed; BFVR will continue with BF1942's original audio route.");
+    }
     if (isD3D8To9SharedFrameProbe ||
         isD3D8To9OpenXRPresentationProbe)
     {
