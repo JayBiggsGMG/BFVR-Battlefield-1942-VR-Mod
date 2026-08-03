@@ -497,6 +497,8 @@ int RunPresenter(
     bool healthy = true;
     bfvr::OpenXRUiReferenceMode acceptedUiReferenceMode =
         bfvr::OpenXRUiReferenceMode::WorldLocked;
+    bfvr::OpenXRUiPresentationMode acceptedUiPresentationMode =
+        bfvr::OpenXRUiPresentationMode::Standard;
     bfvr::OpenXRPresentationPose acceptedUiWorldAnchor = {};
     bool acceptedUiWorldAnchorValid = false;
     const bool runtimeTimedProducer =
@@ -527,6 +529,10 @@ int RunPresenter(
         MemoryBarrier();
         const LONG frameOverlayFlags = InterlockedCompareExchange(
             &block->frameOverlayFlags,
+            0,
+            0);
+        const LONG framePresentationFlags = InterlockedCompareExchange(
+            &block->framePresentationFlags,
             0,
             0);
         const bool frameDepthValid = InterlockedCompareExchange(
@@ -562,6 +568,11 @@ int RunPresenter(
                     bfvr::shared::UiReferenceMode::HeadLocked)
             ? bfvr::OpenXRUiReferenceMode::HeadLocked
             : bfvr::OpenXRUiReferenceMode::WorldLocked;
+        acceptedUiPresentationMode =
+            (framePresentationFlags &
+             bfvr::shared::kFramePresentationEyeFillingScope) != 0
+            ? bfvr::OpenXRUiPresentationMode::EyeFillingScope
+            : bfvr::OpenXRUiPresentationMode::Standard;
         acceptedUiWorldAnchorValid =
             acceptedUiReferenceMode ==
                 bfvr::OpenXRUiReferenceMode::WorldLocked &&
@@ -753,7 +764,8 @@ int RunPresenter(
         const bool ended = presentation.EndFrame(
             textures,
             acceptedUiReferenceMode,
-            currentUiWorldAnchor());
+            currentUiWorldAnchor(),
+            acceptedUiPresentationMode);
         totalOpenXrSubmitOrEndQpcTicks +=
             ReadPerformanceCounter() - endStarted;
         ++openXrSubmitOrEndCount;

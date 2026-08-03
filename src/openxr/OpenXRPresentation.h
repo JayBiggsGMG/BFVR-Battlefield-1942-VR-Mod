@@ -24,6 +24,12 @@ enum class OpenXRUiReferenceMode
     HeadLocked
 };
 
+enum class OpenXRUiPresentationMode
+{
+    Standard,
+    EyeFillingScope
+};
+
 // The world and UI sources are BFVR-owned D3D11 textures. They must match the
 // requirements returned by OpenXRPresentation::GetTextureRequirements exactly;
 // this first presentation boundary intentionally does not resample textures or
@@ -195,7 +201,9 @@ public:
         const OpenXRPresentationTextures& textures,
         OpenXRUiReferenceMode uiReferenceMode =
             OpenXRUiReferenceMode::HeadLocked,
-        const OpenXRPresentationPose* worldUiAnchor = nullptr);
+        const OpenXRPresentationPose* worldUiAnchor = nullptr,
+        OpenXRUiPresentationMode uiPresentationMode =
+            OpenXRUiPresentationMode::Standard);
 
     // Two-phase form used by the cross-process presenter. BeginFrame waits for
     // runtime timing and locates both predicted eye views before the x86 game
@@ -206,7 +214,9 @@ public:
         const OpenXRPresentationTextures& textures,
         OpenXRUiReferenceMode uiReferenceMode =
             OpenXRUiReferenceMode::HeadLocked,
-        const OpenXRPresentationPose* worldUiAnchor = nullptr);
+        const OpenXRPresentationPose* worldUiAnchor = nullptr,
+        OpenXRUiPresentationMode uiPresentationMode =
+            OpenXRUiPresentationMode::Standard);
 
     // Returns and clears one selection produced by releasing the dedicated
     // right-controller A hold. Rendering never dispatches keyboard input.

@@ -1,7 +1,9 @@
 #include "client/WeaponAimOverlay.h"
 
 #include "client/BFSoldierVrMotionFilter.h"
+#include "client/ScopeViewOverlay.h"
 #include "client/WeaponPoseRuntimeCache.h"
+#include "stereo/ScopeViewMath.h"
 #include "stereo/WeaponFireAimMath.h"
 
 #include <MinHook.h>
@@ -169,7 +171,7 @@ public:
         hookEnabled = true;
         WriteLog(
             moveNativeFireOrigin
-                ? L"Controller-directed fire overlay armed at 0x0053CDB0 for native 1P arms. The five verified ordinary-infantry branches receive the same direct tracked OpenXR-aim gun basis used by the solved hand, with the fire parent origin moved to that held-gun pose. BF1942 retains weapon/barrel offsets, spread, cadence, projectile creation, and networking; unsupported calls forward unchanged."
+                ? L"Controller-directed fire overlay armed at 0x0053CDB0 for native 1P arms. The five verified ordinary-infantry branches receive the same direct tracked OpenXR-aim gun basis used by the solved hand, with the fire parent origin moved to that held-gun pose. During an exact validated useScope view whose hidden native arm is stale, WeaponFire_Core instead shares the visible scoped basis while retaining BF1942's native projectile origin. BF1942 retains weapon/barrel offsets, spread, cadence, projectile creation, and networking; unsupported calls forward unchanged."
                 : L"Controller-directed fire overlay armed at 0x0053CDB0. Only the five verified branches in WeaponFire_Ordinary can receive the fresh displayed-weapon rotation for the alive local infantry player; native fire position and unsupported calls remain unchanged.");
     }
 
@@ -283,6 +285,7 @@ private:
         float solvedHandDisplacement = 0.0F;
         float nativeFireToHandLimit = 0.0F;
         bool exactCurrentActiveItemReceiver = false;
+        bool scopedDirectionOnly = false;
         if (moveNativeFireOrigin)
         {
             bfvr::NativeArmWeaponVisualPose nativeArmPose = {};
@@ -290,14 +293,31 @@ private:
                     nativeArmPose,
                     kVisualWeaponPoseMaximumAgeMs))
             {
-                InterlockedIncrement(&missingNativeArmPose);
-                LogLocalFallback(
-                    L"Local WeaponFire_Core call forwarded unchanged because no fresh native-arm anchor pair was available.");
-                originalFire(weapon, actor, matrix, barrelIndex);
-                return;
+                bfvr::ScopeViewFrameState scopeFrame = {};
+                const bool scopeFrameAvailable =
+                    bfvr::ReadScopeViewFrameState(scopeFrame);
+                const void* const currentSoldier =
+                    bfvr::ReadCurrentBFSoldierVrCameraSoldier();
+                if (!bfvr::stereo::IsExactScopeFirePoseEligible(
+                        scopeFrameAvailable,
+                        weapon,
+                        scopeFrame.weapon,
+                        currentSoldier,
+                        scopeFrame.soldier))
+                {
+                    InterlockedIncrement(&missingNativeArmPose);
+                    LogLocalFallback(
+                        L"Local WeaponFire_Core call forwarded unchanged because neither a fresh native-arm anchor pair nor an exact current scoped-fire pose was available.");
+                    originalFire(weapon, actor, matrix, barrelIndex);
+                    return;
+                }
+                controllerGunWorld = scopeFrame.controllerGunWorld;
+                visualControllerGeneration =
+                    static_cast<LONG>(scopeFrame.controllerGeneration);
+                scopedDirectionOnly = true;
             }
-            if (nativeArmPose.soldier !=
-                bfvr::ReadCurrentBFSoldierVrCameraSoldier())
+            else if (nativeArmPose.soldier !=
+                     bfvr::ReadCurrentBFSoldierVrCameraSoldier())
             {
                 InterlockedIncrement(&cameraLifetimeMismatch);
                 LogLocalFallback(
@@ -305,51 +325,54 @@ private:
                 originalFire(weapon, actor, matrix, barrelIndex);
                 return;
             }
-            const auto anchorDistances =
-                bfvr::stereo::MeasureD3D8NativeArmFireAnchorDistances(
-                    nativeMatrix,
-                    nativeArmPose.nativeHandWorld,
-                    nativeArmPose.targetHandWorld);
-            if (!anchorDistances.has_value())
+            else
             {
-                InterlockedIncrement(&anchorDistanceRejected);
-                LogLocalFallback(
-                    L"Local WeaponFire_Core call forwarded unchanged because its native fire/hand anchors were not finite rigid transforms.");
-                originalFire(weapon, actor, matrix, barrelIndex);
-                return;
-            }
-            nativeFireToHandDistance =
-                anchorDistances->nativeFireToHand;
-            solvedHandDisplacement =
-                anchorDistances->solvedHandDisplacement;
-            exactCurrentActiveItemReceiver =
-                nativeArmPose.activeItem != nullptr &&
-                nativeArmPose.activeItem == weapon;
-            nativeFireToHandLimit =
-                bfvr::stereo::SelectD3D8NativeArmFireToHandLimit(
-                    exactCurrentActiveItemReceiver);
-            if (!bfvr::stereo::IsD3D8NativeArmFireAnchorWithinPolicy(
-                    *anchorDistances,
-                    exactCurrentActiveItemReceiver))
-            {
-                InterlockedIncrement(&anchorDistanceRejected);
-                if (InterlockedIncrement(&loggedLocalFallbacks) <= 8)
+                const auto anchorDistances =
+                    bfvr::stereo::MeasureD3D8NativeArmFireAnchorDistances(
+                        nativeMatrix,
+                        nativeArmPose.nativeHandWorld,
+                        nativeArmPose.targetHandWorld);
+                if (!anchorDistances.has_value())
                 {
-                    WriteLog(
-                        L"Local WeaponFire_Core call forwarded unchanged because its native origin is not associated with the solved hand (fireToHand=%.3f m, handDisplacement=%.3f m, limits=%.3f/1.500 m, exactActiveItem=%d weapon=%p activeItem=%p). A cinematic/death/match-start camera matrix is not eligible for the native-arm attachment.",
-                        nativeFireToHandDistance,
-                        solvedHandDisplacement,
-                        nativeFireToHandLimit,
-                        exactCurrentActiveItemReceiver ? 1 : 0,
-                        weapon,
-                        nativeArmPose.activeItem);
+                    InterlockedIncrement(&anchorDistanceRejected);
+                    LogLocalFallback(
+                        L"Local WeaponFire_Core call forwarded unchanged because its native fire/hand anchors were not finite rigid transforms.");
+                    originalFire(weapon, actor, matrix, barrelIndex);
+                    return;
                 }
-                originalFire(weapon, actor, matrix, barrelIndex);
-                return;
+                nativeFireToHandDistance =
+                    anchorDistances->nativeFireToHand;
+                solvedHandDisplacement =
+                    anchorDistances->solvedHandDisplacement;
+                exactCurrentActiveItemReceiver =
+                    nativeArmPose.activeItem != nullptr &&
+                    nativeArmPose.activeItem == weapon;
+                nativeFireToHandLimit =
+                    bfvr::stereo::SelectD3D8NativeArmFireToHandLimit(
+                        exactCurrentActiveItemReceiver);
+                if (!bfvr::stereo::IsD3D8NativeArmFireAnchorWithinPolicy(
+                        *anchorDistances,
+                        exactCurrentActiveItemReceiver))
+                {
+                    InterlockedIncrement(&anchorDistanceRejected);
+                    if (InterlockedIncrement(&loggedLocalFallbacks) <= 8)
+                    {
+                        WriteLog(
+                            L"Local WeaponFire_Core call forwarded unchanged because its native origin is not associated with the solved hand (fireToHand=%.3f m, handDisplacement=%.3f m, limits=%.3f/1.500 m, exactActiveItem=%d weapon=%p activeItem=%p). A cinematic/death/match-start camera matrix is not eligible for the native-arm attachment.",
+                            nativeFireToHandDistance,
+                            solvedHandDisplacement,
+                            nativeFireToHandLimit,
+                            exactCurrentActiveItemReceiver ? 1 : 0,
+                            weapon,
+                            nativeArmPose.activeItem);
+                    }
+                    originalFire(weapon, actor, matrix, barrelIndex);
+                    return;
+                }
+                controllerGunWorld = nativeArmPose.controllerGunWorld;
+                visualControllerGeneration =
+                    nativeArmPose.controllerGeneration;
             }
-            controllerGunWorld = nativeArmPose.controllerGunWorld;
-            visualControllerGeneration =
-                nativeArmPose.controllerGeneration;
         }
         else if (!bfvr::ReadFreshWeaponWorldAttachment(
                      visualWeaponWorldAttachment,
@@ -367,7 +390,7 @@ private:
             ? bfvr::stereo::MakeD3D8ControllerDirectedWeaponFireMatrix(
                 nativeMatrix,
                 controllerGunWorld,
-                true)
+                !scopedDirectionOnly)
             : bfvr::stereo::MakeD3D8WorldAttachedWeaponFireMatrix(
                 nativeMatrix,
                 visualWeaponWorldAttachment,
@@ -386,6 +409,11 @@ private:
             return;
         }
 
+        if (scopedDirectionOnly)
+        {
+            InterlockedIncrement(&scopedDirectionOnlyCalls);
+        }
+
         Record(
             nativeMatrix,
             *adjusted,
@@ -394,25 +422,47 @@ private:
             visualControllerGeneration);
         if (InterlockedIncrement(&loggedAdjustedSamples) <= 8)
         {
-            WriteLog(
-                L"Controller-directed fire applied direct OpenXR-aim gun pose: generation=%ld fireToHand=%.3f m handDisplacement=%.3f m nativeLimit=%.3f m exactActiveItem=%d nativeOrigin=(%.3f,%.3f,%.3f) heldGunOrigin=(%.3f,%.3f,%.3f) nativeForward=(%.5f,%.5f,%.5f) heldGunForward=(%.5f,%.5f,%.5f).",
-                visualControllerGeneration,
-                nativeFireToHandDistance,
-                solvedHandDisplacement,
-                nativeFireToHandLimit,
-                exactCurrentActiveItemReceiver ? 1 : 0,
-                nativeMatrix.values[3][0],
-                nativeMatrix.values[3][1],
-                nativeMatrix.values[3][2],
-                adjusted->values[3][0],
-                adjusted->values[3][1],
-                adjusted->values[3][2],
-                nativeMatrix.values[2][0],
-                nativeMatrix.values[2][1],
-                nativeMatrix.values[2][2],
-                adjusted->values[2][0],
-                adjusted->values[2][1],
-                adjusted->values[2][2]);
+            if (scopedDirectionOnly)
+            {
+                WriteLog(
+                    L"Controller-directed scoped fire used the exact visible scope gun basis while preserving BF1942's native projectile origin: generation=%ld weapon=%p nativeOrigin=(%.3f,%.3f,%.3f) scopedGunOrigin=(%.3f,%.3f,%.3f) nativeForward=(%.5f,%.5f,%.5f) scopedForward=(%.5f,%.5f,%.5f).",
+                    visualControllerGeneration,
+                    weapon,
+                    nativeMatrix.values[3][0],
+                    nativeMatrix.values[3][1],
+                    nativeMatrix.values[3][2],
+                    controllerGunWorld.values[3][0],
+                    controllerGunWorld.values[3][1],
+                    controllerGunWorld.values[3][2],
+                    nativeMatrix.values[2][0],
+                    nativeMatrix.values[2][1],
+                    nativeMatrix.values[2][2],
+                    adjusted->values[2][0],
+                    adjusted->values[2][1],
+                    adjusted->values[2][2]);
+            }
+            else
+            {
+                WriteLog(
+                    L"Controller-directed fire applied direct OpenXR-aim gun pose: generation=%ld fireToHand=%.3f m handDisplacement=%.3f m nativeLimit=%.3f m exactActiveItem=%d nativeOrigin=(%.3f,%.3f,%.3f) heldGunOrigin=(%.3f,%.3f,%.3f) nativeForward=(%.5f,%.5f,%.5f) heldGunForward=(%.5f,%.5f,%.5f).",
+                    visualControllerGeneration,
+                    nativeFireToHandDistance,
+                    solvedHandDisplacement,
+                    nativeFireToHandLimit,
+                    exactCurrentActiveItemReceiver ? 1 : 0,
+                    nativeMatrix.values[3][0],
+                    nativeMatrix.values[3][1],
+                    nativeMatrix.values[3][2],
+                    adjusted->values[3][0],
+                    adjusted->values[3][1],
+                    adjusted->values[3][2],
+                    nativeMatrix.values[2][0],
+                    nativeMatrix.values[2][1],
+                    nativeMatrix.values[2][2],
+                    adjusted->values[2][0],
+                    adjusted->values[2][1],
+                    adjusted->values[2][2]);
+            }
         }
         InterlockedIncrement(&adjustedCalls);
         originalFire(weapon, actor, &*adjusted, barrelIndex);
@@ -502,9 +552,10 @@ private:
     void Report() const
     {
         WriteLog(
-            L"Controller-directed fire overlay stopped: observed=%ld adjusted=%ld wrongCaller=%ld nonLocalOrDead=%ld unreadable=%ld missingVisualWeaponPose=%ld missingNativeArmPose=%ld cameraLifetimeMismatch=%ld anchorDistanceRejected=%ld mathRejected=%ld.",
+            L"Controller-directed fire overlay stopped: observed=%ld adjusted=%ld scopedDirectionOnly=%ld wrongCaller=%ld nonLocalOrDead=%ld unreadable=%ld missingVisualWeaponPose=%ld missingNativeArmPose=%ld cameraLifetimeMismatch=%ld anchorDistanceRejected=%ld mathRejected=%ld.",
             observedCalls,
             adjustedCalls,
+            scopedDirectionOnlyCalls,
             wrongCallerCalls,
             nonLocalOrDeadCalls,
             unreadableMatrices,
@@ -605,6 +656,7 @@ private:
     volatile LONG started = 0;
     volatile LONG observedCalls = 0;
     volatile LONG adjustedCalls = 0;
+    volatile LONG scopedDirectionOnlyCalls = 0;
     volatile LONG wrongCallerCalls = 0;
     volatile LONG nonLocalOrDeadCalls = 0;
     volatile LONG unreadableMatrices = 0;

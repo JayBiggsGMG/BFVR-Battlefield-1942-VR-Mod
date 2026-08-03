@@ -9,6 +9,7 @@
 #include <openxr/openxr_platform.h>
 
 #include "openxr/OpenXRQuickMenu.h"
+#include "openxr/OpenXRScopeOverlayLayer.h"
 
 #include <algorithm>
 #include <array>
@@ -98,63 +99,6 @@ bool IsFiniteUnitPose(const bfvr::OpenXRPresentationPose& pose)
         quaternionLengthSquared <= 2.25F;
 }
 
-XrQuaternionf Multiply(
-    const XrQuaternionf& left,
-    const XrQuaternionf& right)
-{
-    return {
-        left.w * right.x + left.x * right.w +
-            left.y * right.z - left.z * right.y,
-        left.w * right.y - left.x * right.z +
-            left.y * right.w + left.z * right.x,
-        left.w * right.z + left.x * right.y -
-            left.y * right.x + left.z * right.w,
-        left.w * right.w - left.x * right.x -
-            left.y * right.y - left.z * right.z};
-}
-
-XrVector3f Rotate(
-    const XrQuaternionf& orientation,
-    const XrVector3f& value)
-{
-    const XrVector3f axis = {
-        orientation.x,
-        orientation.y,
-        orientation.z};
-    const XrVector3f cross = {
-        axis.y * value.z - axis.z * value.y,
-        axis.z * value.x - axis.x * value.z,
-        axis.x * value.y - axis.y * value.x};
-    const XrVector3f doubled = {
-        cross.x * 2.0F,
-        cross.y * 2.0F,
-        cross.z * 2.0F};
-    const XrVector3f secondCross = {
-        axis.y * doubled.z - axis.z * doubled.y,
-        axis.z * doubled.x - axis.x * doubled.z,
-        axis.x * doubled.y - axis.y * doubled.x};
-    return {
-        value.x + doubled.x * orientation.w + secondCross.x,
-        value.y + doubled.y * orientation.w + secondCross.y,
-        value.z + doubled.z * orientation.w + secondCross.z};
-}
-
-XrPosef ComposePose(
-    const XrPosef& parent,
-    const XrPosef& local)
-{
-    const XrVector3f translated = Rotate(
-        parent.orientation,
-        local.position);
-    XrPosef result = {};
-    result.orientation =
-        Multiply(parent.orientation, local.orientation);
-    result.position = {
-        parent.position.x + translated.x,
-        parent.position.y + translated.y,
-        parent.position.z + translated.z};
-    return result;
-}
 } // namespace
 
 namespace bfvr
@@ -1819,7 +1763,8 @@ public:
     bool EndFrame(
         const OpenXRPresentationTextures& textures,
         OpenXRUiReferenceMode uiReferenceMode,
-        const OpenXRPresentationPose* worldUiAnchor)
+        const OpenXRPresentationPose* worldUiAnchor,
+        OpenXRUiPresentationMode uiPresentationMode)
     {
         if (!frameInProgress)
         {
@@ -1832,8 +1777,9 @@ public:
         XrCompositionLayerProjection projectionLayer{XR_TYPE_COMPOSITION_LAYER_PROJECTION};
         std::array<XrCompositionLayerProjectionView, 2> projectionViews = {};
         XrCompositionLayerQuad quadLayer{XR_TYPE_COMPOSITION_LAYER_QUAD};
+        std::array<XrCompositionLayerQuad, 2> scopeQuadLayers = {};
         XrCompositionLayerCylinderKHR cylinderLayer{XR_TYPE_COMPOSITION_LAYER_CYLINDER_KHR};
-        std::array<const XrCompositionLayerBaseHeader*, 5> layers = {};
+        std::array<const XrCompositionLayerBaseHeader*, 6> layers = {};
         uint32_t layerCount = 0;
         bool copiedImages = false;
         if (pendingFrameState.shouldRender && pendingViewsValid)
@@ -1861,13 +1807,51 @@ public:
                 }
                 layers[layerCount++] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&projectionLayer);
 
-                XrSpace uiSpace = viewSpace;
-                XrPosef uiPose = {};
-                uiPose.orientation.w = 1.0F;
-                uiPose.position.z = -configuration.uiDistanceMeters;
-                if (uiReferenceMode ==
-                    OpenXRUiReferenceMode::WorldLocked)
+                bool submittedEyeFillingScope = false;
+                if (uiPresentationMode ==
+                        OpenXRUiPresentationMode::EyeFillingScope &&
+                    pendingHeadPoseValid)
                 {
+                    submittedEyeFillingScope =
+                        BuildOpenXREyeFillingScopeLayers(
+                            viewSpace,
+                            uiSwapchain.handle,
+                            uiSwapchain.width,
+                            uiSwapchain.height,
+                            pendingHeadPose,
+                            pendingViews,
+                            scopeQuadLayers);
+                    if (submittedEyeFillingScope)
+                    {
+                        for (XrCompositionLayerQuad& scopeQuad :
+                             scopeQuadLayers)
+                        {
+                            layers[layerCount++] = reinterpret_cast<
+                                const XrCompositionLayerBaseHeader*>(
+                                    &scopeQuad);
+                        }
+                    }
+                }
+                if (!scopePresentationInitialized ||
+                    lastEyeFillingScopePresented != submittedEyeFillingScope)
+                {
+                    WriteLog(
+                        submittedEyeFillingScope
+                            ? L"Verified scope Ref2 UI promoted to centred eye-exclusive VIEW quads sized from the current OpenXR eye FOVs."
+                            : L"Ref2 UI returned to the ordinary HUD/menu presentation policy.");
+                }
+                lastEyeFillingScopePresented = submittedEyeFillingScope;
+                scopePresentationInitialized = true;
+
+                if (!submittedEyeFillingScope)
+                {
+                    XrSpace uiSpace = viewSpace;
+                    XrPosef uiPose = {};
+                    uiPose.orientation.w = 1.0F;
+                    uiPose.position.z = -configuration.uiDistanceMeters;
+                    if (uiReferenceMode ==
+                        OpenXRUiReferenceMode::WorldLocked)
+                    {
                     if (worldUiAnchor != nullptr &&
                         IsFiniteUnitPose(*worldUiAnchor))
                     {
@@ -1885,7 +1869,8 @@ public:
                         anchorOffset.orientation.w = 1.0F;
                         anchorOffset.position.z =
                             -configuration.uiDistanceMeters;
-                        worldLockedUiPose = ComposePose(anchor, anchorOffset);
+                        worldLockedUiPose =
+                            ComposeOpenXRPose(anchor, anchorOffset);
                         worldLockedUiPoseValid = true;
                     }
                     else if (pendingHeadPoseValid &&
@@ -1898,7 +1883,7 @@ public:
                         headLocalOffset.orientation.w = 1.0F;
                         headLocalOffset.position.z =
                             -configuration.uiDistanceMeters;
-                        worldLockedUiPose = ComposePose(
+                        worldLockedUiPose = ComposeOpenXRPose(
                             pendingHeadPose,
                             headLocalOffset);
                         worldLockedUiPoseValid = true;
@@ -1908,21 +1893,21 @@ public:
                         uiSpace = localSpace;
                         uiPose = worldLockedUiPose;
                     }
-                }
-                if (!uiReferenceModeInitialized ||
-                    lastUiReferenceMode != uiReferenceMode)
-                {
+                    }
+                    if (!uiReferenceModeInitialized ||
+                        lastUiReferenceMode != uiReferenceMode)
+                    {
                     WriteLog(
                         uiReferenceMode ==
                             OpenXRUiReferenceMode::WorldLocked
                             ? L"Ref2 UI changed to a latched LOCAL world-space menu panel."
                             : L"Ref2 UI changed to a VIEW-space gameplay HUD.");
-                }
-                lastUiReferenceMode = uiReferenceMode;
-                uiReferenceModeInitialized = true;
+                    }
+                    lastUiReferenceMode = uiReferenceMode;
+                    uiReferenceModeInitialized = true;
 
-                if (activeUiLayerMode == OpenXRUiLayerMode::Cylinder)
-                {
+                    if (activeUiLayerMode == OpenXRUiLayerMode::Cylinder)
+                    {
                     cylinderLayer.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
                     cylinderLayer.space = uiSpace;
                     cylinderLayer.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
@@ -1937,9 +1922,9 @@ public:
                     cylinderLayer.aspectRatio = static_cast<float>(uiSwapchain.width) /
                         static_cast<float>(uiSwapchain.height);
                     layers[layerCount++] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&cylinderLayer);
-                }
-                else
-                {
+                    }
+                    else
+                    {
                     quadLayer.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
                     quadLayer.space = uiSpace;
                     quadLayer.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
@@ -1952,6 +1937,7 @@ public:
                         static_cast<float>(uiSwapchain.height) /
                         static_cast<float>(uiSwapchain.width);
                     layers[layerCount++] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&quadLayer);
+                    }
                 }
                 layerCount += static_cast<uint32_t>(
                     quickMenu.AppendLayers(
@@ -1987,11 +1973,16 @@ public:
     bool SubmitFrame(
         const OpenXRPresentationTextures& textures,
         OpenXRUiReferenceMode uiReferenceMode,
-        const OpenXRPresentationPose* worldUiAnchor)
+        const OpenXRPresentationPose* worldUiAnchor,
+        OpenXRUiPresentationMode uiPresentationMode)
     {
         OpenXRPresentationFrameState frameState = {};
         return BeginFrame(frameState) &&
-            EndFrame(textures, uiReferenceMode, worldUiAnchor);
+            EndFrame(
+                textures,
+                uiReferenceMode,
+                worldUiAnchor,
+                uiPresentationMode);
     }
 
     void DestroySwapchain(Swapchain& swapchain)
@@ -2199,6 +2190,8 @@ public:
     XrPosef worldLockedUiPose = {};
     OpenXRUiReferenceMode lastUiReferenceMode =
         OpenXRUiReferenceMode::WorldLocked;
+    bool lastEyeFillingScopePresented = false;
+    bool scopePresentationInitialized = false;
     XrSessionState sessionState = XR_SESSION_STATE_UNKNOWN;
     XrResult lastControllerSyncResult = XR_SUCCESS;
 };
@@ -2411,10 +2404,15 @@ bool OpenXRPresentation::PollEvents()
 bool OpenXRPresentation::SubmitFrame(
     const OpenXRPresentationTextures& textures,
     OpenXRUiReferenceMode uiReferenceMode,
-    const OpenXRPresentationPose* worldUiAnchor)
+    const OpenXRPresentationPose* worldUiAnchor,
+    OpenXRUiPresentationMode uiPresentationMode)
 {
     return impl_ != nullptr &&
-        impl_->SubmitFrame(textures, uiReferenceMode, worldUiAnchor);
+        impl_->SubmitFrame(
+            textures,
+            uiReferenceMode,
+            worldUiAnchor,
+            uiPresentationMode);
 }
 
 bool OpenXRPresentation::BeginFrame(OpenXRPresentationFrameState& frameState)
@@ -2425,10 +2423,15 @@ bool OpenXRPresentation::BeginFrame(OpenXRPresentationFrameState& frameState)
 bool OpenXRPresentation::EndFrame(
     const OpenXRPresentationTextures& textures,
     OpenXRUiReferenceMode uiReferenceMode,
-    const OpenXRPresentationPose* worldUiAnchor)
+    const OpenXRPresentationPose* worldUiAnchor,
+    OpenXRUiPresentationMode uiPresentationMode)
 {
     return impl_ != nullptr &&
-        impl_->EndFrame(textures, uiReferenceMode, worldUiAnchor);
+        impl_->EndFrame(
+            textures,
+            uiReferenceMode,
+            worldUiAnchor,
+            uiPresentationMode);
 }
 
 stereo::QuickMenuSelection

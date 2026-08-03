@@ -1,8 +1,10 @@
 #include "client/D3D8RenderViewPoseHook.h"
 
 #include "client/MountedWeaponAimResolver.h"
+#include "client/ScopeViewOverlay.h"
 
 #include "stereo/MountedCameraMath.h"
+#include "stereo/ScopeViewMath.h"
 #include "stereo/StereoMath.h"
 
 #include <MinHook.h>
@@ -13,6 +15,7 @@
 #include <array>
 #include <cstdarg>
 #include <cstddef>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <intrin.h>
@@ -23,12 +26,13 @@ constexpr std::ptrdiff_t kActiveRenderViewGlobalRva = 0x005AB868;
 constexpr std::ptrdiff_t kSetTransformationRva = 0x001B7E00;
 constexpr std::ptrdiff_t kExpectedCallerReturnRva = 0x000668D1;
 constexpr std::ptrdiff_t kGetFrustumRva = 0x001B7E40;
-constexpr std::ptrdiff_t kExpectedFrustumCallerReturnRva = 0x000665B8;
+constexpr std::size_t kRenderViewFieldOfViewOffset = 0x24;
+constexpr std::size_t kRenderViewFrustumDirtyOffset = 0x312;
 constexpr float kWorldUnitsPerMeter = 1.0F;
-// PID 22844 proved the proposed caller gate never matched a live query.
-// Keep the code for static/dynamic reconciliation, but do not detour every
-// RenderView frustum query until the live call boundary is verified.
-constexpr bool kEnableExperimentalFrustumTimingHook = false;
+// The scope path needs this verified boundary even though the older proposed
+// ordinary-camera caller gate never matched. Runtime work remains gated to an
+// exact active RenderView and a fresh useScope-enabled local handweapon.
+constexpr bool kEnableScopeFrustumHook = true;
 
 bfvr::stereo::Pose ToPose(const bfvr::D3D8RuntimeView& view)
 {
@@ -115,7 +119,7 @@ public:
                 target);
             return false;
         }
-        if constexpr (kEnableExperimentalFrustumTimingHook)
+        if constexpr (kEnableScopeFrustumHook)
         {
             if (!IsVerifiedFrustumTarget(frustumTarget))
             {
@@ -139,7 +143,7 @@ public:
                 reinterpret_cast<void*>(original));
             return false;
         }
-        if constexpr (kEnableExperimentalFrustumTimingHook)
+        if constexpr (kEnableScopeFrustumHook)
         {
             const MH_STATUS frustumStatus = MH_CreateHook(
                 frustumTarget,
@@ -278,10 +282,12 @@ public:
     void LogSummary() const
     {
         WriteLog(
-            L"RenderView pose/frustum-hook summary: setterMatches=%ld setterApplied=%ld setterRejected=%ld frustumMatches=%ld frustumApplied=%ld frustumNoSource=%ld frustumRejected=%ld mountedAnchorCaptures=%ld mountedDecoupled=%ld mountedRejected=%ld mountedResets=%ld mountedToggles=%ld mountedToggleIgnored=%ld lastRequested=%ld lastApplied=%ld lastFrustum=%ld.",
+            L"RenderView pose/frustum-hook summary: setterMatches=%ld setterApplied=%ld setterRejected=%ld scopedApplied=%ld scopedRejected=%ld frustumMatches=%ld frustumApplied=%ld frustumNoSource=%ld frustumRejected=%ld mountedAnchorCaptures=%ld mountedDecoupled=%ld mountedRejected=%ld mountedResets=%ld mountedToggles=%ld mountedToggleIgnored=%ld lastRequested=%ld lastApplied=%ld lastFrustum=%ld.",
             matchingCalls,
             appliedCalls,
             rejectedTransforms,
+            scopedCalls,
+            scopedRejected,
             frustumMatchingCalls,
             frustumAppliedCalls,
             frustumNoSource,
@@ -483,7 +489,27 @@ private:
             return;
         }
 
-        original(renderView, &*adjusted);
+        stereo::Matrix4 finalCamera = *adjusted;
+        ScopeViewFrameState scope = {};
+        if (ReadScopeViewFrameState(scope))
+        {
+            const auto scoped =
+                stereo::MakeD3D8WeaponDirectedScopeCamera(
+                    finalCamera,
+                    scope.controllerGunWorld);
+            if (scoped.has_value())
+            {
+                finalCamera = *scoped;
+                InterlockedIncrement(&scopedCalls);
+            }
+            else
+            {
+                InvalidateScopeViewFrameState(scope.weapon);
+                InterlockedIncrement(&scopedRejected);
+            }
+        }
+
+        original(renderView, &finalCamera);
         InterlockedIncrement(&appliedCalls);
         InterlockedExchange(&appliedSequence, sequence);
     }
@@ -492,46 +518,117 @@ private:
         void* renderView,
         const void* callerReturn)
     {
-        const void* const expectedCaller = gameImage == nullptr
-            ? nullptr
-            : gameImage + kExpectedFrustumCallerReturnRva;
+        (void)callerReturn;
         const LONG sequence =
             InterlockedCompareExchange(&requestedSequence, 0, 0);
+        ScopeViewFrameState scope = {};
         if (sequence <= 0 ||
             renderView == nullptr ||
             renderView != ActiveRenderView() ||
-            callerReturn != expectedCaller)
+            !ReadScopeViewFrameState(scope) ||
+            !std::isfinite(scope.normalFov) ||
+            scope.normalFov <= 0.0F)
         {
             return originalGetFrustum(renderView);
         }
 
         InterlockedIncrement(&frustumMatchingCalls);
-        if (!lastSourceValid)
+        bool poseApplied = false;
+        if (lastSourceValid)
+        {
+            const auto adjusted = stereo::ComposeRuntimeHeadWithD3D8Camera(
+                lastSource,
+                ToPose(referenceHead),
+                ToPose(currentHead),
+                kWorldUnitsPerMeter);
+            const auto scoped = adjusted.has_value()
+                ? stereo::MakeD3D8WeaponDirectedScopeCamera(
+                    *adjusted,
+                    scope.controllerGunWorld)
+                : std::nullopt;
+            if (scoped.has_value())
+            {
+                // BF1942 performs this visibility query before its ordinary
+                // per-view camera setter. Advance the verified active
+                // RenderView to the current gun direction here so its scope
+                // frustum and the later rendered camera share one basis.
+                original(renderView, &*scoped);
+                poseApplied = true;
+            }
+            else
+            {
+                InterlockedIncrement(&frustumRejected);
+            }
+        }
+        else
         {
             InterlockedIncrement(&frustumNoSource);
-            return originalGetFrustum(renderView);
         }
 
-        const auto adjusted = stereo::ComposeRuntimeHeadWithD3D8Camera(
-            lastSource,
-            ToPose(referenceHead),
-            ToPose(currentHead),
-            kWorldUnitsPerMeter);
-        if (!adjusted.has_value())
+        auto* const renderViewBytes = static_cast<std::byte*>(renderView);
+        float nativeFov = -1.0F;
+        bool fovCaptured = false;
+        bool fovPrepared = false;
+        __try
         {
-            InterlockedIncrement(&frustumRejected);
-            return originalGetFrustum(renderView);
+            auto* const fieldOfView = reinterpret_cast<float*>(
+                renderViewBytes + kRenderViewFieldOfViewOffset);
+            nativeFov = *fieldOfView;
+            if (std::isfinite(nativeFov) && nativeFov > 0.0F)
+            {
+                fovCaptured = true;
+                *fieldOfView = scope.normalFov;
+                renderViewBytes[kRenderViewFrustumDirtyOffset] =
+                    std::byte{1};
+                fovPrepared = true;
+            }
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            fovPrepared = false;
         }
 
-        // BF1942 asks for this cached frustum before its ordinary renderer
-        // supplies the current source transform. Reapply the last known
-        // source with the current centre-head pose only for this verified
-        // active culling query; the later setter receives the game's current
-        // source transform and remains responsible for the render camera.
-        original(renderView, &*adjusted);
+        void* const frustum = originalGetFrustum(renderView);
+        bool fovRestored = !fovCaptured;
+        if (fovCaptured)
+        {
+            __try
+            {
+                // Only the cached visibility volume is intentionally broad.
+                // Restore BF1942's scope FOV before the projection query so
+                // BFVR can preserve the weapon's exact requested zoom.
+                *reinterpret_cast<float*>(
+                    renderViewBytes + kRenderViewFieldOfViewOffset) =
+                        nativeFov;
+                fovRestored = true;
+            }
+            __except (EXCEPTION_EXECUTE_HANDLER)
+            {
+                fovRestored = false;
+            }
+        }
+
+        if (!fovPrepared || !fovRestored)
+        {
+            InvalidateScopeViewFrameState(scope.weapon);
+            InterlockedIncrement(&frustumRejected);
+            return frustum;
+        }
+
         InterlockedIncrement(&frustumAppliedCalls);
         InterlockedExchange(&appliedFrustumSequence, sequence);
-        return originalGetFrustum(renderView);
+        if (InterlockedCompareExchange(
+                &firstScopedFrustumLogged,
+                1,
+                0) == 0)
+        {
+            WriteLog(
+                L"Scoped pre-cull correction reached verified RenderView::getFrustum: currentGunPose=%d nativeScopeFov=%.6f broadVisibilityFov=%.6f. Exact magnification remains in the per-eye projection.",
+                poseApplied ? 1 : 0,
+                nativeFov,
+                scope.normalFov);
+        }
+        return frustum;
     }
 
     void* ActiveRenderView() const noexcept
@@ -604,6 +701,8 @@ private:
     volatile LONG matchingCalls = 0;
     volatile LONG appliedCalls = 0;
     volatile LONG rejectedTransforms = 0;
+    volatile LONG scopedCalls = 0;
+    volatile LONG scopedRejected = 0;
     volatile LONG frustumMatchingCalls = 0;
     volatile LONG frustumAppliedCalls = 0;
     volatile LONG frustumNoSource = 0;
@@ -617,6 +716,7 @@ private:
     volatile LONG requestedMountedCameraToggleSequence = 0;
     volatile LONG mountedCameraDecoupled = 0;
     volatile LONG appliedFrustumSequence = 0;
+    volatile LONG firstScopedFrustumLogged = 0;
     stereo::MountedCameraControlState mountedCameraControl = {};
     bool created = false;
     bool frustumCreated = false;

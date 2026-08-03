@@ -2,6 +2,7 @@
 
 #include "client/D3D8WorldCrosshairRenderer.h"
 #include "client/MountedWeaponAimResolver.h"
+#include "client/ScopeViewOverlay.h"
 #include "client/WeaponPoseRuntimeCache.h"
 #include "stereo/WorldCrosshairMath.h"
 
@@ -126,7 +127,7 @@ public:
         hookEnabled_ = true;
         bfvr::InitializeD3D8WorldCrosshairRenderer(log);
         WriteLog(
-            L"Native flat crosshair suppression and 3D reticle state armed at 0x006A97B0; maximumDistance=%.2f m angularDiameter=%.2f degrees. HudManager requests are observed before being forced off; global HUD and unrelated Ref2 draw families remain unchanged.",
+            L"Native flat crosshair suppression and 3D reticle state armed at 0x006A97B0; maximumDistance=%.2f m angularDiameter=%.2f degrees. Ordinary HudManager requests are forced off, while a verified active scope may retain BF1942's native scope image; global HUD and unrelated Ref2 draw families remain unchanged.",
             maximumDistance_,
             angularDiameterDegrees_);
     }
@@ -148,9 +149,10 @@ public:
             Sleep(0);
         }
         WriteLog(
-            L"Native crosshair suppression stopped: visibilityRequests=%ld forcedHidden=%ld.",
+            L"Native crosshair suppression stopped: visibilityRequests=%ld forcedHidden=%ld scopeVisibilityPasses=%ld.",
             InterlockedCompareExchange(&visibilityRequests_, 0, 0),
-            InterlockedCompareExchange(&forcedHidden_, 0, 0));
+            InterlockedCompareExchange(&forcedHidden_, 0, 0),
+            InterlockedCompareExchange(&scopeVisibilityPasses_, 0, 0));
         RemoveHook();
         bfvr::ShutdownD3D8WorldCrosshairRenderer();
         gameImage_ = nullptr;
@@ -163,7 +165,8 @@ public:
         state = {};
         state.angularDiameterDegrees = angularDiameterDegrees_;
         if (gameImage_ == nullptr ||
-            InterlockedCompareExchange(&started_, 0, 0) == 0)
+            InterlockedCompareExchange(&started_, 0, 0) == 0 ||
+            bfvr::IsScopeViewActive())
         {
             return false;
         }
@@ -273,11 +276,19 @@ private:
             InterlockedExchange(
                 &overlay->requestedVisible_,
                 requestedVisible ? 1 : 0);
-            if (requestedVisible)
+            const bool retainNativeScope =
+                requestedVisible && bfvr::IsScopeViewActive();
+            if (retainNativeScope)
+            {
+                InterlockedIncrement(&overlay->scopeVisibilityPasses_);
+            }
+            else if (requestedVisible)
             {
                 InterlockedIncrement(&overlay->forcedHidden_);
             }
-            overlay->original_(manager, FALSE);
+            overlay->original_(
+                manager,
+                retainNativeScope ? TRUE : FALSE);
         }
         InterlockedDecrement(&callbackEntrants_);
     }
@@ -362,6 +373,7 @@ private:
     volatile LONG started_ = 0;
     volatile LONG visibilityRequests_ = 0;
     volatile LONG forcedHidden_ = 0;
+    volatile LONG scopeVisibilityPasses_ = 0;
     volatile LONG requestedVisible_ = 0;
     std::byte* gameImage_ = nullptr;
     float maximumDistance_ = kDefaultMaximumDistance;

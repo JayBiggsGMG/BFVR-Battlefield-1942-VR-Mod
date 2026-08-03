@@ -3,7 +3,9 @@
 #include "client/ControllerInputCache.h"
 #include "client/D3D8To9SharedTextureProducer.h"
 #include "client/D3D8StereoProbeRecords.h"
+#include "client/ScopeViewOverlay.h"
 #include "presenter/SharedControlChannel.h"
+#include "stereo/ScopeViewMath.h"
 #include "stereo/StereoMath.h"
 
 #include <windows.h>
@@ -1243,6 +1245,11 @@ public:
             &block->frameOverlayFlags,
             overlayFlags);
         InterlockedExchange(
+            &block->framePresentationFlags,
+            IsScopeViewActive()
+                ? shared::kFramePresentationEyeFillingScope
+                : 0);
+        InterlockedExchange(
             &block->mountedCameraDecoupled,
             placement.mountedCameraDecoupled ? 1 : 0);
     }
@@ -1542,10 +1549,28 @@ bool BuildD3D8RuntimeStereoTransforms(
     {
         return false;
     }
-    std::memcpy(&leftView, &pair->leftView, sizeof(leftView));
-    std::memcpy(&rightView, &pair->rightView, sizeof(rightView));
-    std::memcpy(&leftProjection, &pair->leftProjection, sizeof(leftProjection));
-    std::memcpy(&rightProjection, &pair->rightProjection, sizeof(rightProjection));
+    stereo::D3D8StereoTransformPair adjustedPair = *pair;
+    const float scopeProjectionScale = ReadScopeViewProjectionScale();
+    if (scopeProjectionScale != 1.0F &&
+        (!stereo::ApplyD3D8ScopeProjectionScale(
+             adjustedPair.leftProjection,
+             scopeProjectionScale) ||
+         !stereo::ApplyD3D8ScopeProjectionScale(
+             adjustedPair.rightProjection,
+             scopeProjectionScale)))
+    {
+        return false;
+    }
+    std::memcpy(&leftView, &adjustedPair.leftView, sizeof(leftView));
+    std::memcpy(&rightView, &adjustedPair.rightView, sizeof(rightView));
+    std::memcpy(
+        &leftProjection,
+        &adjustedPair.leftProjection,
+        sizeof(leftProjection));
+    std::memcpy(
+        &rightProjection,
+        &adjustedPair.rightProjection,
+        sizeof(rightProjection));
     return true;
 }
 

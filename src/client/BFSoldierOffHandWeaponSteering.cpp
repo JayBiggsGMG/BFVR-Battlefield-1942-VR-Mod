@@ -1,6 +1,7 @@
 #include "client/BFSoldierOffHandWeaponSteering.h"
 
 #include "client/BFSoldierTrackedHandPose.h"
+#include "client/ScopedOffHandSupportPoseCache.h"
 
 namespace bfvr
 {
@@ -83,11 +84,16 @@ TryComputeBFSoldierOffHandWeaponSteering(
     steeringInput.worldUnitsPerMetre =
         input.worldUnitsPerMetre;
     stereo::OffHandWeaponSteeringResult output = {};
-    return binding.TryComputeSupportedWeaponSteering(
-               steeringInput,
-               output)
-        ? std::optional<stereo::OffHandWeaponSteeringResult>(
-              output)
+    const bool supported = binding.TryComputeSupportedWeaponSteering(
+        steeringInput,
+        output);
+    PublishScopedOffHandSupportPose(
+        input.bindingId,
+        input.controllerGunWorld,
+        steeringInput.predictedSupportWorld,
+        supported);
+    return supported
+        ? std::optional<stereo::OffHandWeaponSteeringResult>(output)
         : std::nullopt;
 }
 

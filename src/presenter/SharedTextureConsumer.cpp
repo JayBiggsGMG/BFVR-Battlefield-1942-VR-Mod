@@ -4,7 +4,10 @@
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
+#include <cmath>
 #include <cstdarg>
+#include <cstdlib>
 #include <cstdio>
 #include <cwchar>
 #include <iterator>
@@ -27,6 +30,62 @@ bool ReadWorldFxaaEnabled()
     // The owner has accepted this quality path. Disable it only for a
     // deliberate measured A/B; it must not silently change visual quality.
     return !(length == 1 && value[0] == L'0');
+}
+
+struct WorldBloomConfiguration
+{
+    bool enabled = false;
+    float threshold = 0.55F;
+    float intensity = 0.35F;
+};
+
+float ReadEnvironmentFloat(
+    const wchar_t* name,
+    float fallback,
+    float minimum,
+    float maximum)
+{
+    wchar_t value[64] = {};
+    const DWORD length = GetEnvironmentVariableW(
+        name,
+        value,
+        static_cast<DWORD>(std::size(value)));
+    if (length == 0 || length >= std::size(value))
+        return fallback;
+    wchar_t* end = nullptr;
+    errno = 0;
+    const double parsed = std::wcstod(value, &end);
+    if (errno != 0 || end == value || end == nullptr || *end != L'\0' ||
+        !std::isfinite(parsed))
+    {
+        return fallback;
+    }
+    return std::clamp(static_cast<float>(parsed), minimum, maximum);
+}
+
+WorldBloomConfiguration ReadWorldBloomConfiguration()
+{
+    WorldBloomConfiguration configuration;
+    wchar_t enabled[2] = {};
+    const DWORD enabledLength = GetEnvironmentVariableW(
+        L"BFVR_OPENXR_BLOOM",
+        enabled,
+        static_cast<DWORD>(std::size(enabled)));
+    // This is a deliberate visual experiment. Only an explicit 1 opts in.
+    configuration.enabled = enabledLength == 1 && enabled[0] == L'1';
+    configuration.threshold = ReadEnvironmentFloat(
+        L"BFVR_OPENXR_BLOOM_THRESHOLD",
+        configuration.threshold,
+        0.0F,
+        1.0F);
+    configuration.intensity = ReadEnvironmentFloat(
+        L"BFVR_OPENXR_BLOOM_INTENSITY",
+        configuration.intensity,
+        0.0F,
+        2.0F);
+    configuration.enabled = configuration.enabled &&
+        configuration.intensity > 0.0F;
+    return configuration;
 }
 
 bool IsConvertibleSharedFormat(
@@ -101,12 +160,10 @@ bool SharedTextureConsumer::Initialize(
     context_ = context;
     context_->AddRef();
     worldFxaaEnabled_ = ReadWorldFxaaEnabled();
-    // Bloom is intentionally disabled: it was not perceptible in-headset and
-    // adds three GPU passes per world eye. Keep the feature
-    // code dormant rather than allocating its resources or compiling shaders.
-    worldBloomEnabled_ = false;
-    worldBloomThreshold_ = 0.0F;
-    worldBloomIntensity_ = 0.0F;
+    const WorldBloomConfiguration bloom = ReadWorldBloomConfiguration();
+    worldBloomEnabled_ = bloom.enabled;
+    worldBloomThreshold_ = bloom.threshold;
+    worldBloomIntensity_ = bloom.intensity;
     const std::array<UINT, kTextureCount> destinationWidths = {
         destinationRequirements.leftWorldWidth,
         destinationRequirements.rightWorldWidth,
@@ -244,13 +301,36 @@ bool SharedTextureConsumer::Initialize(
 
     if (scalerRequired_)
     {
-        WriteLog(
-            ambientOcclusionEnabled_
-                ? L"Shared texture consumer opened the three color resources plus two packed-depth resources; native-resolution world AO is active at intensity %.2f, temporal history and bloom are disabled."
-                : worldFxaaEnabled_
-                ? L"Shared texture consumer opened all three x86-produced resources and enabled x64 aspect-fit conversion with world FXAA; AO and bloom are disabled."
-                : L"Shared texture consumer opened all three x86-produced resources and enabled x64 aspect-fit conversion with world FXAA disabled by BFVR_OPENXR_FXAA=0; AO and bloom are disabled.",
-            ambientOcclusionIntensity_);
+        if (worldBloomEnabled_)
+        {
+            if (ambientOcclusionEnabled_)
+            {
+                WriteLog(
+                    L"Shared texture consumer opened the color and packed-depth resources; independent native-resolution AO plus world-only quarter-resolution bloom are active (AO intensity=%.2f, bloom threshold=%.2f intensity=%.2f). Ref2 UI remains outside both stages.",
+                    ambientOcclusionIntensity_,
+                    worldBloomThreshold_,
+                    worldBloomIntensity_);
+            }
+            else
+            {
+                WriteLog(
+                    worldFxaaEnabled_
+                        ? L"Shared texture consumer opened all three x86-produced resources and enabled x64 world FXAA plus world-only quarter-resolution bloom (threshold=%.2f intensity=%.2f); Ref2 UI and AO are outside the bloom stage."
+                        : L"Shared texture consumer opened all three x86-produced resources with world FXAA disabled and world-only quarter-resolution bloom active (threshold=%.2f intensity=%.2f); Ref2 UI and AO are outside the bloom stage.",
+                    worldBloomThreshold_,
+                    worldBloomIntensity_);
+            }
+        }
+        else
+        {
+            WriteLog(
+                ambientOcclusionEnabled_
+                    ? L"Shared texture consumer opened the three color resources plus two packed-depth resources; native-resolution world AO is active at intensity %.2f, temporal history and bloom are disabled."
+                    : worldFxaaEnabled_
+                    ? L"Shared texture consumer opened all three x86-produced resources and enabled x64 aspect-fit conversion with world FXAA; AO and bloom are disabled."
+                    : L"Shared texture consumer opened all three x86-produced resources and enabled x64 aspect-fit conversion with world FXAA disabled by BFVR_OPENXR_FXAA=0; AO and bloom are disabled.",
+                ambientOcclusionIntensity_);
+        }
     }
     else
     {
@@ -353,6 +433,8 @@ bool SharedTextureConsumer::ConsumeFrame(
         }
     }
 
+    const bool bloomFrameStarted =
+        worldBloomEnabled_ && scaler_.BeginBloomFrame();
     bool copied = true;
     for (std::size_t index = 0; index < textures_.size(); ++index)
     {
@@ -390,6 +472,8 @@ bool SharedTextureConsumer::ConsumeFrame(
         {
             ambientOcclusion_.EndApplicationTiming();
         }
+        if (bloomFrameStarted && index + 1 == kDepthTextureCount)
+            scaler_.EndBloomFrame();
     }
     if (aoFrameStarted)
         ambientOcclusion_.EndFrame();
@@ -461,6 +545,8 @@ bool SharedTextureConsumer::ConsumeFrame(
     }
     if (aoFrameStarted)
         ambientOcclusion_.CollectFrameTimings();
+    if (bloomFrameStarted)
+        scaler_.CollectBloomFrameTimings();
 
     bool released = true;
     for (std::size_t index = 0; index < depthTextures_.size(); ++index)
@@ -517,8 +603,8 @@ void SharedTextureConsumer::Shutdown()
     ambientOcclusionEnabled_ = false;
     ambientOcclusionIntensity_ = 1.0F;
     ambientOcclusionFrameFailures_ = 0;
-    worldBloomThreshold_ = 0.0F;
-    worldBloomIntensity_ = 0.0F;
+    worldBloomThreshold_ = 0.55F;
+    worldBloomIntensity_ = 0.35F;
     for (Texture& texture : textures_)
     {
         ReleaseTexture(texture);

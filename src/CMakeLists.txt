@@ -43,8 +43,10 @@ if(BFVR_PRESENTER_ONLY)
     presenter/SharedTextureConsumer.cpp
     openxr/OpenXRQuickMenu.cpp
     openxr/OpenXRPresentation.cpp
+    openxr/OpenXRScopeOverlayLayer.cpp
     stereo/QuickMenuInteraction.cpp
     stereo/QuickMenuMirrorMath.cpp
+    stereo/ScopeViewMath.cpp
     stereo/UiPointerMath.cpp
   )
   add_executable(BFVRSharedTextureConsumerProbe
@@ -61,7 +63,11 @@ if(BFVR_PRESENTER_ONLY)
     presenter/D3D11AmbientOcclusion.cpp
     presenter/D3D11TextureScaler.cpp
   )
-  foreach(target BFVRPresenter BFVRSharedTextureConsumerProbe BFVRAmbientOcclusionGpuProbe)
+  add_executable(BFVRBloomGpuProbe
+    presenter/BFVRBloomGpuProbe.cpp
+    presenter/D3D11TextureScaler.cpp
+  )
+  foreach(target BFVRPresenter BFVRSharedTextureConsumerProbe BFVRAmbientOcclusionGpuProbe BFVRBloomGpuProbe)
     target_compile_definitions(${target} PRIVATE
       WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
     target_include_directories(${target} PRIVATE
@@ -172,7 +178,10 @@ add_library(BFVRClient SHARED
   client/MainMenuOverlay.cpp
   client/MenuPointerOverlay.cpp
   client/MountedWeaponAimResolver.cpp
+  client/ScopedOffHandSupportPoseCache.cpp
+  client/ScopeViewOverlay.cpp
   client/StartupMenuPresentation.cpp
+  client/TrackedScopeAim.cpp
   client/D3D8ImportRoute.cpp
   client/DirectSoundImportRoute.cpp
   client/D3D8PresentationConfiguration.cpp
@@ -245,6 +254,7 @@ add_library(BFVRStereoMath STATIC
   stereo/MountedCameraMath.cpp
   stereo/QuickMenuInteraction.cpp
   stereo/QuickMenuMirrorMath.cpp
+  stereo/ScopeViewMath.cpp
   stereo/WeaponMotionPolicy.cpp
   stereo/WeaponFireAimMath.cpp
   stereo/StereoMath.cpp
@@ -265,6 +275,7 @@ add_executable(BFVROpenXRProbe
   openxr/OpenXRBootstrap.cpp
   openxr/OpenXRQuickMenu.cpp
   openxr/OpenXRPresentation.cpp
+  openxr/OpenXRScopeOverlayLayer.cpp
 )
 
 add_executable(BFVRSharedTextureProducerProbe
@@ -305,6 +316,7 @@ add_executable(BFVROffHandSupportPolicyTests
   client/BFSoldierOffHandWeaponSteering.cpp
   client/BFSoldierPrimarySupportPoseCache.cpp
   client/BFSoldierTrackedHandPose.cpp
+  client/ScopedOffHandSupportPoseCache.cpp
   stereo/OffHandSupportPolicyTests.cpp
 )
 
@@ -328,6 +340,15 @@ add_executable(BFVRVehicleMotionAimMathTests
 
 add_executable(BFVRMountedCameraMathTests
   stereo/MountedCameraMathTests.cpp
+)
+
+add_executable(BFVRScopeViewMathTests
+  stereo/ScopeViewMathTests.cpp
+)
+
+add_executable(BFVROpenXRScopeOverlayLayerTests
+  openxr/OpenXRScopeOverlayLayer.cpp
+  openxr/OpenXRScopeOverlayLayerTests.cpp
 )
 
 add_executable(BFVRWorldCrosshairMathTests
@@ -372,7 +393,7 @@ add_executable(BFVRRfaInspect
   tools/RfaInspect.cpp
 )
 
-foreach(target BFVRClient BFVROpenALHrtfRouter BFVRD3D8To9FlatClient BFVRLoader BFVROpenXRProbe BFVRSharedTextureProducerProbe BFVRD3D8To9SharedSurfaceProbe BFVRAmbientOcclusionDepthProbe BFVRStereoMath BFVRStereoMathTests BFVRWeaponFireAimMathTests BFVROffHandSupportPolicyTests BFVRArmPoleVectorMathTests BFVRMainMenuOverlayTests BFVRQuickMenuTests BFVRVehicleMotionAimMathTests BFVRMountedCameraMathTests BFVRWorldCrosshairMathTests BFVRRuntimeDiagnosticsTests BFVRHrtfListenerMathTests BFVRHrtfBufferPolicyTests BFVRHrtfMenuSoundPolicyTests BFVRHrtfBackendProbe BFVRDirectSoundImportRouteTests BFVRSharedControlChannelTests BFVRRfaInspect)
+foreach(target BFVRClient BFVROpenALHrtfRouter BFVRD3D8To9FlatClient BFVRLoader BFVROpenXRProbe BFVRSharedTextureProducerProbe BFVRD3D8To9SharedSurfaceProbe BFVRAmbientOcclusionDepthProbe BFVRStereoMath BFVRStereoMathTests BFVRWeaponFireAimMathTests BFVROffHandSupportPolicyTests BFVRArmPoleVectorMathTests BFVRMainMenuOverlayTests BFVRQuickMenuTests BFVRVehicleMotionAimMathTests BFVRMountedCameraMathTests BFVRScopeViewMathTests BFVROpenXRScopeOverlayLayerTests BFVRWorldCrosshairMathTests BFVRRuntimeDiagnosticsTests BFVRHrtfListenerMathTests BFVRHrtfBufferPolicyTests BFVRHrtfMenuSoundPolicyTests BFVRHrtfBackendProbe BFVRDirectSoundImportRouteTests BFVRSharedControlChannelTests BFVRRfaInspect)
   target_compile_definitions(${target} PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
   set_property(TARGET ${target} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
   if(MSVC)
@@ -422,6 +443,8 @@ target_link_libraries(BFVRQuickMenuTests PRIVATE
   BFVRStereoMath ole32 user32 windowscodecs)
 target_link_libraries(BFVRVehicleMotionAimMathTests PRIVATE BFVRStereoMath)
 target_link_libraries(BFVRMountedCameraMathTests PRIVATE BFVRStereoMath)
+target_link_libraries(BFVRScopeViewMathTests PRIVATE BFVRStereoMath)
+target_link_libraries(BFVROpenXRScopeOverlayLayerTests PRIVATE BFVRStereoMath)
 target_link_libraries(BFVRWorldCrosshairMathTests PRIVATE BFVRStereoMath)
 target_link_libraries(BFVRHrtfListenerMathTests PRIVATE BFVRStereoMath)
 target_link_libraries(BFVRDirectSoundImportRouteTests PRIVATE dsound)
@@ -433,6 +456,9 @@ target_include_directories(BFVRRuntimeDiagnosticsTests PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}")
 target_include_directories(BFVRSharedControlChannelTests PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}")
+target_include_directories(BFVROpenXRScopeOverlayLayerTests PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}"
+  "${BFVR_OPENXR_INCLUDE_DIRECTORY}")
 
 include(CTest)
 if(BUILD_TESTING)
@@ -460,6 +486,12 @@ if(BUILD_TESTING)
   add_test(
     NAME BFVRMountedCameraMathTests
     COMMAND BFVRMountedCameraMathTests)
+  add_test(
+    NAME BFVRScopeViewMathTests
+    COMMAND BFVRScopeViewMathTests)
+  add_test(
+    NAME BFVROpenXRScopeOverlayLayerTests
+    COMMAND BFVROpenXRScopeOverlayLayerTests)
   add_test(
     NAME BFVRWorldCrosshairMathTests
     COMMAND BFVRWorldCrosshairMathTests)

@@ -12,6 +12,7 @@
 #include "client/MainMenuOverlay.h"
 #include "client/MenuPointerOverlay.h"
 #include "client/MountedWeaponAimResolver.h"
+#include "client/ScopeViewOverlay.h"
 #include "client/StartupMenuPresentation.h"
 #include "client/D3D8WeaponMotionOverlay.h"
 #include "client/WeaponAimOverlay.h"
@@ -2267,6 +2268,8 @@ DWORD WINAPI RunProbe(void*)
         bfvr::StartWeaponAimOverlay(
             reinterpret_cast<void*>(g_gameImageBegin),
             AppendPresentationLog);
+        bfvr::StartScopeViewOverlay(
+            reinterpret_cast<void*>(g_gameImageBegin), AppendPresentationLog);
         bfvr::StartCrosshairOverlay(
             reinterpret_cast<void*>(g_gameImageBegin),
             AppendPresentationLog);
@@ -2366,6 +2369,7 @@ DWORD WINAPI RunProbe(void*)
     if (IsPresentationMode() && !g_offlinePresentation)
     {
         bfvr::StopCrosshairOverlay();
+        bfvr::StopScopeViewOverlay();
         bfvr::StopWeaponAimOverlay();
         bfvr::StopD3D8WeaponMotionOverlay();
         bfvr::StopMenuPointerOverlay();

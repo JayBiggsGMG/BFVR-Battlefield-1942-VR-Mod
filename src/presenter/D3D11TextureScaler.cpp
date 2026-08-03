@@ -3,6 +3,7 @@
 #include <d3dcompiler.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdarg>
 #include <cstring>
 #include <cstdio>
@@ -38,6 +39,9 @@ Texture2D sourceTexture : register(t0);
 #if BFVR_AMBIENT_OCCLUSION
 Texture2D ambientOcclusionTexture : register(t1);
 #endif
+#if BFVR_BLOOM
+Texture2D bloomTexture : register(t2);
+#endif
 SamplerState sourceSampler : register(s0);
 cbuffer Configuration : register(b0)
 {
@@ -67,6 +71,10 @@ float4 main(float4 position : SV_Position, float2 texcoord : TEXCOORD0) : SV_Tar
         sourceSampler, texcoord, 0.0).r;
     linearColor *= lerp(1.0, ao, ambientOcclusionIntensity);
 #endif
+#if BFVR_BLOOM
+    linearColor += bloomTexture.SampleLevel(
+        sourceSampler, texcoord, 0.0).rgb * bloomIntensity;
+#endif
     return float4(linearColor, encoded.a);
 }
 )";
@@ -75,6 +83,9 @@ constexpr char kFxaaPixelShader[] = R"(
 Texture2D sourceTexture : register(t0);
 #if BFVR_AMBIENT_OCCLUSION
 Texture2D ambientOcclusionTexture : register(t1);
+#endif
+#if BFVR_BLOOM
+Texture2D bloomTexture : register(t2);
 #endif
 SamplerState sourceSampler : register(s0);
 cbuffer Configuration : register(b0)
@@ -207,6 +218,10 @@ float4 main(float4 position : SV_Position, float2 texcoord : TEXCOORD0) : SV_Tar
         sourceSampler, texcoord, 0.0).r;
     linearColor *= lerp(1.0, ao, ambientOcclusionIntensity);
 #endif
+#if BFVR_BLOOM
+    linearColor += bloomTexture.SampleLevel(
+        sourceSampler, texcoord, 0.0).rgb * bloomIntensity;
+#endif
     return float4(linearColor, center.a);
 }
 )";
@@ -231,34 +246,46 @@ float3 SrgbToLinear(float3 color)
     return lerp(high, low, step(color, 0.04045));
 }
 
+float3 ExtractBloom(float3 linearColor)
+{
+    const float luminance = dot(linearColor, float3(0.2126, 0.7152, 0.0722));
+    // LDR BF1942 has no emissive/HDR values above white. A fixed soft knee
+    // avoids an abrupt halo boundary while retaining the brightness control.
+    const float brightWeight = smoothstep(
+        max(bloomThreshold - 0.10, 0.0),
+        min(bloomThreshold + 0.10, 1.0),
+        luminance);
+    return linearColor * brightWeight;
+}
+
 float4 main(float4 position : SV_Position, float2 texcoord : TEXCOORD0) : SV_Target
 {
     uint width;
     uint height;
     sourceTexture.GetDimensions(width, height);
     const float2 texel = 1.0 / float2(width, height);
-    const float2 offsets[5] = {
-        float2(0.0, 0.0),
+    // Four bilinear taps cover the source footprint of one quarter-resolution
+    // output pixel. Extract each tap before averaging so a small bright object
+    // is not erased by the downsample itself.
+    const float2 offsets[4] = {
         float2(-1.0, -1.0),
         float2(1.0, -1.0),
         float2(-1.0, 1.0),
         float2(1.0, 1.0)};
-    float3 encoded = float3(0.0, 0.0, 0.0);
+    float3 bloom = float3(0.0, 0.0, 0.0);
     [unroll]
-    for (uint index = 0; index < 5; ++index)
+    for (uint index = 0; index < 4; ++index)
     {
-        encoded += sourceTexture.SampleLevel(
+        const float3 encoded = sourceTexture.SampleLevel(
             sourceSampler,
             texcoord + offsets[index] * texel,
             0.0).rgb;
+        const float3 linearColor = sourceAlreadyLinear > 0.5
+            ? encoded
+            : SrgbToLinear(encoded);
+        bloom += ExtractBloom(linearColor);
     }
-    const float3 linearColor = sourceAlreadyLinear > 0.5
-        ? encoded * 0.2
-        : SrgbToLinear(encoded * 0.2);
-    const float luminance = dot(linearColor, float3(0.2126, 0.7152, 0.0722));
-    const float range = max(1.0 - bloomThreshold, 0.0001);
-    const float brightWeight = saturate((luminance - bloomThreshold) / range);
-    return float4(linearColor * brightWeight, 1.0);
+    return float4(bloom * 0.25, 1.0);
 }
 )";
 
@@ -285,6 +312,8 @@ float4 main(float4 position : SV_Position, float2 texcoord : TEXCOORD0) : SV_Tar
     color += bloomTexture.SampleLevel(sourceSampler, texcoord - step * 2.0, 0.0).rgb * 0.1216216;
     color += bloomTexture.SampleLevel(sourceSampler, texcoord + step * 3.0, 0.0).rgb * 0.054054;
     color += bloomTexture.SampleLevel(sourceSampler, texcoord - step * 3.0, 0.0).rgb * 0.054054;
+    color += bloomTexture.SampleLevel(sourceSampler, texcoord + step * 4.0, 0.0).rgb * 0.016216;
+    color += bloomTexture.SampleLevel(sourceSampler, texcoord - step * 4.0, 0.0).rgb * 0.016216;
     return float4(color, 1.0);
 }
 )";
@@ -312,6 +341,8 @@ float4 main(float4 position : SV_Position, float2 texcoord : TEXCOORD0) : SV_Tar
     color += bloomTexture.SampleLevel(sourceSampler, texcoord - step * 2.0, 0.0).rgb * 0.1216216;
     color += bloomTexture.SampleLevel(sourceSampler, texcoord + step * 3.0, 0.0).rgb * 0.054054;
     color += bloomTexture.SampleLevel(sourceSampler, texcoord - step * 3.0, 0.0).rgb * 0.054054;
+    color += bloomTexture.SampleLevel(sourceSampler, texcoord + step * 4.0, 0.0).rgb * 0.016216;
+    color += bloomTexture.SampleLevel(sourceSampler, texcoord - step * 4.0, 0.0).rgb * 0.016216;
     return float4(color, 1.0);
 }
 )";
@@ -322,10 +353,12 @@ bool CompileShader(
     ID3DBlob** bytecode,
     bfvr::shared::SharedTextureLogCallback logCallback,
     void* logContext,
-    bool ambientOcclusionVariant = false)
+    bool ambientOcclusionVariant = false,
+    bool bloomVariant = false)
 {
     const D3D_SHADER_MACRO defines[] = {
         {"BFVR_AMBIENT_OCCLUSION", ambientOcclusionVariant ? "1" : "0"},
+        {"BFVR_BLOOM", bloomVariant ? "1" : "0"},
         {nullptr, nullptr}};
     ID3DBlob* errors = nullptr;
     const HRESULT result = D3DCompile(
@@ -456,7 +489,7 @@ bool D3D11TextureScaler::Initialize(
         pixelBytecode = nullptr;
     }
 
-    if (enableAmbientOcclusion)
+    if (enableAmbientOcclusion || enableBloom)
     {
         if (SUCCEEDED(result) &&
             CompileShader(
@@ -465,13 +498,14 @@ bool D3D11TextureScaler::Initialize(
                 &pixelBytecode,
                 logCallback_,
                 logContext_,
-                true))
+                enableAmbientOcclusion,
+                enableBloom))
         {
             result = device->CreatePixelShader(
                 pixelBytecode->GetBufferPointer(),
                 pixelBytecode->GetBufferSize(),
                 nullptr,
-                &aoColorPixelShader_);
+                &compositeColorPixelShader_);
         }
         if (pixelBytecode != nullptr)
         {
@@ -485,13 +519,14 @@ bool D3D11TextureScaler::Initialize(
                 &pixelBytecode,
                 logCallback_,
                 logContext_,
-                true))
+                enableAmbientOcclusion,
+                enableBloom))
         {
             result = device->CreatePixelShader(
                 pixelBytecode->GetBufferPointer(),
                 pixelBytecode->GetBufferSize(),
                 nullptr,
-                &aoFxaaPixelShader_);
+                &compositeFxaaPixelShader_);
         }
         if (pixelBytecode != nullptr)
         {
@@ -583,17 +618,44 @@ bool D3D11TextureScaler::Initialize(
     {
         result = device->CreateSamplerState(&samplerDescription, &sampler_);
     }
+    if (enableBloom)
+    {
+        D3D11_QUERY_DESC queryDescription = {};
+        queryDescription.Query = D3D11_QUERY_TIMESTAMP_DISJOINT;
+        result = SUCCEEDED(result)
+            ? device->CreateQuery(&queryDescription, &bloomDisjointQuery_)
+            : result;
+        queryDescription.Query = D3D11_QUERY_TIMESTAMP;
+        for (std::size_t eye = 0;
+             eye < bloomTimestampStarts_.size() && SUCCEEDED(result);
+             ++eye)
+        {
+            result = device->CreateQuery(
+                &queryDescription,
+                &bloomTimestampStarts_[eye]);
+            result = SUCCEEDED(result)
+                ? device->CreateQuery(
+                    &queryDescription,
+                    &bloomTimestampEnds_[eye])
+                : result;
+        }
+    }
     if (FAILED(result) ||
         vertexShader_ == nullptr ||
         colorPixelShader_ == nullptr ||
         fxaaPixelShader_ == nullptr ||
-        (enableAmbientOcclusion &&
-            (aoColorPixelShader_ == nullptr ||
-             aoFxaaPixelShader_ == nullptr)) ||
+        ((enableAmbientOcclusion || enableBloom) &&
+            (compositeColorPixelShader_ == nullptr ||
+             compositeFxaaPixelShader_ == nullptr)) ||
         (enableBloom &&
             (bloomDownsamplePixelShader_ == nullptr ||
              bloomBlurHorizontalPixelShader_ == nullptr ||
-             bloomBlurVerticalPixelShader_ == nullptr)) ||
+             bloomBlurVerticalPixelShader_ == nullptr ||
+             bloomDisjointQuery_ == nullptr ||
+             bloomTimestampStarts_[0] == nullptr ||
+             bloomTimestampStarts_[1] == nullptr ||
+             bloomTimestampEnds_[0] == nullptr ||
+             bloomTimestampEnds_[1] == nullptr)) ||
         configurationBuffer_ == nullptr ||
         sampler_ == nullptr)
     {
@@ -606,12 +668,20 @@ bool D3D11TextureScaler::Initialize(
 
     context_ = context;
     context_->AddRef();
-    WriteLog(
-        enableAmbientOcclusion
-            ? L"D3D11 texture scaler initialized with separate default and AO-composite shaders, aspect-fit sampling, legacy-sRGB transfer correction, and world-only FXAA; bloom shaders are not compiled."
-            : enableBloom
-            ? L"D3D11 texture scaler initialized with aspect-fit sampling, legacy-sRGB transfer correction, world-only FXAA (subpixel=0.75 edge=0.166 min=0.0833), and half-resolution bloom."
-            : L"D3D11 texture scaler initialized with aspect-fit sampling, legacy-sRGB transfer correction, and world-only FXAA (subpixel=0.75 edge=0.166 min=0.0833); AO and bloom shaders are not compiled.");
+    if (enableBloom)
+    {
+        WriteLog(
+            enableAmbientOcclusion
+                ? L"D3D11 texture scaler initialized with independent AO and quarter-resolution soft-knee bloom composite inputs, legacy-sRGB transfer correction, world-only FXAA, and isolated bloom GPU timestamps."
+                : L"D3D11 texture scaler initialized with quarter-resolution soft-knee bloom, legacy-sRGB transfer correction, world-only FXAA (subpixel=0.75 edge=0.166 min=0.0833), and isolated bloom GPU timestamps.");
+    }
+    else
+    {
+        WriteLog(
+            enableAmbientOcclusion
+                ? L"D3D11 texture scaler initialized with separate default and AO-composite shaders, aspect-fit sampling, legacy-sRGB transfer correction, and world-only FXAA; bloom shaders are not compiled."
+                : L"D3D11 texture scaler initialized with aspect-fit sampling, legacy-sRGB transfer correction, and world-only FXAA (subpixel=0.75 edge=0.166 min=0.0833); AO and bloom shaders are not compiled.");
+    }
     return true;
 }
 
@@ -644,7 +714,7 @@ bool D3D11TextureScaler::ScaleAspectFit(
     }
 
     bloomThreshold = std::clamp(bloomThreshold, 0.0F, 1.0F);
-    bloomIntensity = std::clamp(bloomIntensity, 0.0F, 1.0F);
+    bloomIntensity = std::clamp(bloomIntensity, 0.0F, 2.0F);
     ambientOcclusionIntensity = std::clamp(
         ambientOcclusionIntensity,
         0.0F,
@@ -655,10 +725,12 @@ bool D3D11TextureScaler::ScaleAspectFit(
     }
     const bool applyAmbientOcclusion = ambientOcclusionIntensity > 0.0F;
     if (applyAmbientOcclusion &&
-        (aoColorPixelShader_ == nullptr || aoFxaaPixelShader_ == nullptr))
+        (compositeColorPixelShader_ == nullptr ||
+         compositeFxaaPixelShader_ == nullptr))
     {
         return false;
     }
+    applyBloom = applyBloom && bloomIntensity > 0.0F;
     if (applyBloom &&
         (!EnsureBloomResources(sourceWidth, sourceHeight) ||
          !BuildBloom(sourceView, sourceAlreadyLinear, bloomThreshold)))
@@ -700,21 +772,24 @@ bool D3D11TextureScaler::ScaleAspectFit(
         applyBloom ? 1.0F / static_cast<float>(bloomWidth_) : 0.0F,
         applyBloom ? 1.0F / static_cast<float>(bloomHeight_) : 0.0F);
     context_->PSSetShader(
-        applyAmbientOcclusion
-            ? applyAntialiasing ? aoFxaaPixelShader_ : aoColorPixelShader_
+        applyAmbientOcclusion || applyBloom
+            ? applyAntialiasing
+                ? compositeFxaaPixelShader_
+                : compositeColorPixelShader_
             : applyAntialiasing ? fxaaPixelShader_ : colorPixelShader_,
         nullptr,
         0);
     context_->PSSetConstantBuffers(0, 1, &configurationBuffer_);
     context_->PSSetSamplers(0, 1, &sampler_);
-    ID3D11ShaderResourceView* sourceViews[2] = {
+    ID3D11ShaderResourceView* sourceViews[3] = {
         sourceView,
-        ambientOcclusionView};
-    context_->PSSetShaderResources(0, 2, sourceViews);
+        ambientOcclusionView,
+        applyBloom ? bloomViews_[0] : nullptr};
+    context_->PSSetShaderResources(0, 3, sourceViews);
     context_->Draw(3, 0);
 
-    ID3D11ShaderResourceView* nullViews[2] = {};
-    context_->PSSetShaderResources(0, 2, nullViews);
+    ID3D11ShaderResourceView* nullViews[3] = {};
+    context_->PSSetShaderResources(0, 3, nullViews);
     ID3D11RenderTargetView* nullTarget = nullptr;
     context_->OMSetRenderTargets(1, &nullTarget, nullptr);
     return true;
@@ -722,8 +797,8 @@ bool D3D11TextureScaler::ScaleAspectFit(
 
 bool D3D11TextureScaler::EnsureBloomResources(UINT sourceWidth, UINT sourceHeight)
 {
-    const UINT requiredWidth = std::max<UINT>(1, (sourceWidth + 1) / 2);
-    const UINT requiredHeight = std::max<UINT>(1, (sourceHeight + 1) / 2);
+    const UINT requiredWidth = std::max<UINT>(1, (sourceWidth + 3) / 4);
+    const UINT requiredHeight = std::max<UINT>(1, (sourceHeight + 3) / 4);
     if (bloomWidth_ == requiredWidth &&
         bloomHeight_ == requiredHeight &&
         bloomTextures_[0] != nullptr && bloomTextures_[1] != nullptr &&
@@ -768,7 +843,7 @@ bool D3D11TextureScaler::EnsureBloomResources(UINT sourceWidth, UINT sourceHeigh
         if (FAILED(result))
         {
             WriteLog(
-                L"D3D11 texture scaler could not allocate half-resolution bloom targets %ux%u (HRESULT=0x%08lX).",
+                L"D3D11 texture scaler could not allocate quarter-resolution bloom targets %ux%u (HRESULT=0x%08lX).",
                 requiredWidth,
                 requiredHeight,
                 static_cast<unsigned long>(result));
@@ -779,7 +854,7 @@ bool D3D11TextureScaler::EnsureBloomResources(UINT sourceWidth, UINT sourceHeigh
     bloomWidth_ = requiredWidth;
     bloomHeight_ = requiredHeight;
     WriteLog(
-        L"D3D11 texture scaler allocated two half-resolution HDR bloom targets (%ux%u).",
+        L"D3D11 texture scaler allocated two quarter-resolution HDR bloom targets (%ux%u).",
         bloomWidth_,
         bloomHeight_);
     return true;
@@ -794,6 +869,11 @@ bool D3D11TextureScaler::BuildBloom(
     {
         return false;
     }
+    const std::size_t timingEye = bloomFrameEyeCount_;
+    const bool timeThisEye =
+        bloomFrameTimingActive_ && timingEye < bloomTimestampStarts_.size();
+    if (timeThisEye)
+        context_->End(bloomTimestampStarts_[timingEye]);
 
     const D3D11_VIEWPORT bloomViewport = {
         0.0F,
@@ -837,12 +917,12 @@ bool D3D11TextureScaler::BuildBloom(
         return true;
     };
 
-    return drawBloomPass(
-               sourceView,
-               bloomTargets_[0],
-               bloomDownsamplePixelShader_,
-               sourceAlreadyLinear,
-               bloomThreshold) &&
+    const bool built = drawBloomPass(
+            sourceView,
+            bloomTargets_[0],
+            bloomDownsamplePixelShader_,
+            sourceAlreadyLinear,
+            bloomThreshold) &&
         drawBloomPass(
             bloomViews_[0],
             bloomTargets_[1],
@@ -855,6 +935,88 @@ bool D3D11TextureScaler::BuildBloom(
             bloomBlurVerticalPixelShader_,
             true,
             bloomThreshold);
+    if (timeThisEye)
+    {
+        context_->End(bloomTimestampEnds_[timingEye]);
+        bloomFrameEyesBuilt_[timingEye] = built;
+        ++bloomFrameEyeCount_;
+    }
+    return built;
+}
+
+bool D3D11TextureScaler::BeginBloomFrame()
+{
+    if (context_ == nullptr || bloomDisjointQuery_ == nullptr ||
+        bloomFrameTimingActive_)
+    {
+        return false;
+    }
+    context_->Begin(bloomDisjointQuery_);
+    bloomFrameEyesBuilt_ = {};
+    bloomFrameEyeCount_ = 0;
+    bloomFrameTimingActive_ = true;
+    return true;
+}
+
+void D3D11TextureScaler::EndBloomFrame()
+{
+    if (context_ != nullptr && bloomDisjointQuery_ != nullptr &&
+        bloomFrameTimingActive_)
+    {
+        context_->End(bloomDisjointQuery_);
+    }
+}
+
+void D3D11TextureScaler::CollectBloomFrameTimings()
+{
+    if (context_ == nullptr || !bloomFrameTimingActive_)
+        return;
+    bloomFrameTimingActive_ = false;
+
+    D3D11_QUERY_DATA_TIMESTAMP_DISJOINT disjoint = {};
+    if (context_->GetData(
+            bloomDisjointQuery_,
+            &disjoint,
+            sizeof(disjoint),
+            D3D11_ASYNC_GETDATA_DONOTFLUSH) != S_OK ||
+        disjoint.Disjoint || disjoint.Frequency == 0)
+    {
+        return;
+    }
+    std::array<double, 2> eyeMilliseconds = {};
+    std::array<bool, 2> eyeValid = {};
+    for (std::size_t eye = 0; eye < bloomTimestampStarts_.size(); ++eye)
+    {
+        if (!bloomFrameEyesBuilt_[eye])
+            continue;
+        UINT64 started = 0;
+        UINT64 ended = 0;
+        if (context_->GetData(
+                bloomTimestampStarts_[eye],
+                &started,
+                sizeof(started),
+                D3D11_ASYNC_GETDATA_DONOTFLUSH) == S_OK &&
+            context_->GetData(
+                bloomTimestampEnds_[eye],
+                &ended,
+                sizeof(ended),
+                D3D11_ASYNC_GETDATA_DONOTFLUSH) == S_OK &&
+            ended >= started)
+        {
+            eyeMilliseconds[eye] =
+                static_cast<double>(ended - started) * 1000.0 /
+                static_cast<double>(disjoint.Frequency);
+            eyeValid[eye] = true;
+            if (bloomGpuMilliseconds_[eye].size() < 8192)
+                bloomGpuMilliseconds_[eye].push_back(eyeMilliseconds[eye]);
+        }
+    }
+    if (eyeValid[0] && eyeValid[1] &&
+        bloomStereoGpuMilliseconds_.size() < 8192)
+    {
+        bloomStereoGpuMilliseconds_.push_back(
+            eyeMilliseconds[0] + eyeMilliseconds[1]);
+    }
 }
 
 void D3D11TextureScaler::ReleaseBloomResources()
@@ -907,9 +1069,60 @@ void D3D11TextureScaler::UpdateConfiguration(
         0);
 }
 
+void D3D11TextureScaler::ReportBloomTimings()
+{
+    if (bloomTimingsReported_)
+        return;
+    bloomTimingsReported_ = true;
+    auto report = [this](
+                      const wchar_t* label,
+                      const std::vector<double>& samples)
+    {
+        if (samples.empty())
+            return;
+        std::vector<double> sorted = samples;
+        std::sort(sorted.begin(), sorted.end());
+        const std::size_t p95Index = static_cast<std::size_t>(
+            std::ceil(static_cast<double>(sorted.size()) * 0.95)) - 1;
+        WriteLog(
+            L"D3D11 bloom GPU summary %s samples=%zu median=%.4f ms p95=%.4f ms max=%.4f ms.",
+            label,
+            sorted.size(),
+            sorted[sorted.size() / 2],
+            sorted[(std::min)(p95Index, sorted.size() - 1)],
+            sorted.back());
+    };
+    report(L"left extract+blur", bloomGpuMilliseconds_[0]);
+    report(L"right extract+blur", bloomGpuMilliseconds_[1]);
+    report(L"stereo extract+blur", bloomStereoGpuMilliseconds_);
+}
+
 void D3D11TextureScaler::Shutdown()
 {
+    ReportBloomTimings();
+    bloomFrameTimingActive_ = false;
     ReleaseBloomResources();
+    for (ID3D11Query*& query : bloomTimestampEnds_)
+    {
+        if (query != nullptr)
+        {
+            query->Release();
+            query = nullptr;
+        }
+    }
+    for (ID3D11Query*& query : bloomTimestampStarts_)
+    {
+        if (query != nullptr)
+        {
+            query->Release();
+            query = nullptr;
+        }
+    }
+    if (bloomDisjointQuery_ != nullptr)
+    {
+        bloomDisjointQuery_->Release();
+        bloomDisjointQuery_ = nullptr;
+    }
     if (sampler_ != nullptr)
     {
         sampler_->Release();
@@ -925,15 +1138,15 @@ void D3D11TextureScaler::Shutdown()
         fxaaPixelShader_->Release();
         fxaaPixelShader_ = nullptr;
     }
-    if (aoFxaaPixelShader_ != nullptr)
+    if (compositeFxaaPixelShader_ != nullptr)
     {
-        aoFxaaPixelShader_->Release();
-        aoFxaaPixelShader_ = nullptr;
+        compositeFxaaPixelShader_->Release();
+        compositeFxaaPixelShader_ = nullptr;
     }
-    if (aoColorPixelShader_ != nullptr)
+    if (compositeColorPixelShader_ != nullptr)
     {
-        aoColorPixelShader_->Release();
-        aoColorPixelShader_ = nullptr;
+        compositeColorPixelShader_->Release();
+        compositeColorPixelShader_ = nullptr;
     }
     if (bloomBlurVerticalPixelShader_ != nullptr)
     {
@@ -970,6 +1183,13 @@ void D3D11TextureScaler::Shutdown()
         device_->Release();
         device_ = nullptr;
     }
+    bloomGpuMilliseconds_ = {};
+    bloomStereoGpuMilliseconds_.clear();
+    bloomFrameEyesBuilt_ = {};
+    bloomFrameEyeCount_ = 0;
+    bloomTimingsReported_ = false;
+    logCallback_ = nullptr;
+    logContext_ = nullptr;
 }
 
 void D3D11TextureScaler::WriteLog(const wchar_t* format, ...) const

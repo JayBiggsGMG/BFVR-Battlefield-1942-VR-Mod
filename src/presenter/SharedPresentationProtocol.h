@@ -11,7 +11,7 @@ namespace bfvr::shared
 using SharedTextureLogCallback = void (*)(void* context, const wchar_t* message);
 
 constexpr DWORD kProtocolMagic = 0x52564642; // "BFVR"
-constexpr DWORD kProtocolVersion = 11;
+constexpr DWORD kProtocolVersion = 12;
 constexpr std::size_t kTextureCount = 3;
 constexpr std::size_t kDepthTextureCount = 2;
 constexpr std::size_t kSharedNameCapacity = 128;
@@ -19,6 +19,7 @@ constexpr DWORD kProducerFlagRuntimeTimedRender = 0x1;
 constexpr DWORD kProducerFlagAmbientOcclusionRequested = 0x2;
 constexpr LONG kFrameOverlayBackToGameVisible = 0x1;
 constexpr LONG kFrameOverlayBackToGameHovered = 0x2;
+constexpr LONG kFramePresentationEyeFillingScope = 0x1;
 
 constexpr DWORD kControllerSampleFlagSessionFocused = 0x1;
 constexpr DWORD kControllerHandFlagAimActive = 0x1;
@@ -234,6 +235,10 @@ struct ControlBlock
     // Published by the x86 producer before frameSequence. These flags control
     // only presenter-owned pixels composited into the copied Ref2 UI texture.
     volatile LONG frameOverlayFlags = 0;
+    // Published before frameSequence. A verified native useScope view promotes
+    // Ref2 UI from the ordinary panel to centred eye-exclusive VIEW quads that
+    // cover both OpenXR eye frusta.
+    volatile LONG framePresentationFlags = 0;
     // Published by the x86 camera owner. The presenter mirrors this actual
     // seat-local state into the utility strip; it never assumes a toggle was
     // accepted merely because the user released the UI button.

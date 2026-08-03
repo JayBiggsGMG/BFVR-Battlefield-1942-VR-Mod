@@ -117,7 +117,9 @@ following one-pass infantry layout for a normal local/offline play test:
 - Right stick: analogue smooth turn left-right; click for the native contextual
   vehicle hatch/dive-up action; flick up once to submit jump and parachute
   together; flick down once to toggle crouch on or off.
-- Right trigger / grip: fire / alt-fire.
+- Right trigger: fire. Right grip supplies BF1942's native alt-fire/ADS action.
+  BFVR adds no second latch; infantry, vehicle, and mounted semantics remain
+  owned by the game and unchanged by the scope-view feature.
 - Left trigger: use (hold).
 - Right A: dedicated Quick Menu hold; it never submits jump/action. Hold A to
   show the stabilized 0.266 m right-hand panel, point with the right aim ray,
@@ -195,6 +197,28 @@ caller, owner, matrix, focus, or tracking state forwards the original shot
 unchanged and records a bounded reason. The BAR and Colt have produced live
 adjusted directions; a fixed-range guarded muzzle/impact measurement remains
 pending.
+
+For an exact local handweapon whose native template enables `useScope`,
+BF1942's native zoom state keeps the HMD-positioned stereo view aimed along the
+tracked gun basis, restores that weapon's configured relative FOV, and presents
+the native scope raster as an eye-filling head-locked overlay. BFVR calibrates
+the accepted right-controller aim against the exact native-arm gun basis at
+entry, then continues reading that tracked aim while BF1942 hides its normal
+first-person arm update during native scope view. A transient tracking miss
+retains the last valid gun direction rather than dropping magnification or the
+overlay. When primary two-hand support was already established at entry, scoped
+camera direction also reuses that exact authored support relation and bounded
+fixed-pivot steering with fresh left-grip motion. Releasing or losing the left
+grip returns view direction to right aim; this does not create a second grip or
+write native grip state. The exact alive-local weapon and soldier lifetime also
+share this visible scoped gun basis with `WeaponFire_Core` whenever BF1942's
+hidden native-arm publication is stale. That fallback replaces shot direction
+but preserves BF1942's native projectile origin; native weapon/barrel offsets,
+spread, cadence, projectile creation, and networking remain authoritative.
+Zoom-only weapons without
+`useScope` receive no BFVR camera, FOV, or overlay policy. Scope exit immediately
+returns camera direction and firing to their normal behavior; grips, arms,
+elbows, IK, and recoil are not filtered by this view.
 
 The VR replay applies only a rigid controller attachment to the classified
 weapon family: no viewmodel scale or perspective morph and no artificial
@@ -382,6 +406,16 @@ world conversion with and without the AO sample:
   --width 1872 --height 2016 --iterations 64
 ```
 
+Brightness bloom has a separate x64 hardware control. It renders a small
+white source over a dark world, proves that the halo changes pixels outside
+the source, and reports the GPU time for quarter-resolution extraction plus
+the horizontal/vertical blur:
+
+```powershell
+.\build\bfvr-presenter-x64\Release\BFVRBloomGpuProbe.exe `
+  --width 1872 --height 2016 --iterations 64
+```
+
 Add `--ambient-occlusion` to `BFVRD3D8To9SharedSurfaceProbe` for the complete
 no-game INTZ -> packed D3D9 shared depth -> x64 AO -> world-composite control.
 The ordinary invocation above remains the exact no-AO regression.
@@ -402,6 +436,18 @@ when its projected footprint becomes subpixel. Native resolution avoids
 stretching a half-resolution result through the ordinary color sampler. The AO
 pass explicitly installs its complete viewport/scissor/blend/depth/raster
 state, and packed-depth transport is unchanged.
+
+Live bloom is a new default-off, world-only experiment. Set
+`BFVR_OPENXR_BLOOM=1` to request it; the comparison launcher currently does
+this explicitly. `BFVR_OPENXR_BLOOM_THRESHOLD` defaults to `0.55` in linear
+color and accepts `0.0..1.0`; `BFVR_OPENXR_BLOOM_INTENSITY` defaults to `0.35`
+and accepts `0.0..2.0`. Set only `BFVR_OPENXR_BLOOM=0` for a matched A/B.
+The implementation extracts each source sample before quarter-resolution
+downsampling, applies a fixed soft knee and separable blur, then actually binds
+and adds the result during the linear world composite. Ref2 UI never enters
+the extraction or composite. AO uses an independent texture input, and FXAA's
+accepted shader route and controls are unchanged. Enabled runs report isolated
+per-eye and stereo extract-plus-blur GPU timing summaries during shutdown.
 
 The live no-headset control combines the normal observer with the shared
 transport request:
@@ -494,9 +540,10 @@ The x64 conversion stage follows OpenXR's linear-composition contract. It
 prefers a BGRA8 sRGB swapchain and converts BF1942's legacy encoded R10/R16 RGB
 to linear before output; BGRA8 UNORM remains a linear-data fallback. Its
 world-eye path applies FXAA while the Ref2 UI remains unfiltered. Bloom is
-fully disabled: BFVR does not compile bloom shaders, allocate bloom targets,
-issue bloom passes, or bind a bloom texture, and environment variables cannot
-re-enable it.
+default-off. When explicitly enabled, only the world eyes compile and execute
+the independent quarter-resolution brightness extraction/blur and bind its
+HDR result at the final linear composite; the default path still compiles no
+bloom shaders and allocates no bloom resources.
 
 The 2026-07-24 Oculus Link validation passed both synthetic modes on the exact
 runtime-selected adapter. The user saw the deliberately different per-eye

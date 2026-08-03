@@ -1045,7 +1045,7 @@ private:
         if (InterlockedCompareExchange(&firstEligibleFrameLogged, 1, 0) == 0)
         {
             WriteLog(
-                L"Controller input overlay accepted its first fresh focused local frame. Infantry layout remains: left stick move; right stick smooth-turn, up jump+parachute, down crouch toggle. Non-default surface control objects use analogue left throttle/steer plus complementary right-stick and mirrored right-grip-motion turret/station aim; VCAir objects use analogue left throttle/roll and right yaw/pitch (stick up dives). Stick clicks retain vehicle pitch hatch/dive actions. Right trigger fire; right grip alt-fire; left trigger use; A Quick Menu; B reload; X prone; Y native paired scoreboard; left grip off-hand support. Unknown control transitions enable no vehicle-only stick mapping. Logical actions remain independent of configurable keyboard/mouse bindings.");
+                L"Controller input overlay accepted its first fresh focused local frame. Infantry layout remains: left stick move; right stick smooth-turn, up jump+parachute, down crouch toggle. Non-default surface control objects use analogue left throttle/steer plus complementary right-stick and mirrored right-grip-motion turret/station aim; VCAir objects use analogue left throttle/roll and right yaw/pitch (stick up dives). Stick clicks retain vehicle pitch hatch/dive actions. Right trigger fire; right grip supplies native alt-fire input without imposing BFVR toggle/hold semantics; left trigger use; A Quick Menu; B reload; X prone; Y native paired scoreboard; left grip off-hand support. Unknown control transitions enable no vehicle-only stick mapping. Logical actions remain independent of configurable keyboard/mouse bindings.");
         }
     }
 

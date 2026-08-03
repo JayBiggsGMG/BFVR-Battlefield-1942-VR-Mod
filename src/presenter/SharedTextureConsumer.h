@@ -97,8 +97,8 @@ private:
     bool ambientOcclusionEnabled_ = false;
     float ambientOcclusionIntensity_ = 1.0F;
     LONG ambientOcclusionFrameFailures_ = 0;
-    float worldBloomThreshold_ = 0.0F;
-    float worldBloomIntensity_ = 0.0F;
+    float worldBloomThreshold_ = 0.55F;
+    float worldBloomIntensity_ = 0.35F;
     std::array<Texture, kTextureCount> textures_ = {};
     std::array<DepthTexture, kDepthTextureCount> depthTextures_ = {};
     SharedTextureLogCallback logCallback_ = nullptr;

@@ -1,0 +1,344 @@
+#include "stereo/ScopeViewMath.h"
+
+#include <algorithm>
+#include <array>
+#include <cmath>
+
+namespace
+{
+using bfvr::stereo::Matrix4;
+
+constexpr float kPi = 3.14159265358979323846F;
+constexpr float kAffineTolerance = 0.001F;
+constexpr float kOrthonormalTolerance = 0.02F;
+
+bool IsFinite(const Matrix4& matrix) noexcept
+{
+    for (const auto& row : matrix.values)
+    {
+        for (const float value : row)
+        {
+            if (!std::isfinite(value))
+            {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+bool IsRigidAffine(const Matrix4& matrix) noexcept
+{
+    if (!IsFinite(matrix) ||
+        std::fabs(matrix.values[0][3]) > kAffineTolerance ||
+        std::fabs(matrix.values[1][3]) > kAffineTolerance ||
+        std::fabs(matrix.values[2][3]) > kAffineTolerance ||
+        std::fabs(matrix.values[3][3] - 1.0F) > kAffineTolerance)
+    {
+        return false;
+    }
+
+    for (std::size_t row = 0; row < 3; ++row)
+    {
+        float lengthSquared = 0.0F;
+        for (std::size_t column = 0; column < 3; ++column)
+        {
+            lengthSquared +=
+                matrix.values[row][column] * matrix.values[row][column];
+        }
+        if (std::fabs(lengthSquared - 1.0F) > kOrthonormalTolerance)
+        {
+            return false;
+        }
+        for (std::size_t other = row + 1; other < 3; ++other)
+        {
+            float dot = 0.0F;
+            for (std::size_t column = 0; column < 3; ++column)
+            {
+                dot += matrix.values[row][column] *
+                    matrix.values[other][column];
+            }
+            if (std::fabs(dot) > kOrthonormalTolerance)
+            {
+                return false;
+            }
+        }
+    }
+
+    const float determinant =
+        matrix.values[0][0] *
+            (matrix.values[1][1] * matrix.values[2][2] -
+             matrix.values[1][2] * matrix.values[2][1]) -
+        matrix.values[0][1] *
+            (matrix.values[1][0] * matrix.values[2][2] -
+             matrix.values[1][2] * matrix.values[2][0]) +
+        matrix.values[0][2] *
+            (matrix.values[1][0] * matrix.values[2][1] -
+             matrix.values[1][1] * matrix.values[2][0]);
+    return std::isfinite(determinant) && determinant > 0.98F &&
+        determinant < 1.02F;
+}
+
+Matrix4 MultiplyMatrices(
+    const Matrix4& left,
+    const Matrix4& right) noexcept
+{
+    Matrix4 result = {};
+    for (std::size_t row = 0; row < 4; ++row)
+    {
+        for (std::size_t column = 0; column < 4; ++column)
+        {
+            for (std::size_t inner = 0; inner < 4; ++inner)
+            {
+                result.values[row][column] +=
+                    left.values[row][inner] * right.values[inner][column];
+            }
+        }
+    }
+    return result;
+}
+
+std::optional<Matrix4> InvertRigidAffine(const Matrix4& matrix) noexcept
+{
+    if (!IsRigidAffine(matrix))
+    {
+        return std::nullopt;
+    }
+    Matrix4 inverse = {};
+    for (std::size_t row = 0; row < 3; ++row)
+    {
+        for (std::size_t column = 0; column < 3; ++column)
+        {
+            inverse.values[row][column] = matrix.values[column][row];
+        }
+    }
+    for (std::size_t column = 0; column < 3; ++column)
+    {
+        inverse.values[3][column] = -(
+            matrix.values[3][0] * inverse.values[0][column] +
+            matrix.values[3][1] * inverse.values[1][column] +
+            matrix.values[3][2] * inverse.values[2][column]);
+    }
+    inverse.values[3][3] = 1.0F;
+    return IsRigidAffine(inverse)
+        ? std::optional<Matrix4>(inverse)
+        : std::nullopt;
+}
+} // namespace
+
+namespace bfvr::stereo
+{
+
+ScopeAimSource SelectScopeAimSource(
+    bool scopeRequested,
+    bool freshPoseMatchesRequestedWeapon,
+    bool freshPoseContradictsRequestedWeapon,
+    bool trackedPoseAvailable,
+    bool latchedPoseAvailable) noexcept
+{
+    if (!scopeRequested || freshPoseContradictsRequestedWeapon)
+    {
+        return ScopeAimSource::None;
+    }
+    if (freshPoseMatchesRequestedWeapon)
+    {
+        return ScopeAimSource::Fresh;
+    }
+    if (trackedPoseAvailable)
+    {
+        return ScopeAimSource::Tracked;
+    }
+    return latchedPoseAvailable
+        ? ScopeAimSource::Latched
+        : ScopeAimSource::None;
+}
+
+bool IsExactScopeFirePoseEligible(
+    const bool scopeFrameAvailable,
+    const void* const fireWeapon,
+    const void* const scopeWeapon,
+    const void* const currentSoldier,
+    const void* const scopeSoldier) noexcept
+{
+    return scopeFrameAvailable && fireWeapon != nullptr &&
+        fireWeapon == scopeWeapon && currentSoldier != nullptr &&
+        currentSoldier == scopeSoldier;
+}
+
+std::optional<Matrix4> MakeD3D8ScopeAimCorrection(
+    const Matrix4& authoritativeGunWorld,
+    const Matrix4& trackedGunWorld) noexcept
+{
+    if (!IsRigidAffine(authoritativeGunWorld))
+    {
+        return std::nullopt;
+    }
+    const auto inverseTracked = InvertRigidAffine(trackedGunWorld);
+    if (!inverseTracked.has_value())
+    {
+        return std::nullopt;
+    }
+    const Matrix4 correction = MultiplyMatrices(
+        authoritativeGunWorld,
+        *inverseTracked);
+    return IsRigidAffine(correction)
+        ? std::optional<Matrix4>(correction)
+        : std::nullopt;
+}
+
+std::optional<Matrix4> ApplyD3D8ScopeAimCorrection(
+    const Matrix4& correction,
+    const Matrix4& trackedGunWorld) noexcept
+{
+    if (!IsRigidAffine(correction) || !IsRigidAffine(trackedGunWorld))
+    {
+        return std::nullopt;
+    }
+    const Matrix4 corrected = MultiplyMatrices(correction, trackedGunWorld);
+    return IsRigidAffine(corrected)
+        ? std::optional<Matrix4>(corrected)
+        : std::nullopt;
+}
+
+bool IsD3D8ScopeOffHandSupportHeld(
+    const bool bindingEstablished,
+    const bool sessionFocused,
+    const bool leftGripTracked,
+    const bool leftSqueezeActive,
+    const float leftSqueezeValue,
+    const Matrix4& predictedSupportWorld,
+    const Matrix4& trackedLeftGripWorld,
+    const float worldUnitsPerMetre) noexcept
+{
+    constexpr float kSqueezeReleaseThreshold = 0.45F;
+    constexpr float kSupportReleaseDistanceMetres = 0.20F;
+    if (!bindingEstablished || !sessionFocused || !leftGripTracked ||
+        !leftSqueezeActive || !std::isfinite(leftSqueezeValue) ||
+        leftSqueezeValue < kSqueezeReleaseThreshold ||
+        !IsRigidAffine(predictedSupportWorld) ||
+        !IsRigidAffine(trackedLeftGripWorld) ||
+        !std::isfinite(worldUnitsPerMetre) || worldUnitsPerMetre <= 0.0F)
+    {
+        return false;
+    }
+    const float x = predictedSupportWorld.values[3][0] -
+        trackedLeftGripWorld.values[3][0];
+    const float y = predictedSupportWorld.values[3][1] -
+        trackedLeftGripWorld.values[3][1];
+    const float z = predictedSupportWorld.values[3][2] -
+        trackedLeftGripWorld.values[3][2];
+    const float releaseDistance =
+        kSupportReleaseDistanceMetres * worldUnitsPerMetre;
+    const float distanceSquared = x * x + y * y + z * z;
+    return std::isfinite(distanceSquared) &&
+        distanceSquared <= releaseDistance * releaseDistance;
+}
+
+std::optional<float> ComputeD3D8ScopeProjectionScale(
+    float normalFovRadians,
+    float scopeFovRadians) noexcept
+{
+    if (!std::isfinite(normalFovRadians) ||
+        !std::isfinite(scopeFovRadians) || normalFovRadians <= 0.0F ||
+        scopeFovRadians <= 0.0F || normalFovRadians >= kPi ||
+        scopeFovRadians >= kPi)
+    {
+        return std::nullopt;
+    }
+    const float normalTangent = std::tan(normalFovRadians * 0.5F);
+    const float scopeTangent = std::tan(scopeFovRadians * 0.5F);
+    const float scale = normalTangent / scopeTangent;
+    return std::isfinite(scale) && scale > 0.0F
+        ? std::optional<float>(scale)
+        : std::nullopt;
+}
+
+std::optional<Matrix4> MakeD3D8WeaponDirectedScopeCamera(
+    const Matrix4& headAdjustedCameraWorld,
+    const Matrix4& controllerGunWorld) noexcept
+{
+    if (!IsRigidAffine(headAdjustedCameraWorld) ||
+        !IsRigidAffine(controllerGunWorld))
+    {
+        return std::nullopt;
+    }
+
+    Matrix4 result = headAdjustedCameraWorld;
+    for (std::size_t row = 0; row < 3; ++row)
+    {
+        for (std::size_t column = 0; column < 3; ++column)
+        {
+            result.values[row][column] =
+                controllerGunWorld.values[row][column];
+        }
+    }
+    return IsRigidAffine(result)
+        ? std::optional<Matrix4>(result)
+        : std::nullopt;
+}
+
+bool ApplyD3D8ScopeProjectionScale(
+    Matrix4& projection,
+    float projectionScale) noexcept
+{
+    if (!IsFinite(projection) || !std::isfinite(projectionScale) ||
+        projectionScale <= 0.0F)
+    {
+        return false;
+    }
+    const float scaledX =
+        projection.values[0][0] * projectionScale;
+    const float scaledY =
+        projection.values[1][1] * projectionScale;
+    if (!std::isfinite(scaledX) || !std::isfinite(scaledY) ||
+        scaledX == 0.0F || scaledY == 0.0F)
+    {
+        return false;
+    }
+    projection.values[0][0] = scaledX;
+    projection.values[1][1] = scaledY;
+    return true;
+}
+
+std::optional<ScopeOverlayQuadSize>
+ComputeEyeFillingScopeOverlayQuadSize(
+    const ScopeOverlayFov& fov,
+    float distanceMeters,
+    float overscanScale) noexcept
+{
+    constexpr float kHalfPi = kPi * 0.5F;
+    const std::array<float, 4> angles = {
+        fov.angleLeft,
+        fov.angleRight,
+        fov.angleUp,
+        fov.angleDown};
+    if (!std::isfinite(distanceMeters) || distanceMeters <= 0.0F ||
+        !std::isfinite(overscanScale) || overscanScale < 1.0F)
+    {
+        return std::nullopt;
+    }
+    for (const float angle : angles)
+    {
+        if (!std::isfinite(angle) || std::fabs(angle) >= kHalfPi)
+        {
+            return std::nullopt;
+        }
+    }
+
+    const float horizontalTangent = std::max(
+        std::fabs(std::tan(fov.angleLeft)),
+        std::fabs(std::tan(fov.angleRight)));
+    const float verticalTangent = std::max(
+        std::fabs(std::tan(fov.angleUp)),
+        std::fabs(std::tan(fov.angleDown)));
+    ScopeOverlayQuadSize result = {
+        2.0F * distanceMeters * horizontalTangent * overscanScale,
+        2.0F * distanceMeters * verticalTangent * overscanScale};
+    return std::isfinite(result.widthMeters) &&
+        std::isfinite(result.heightMeters) && result.widthMeters > 0.0F &&
+        result.heightMeters > 0.0F
+        ? std::optional<ScopeOverlayQuadSize>(result)
+        : std::nullopt;
+}
+
+} // namespace bfvr::stereo

@@ -4,6 +4,9 @@
 
 #include <d3d11.h>
 
+#include <array>
+#include <vector>
+
 namespace bfvr::shared
 {
 class D3D11TextureScaler
@@ -37,6 +40,9 @@ public:
         bool applyBloom,
         float bloomThreshold,
         float bloomIntensity);
+    bool BeginBloomFrame();
+    void EndBloomFrame();
+    void CollectBloomFrameTimings();
     void Shutdown();
 
 private:
@@ -46,6 +52,7 @@ private:
         bool sourceAlreadyLinear,
         float bloomThreshold);
     void ReleaseBloomResources();
+    void ReportBloomTimings();
     void UpdateConfiguration(
         bool sourceAlreadyLinear,
         float ambientOcclusionIntensity,
@@ -60,8 +67,8 @@ private:
     ID3D11VertexShader* vertexShader_ = nullptr;
     ID3D11PixelShader* colorPixelShader_ = nullptr;
     ID3D11PixelShader* fxaaPixelShader_ = nullptr;
-    ID3D11PixelShader* aoColorPixelShader_ = nullptr;
-    ID3D11PixelShader* aoFxaaPixelShader_ = nullptr;
+    ID3D11PixelShader* compositeColorPixelShader_ = nullptr;
+    ID3D11PixelShader* compositeFxaaPixelShader_ = nullptr;
     ID3D11PixelShader* bloomDownsamplePixelShader_ = nullptr;
     ID3D11PixelShader* bloomBlurHorizontalPixelShader_ = nullptr;
     ID3D11PixelShader* bloomBlurVerticalPixelShader_ = nullptr;
@@ -70,8 +77,17 @@ private:
     ID3D11Texture2D* bloomTextures_[2] = {};
     ID3D11ShaderResourceView* bloomViews_[2] = {};
     ID3D11RenderTargetView* bloomTargets_[2] = {};
+    ID3D11Query* bloomDisjointQuery_ = nullptr;
+    std::array<ID3D11Query*, 2> bloomTimestampStarts_ = {};
+    std::array<ID3D11Query*, 2> bloomTimestampEnds_ = {};
+    std::array<std::vector<double>, 2> bloomGpuMilliseconds_ = {};
+    std::vector<double> bloomStereoGpuMilliseconds_;
     UINT bloomWidth_ = 0;
     UINT bloomHeight_ = 0;
+    std::array<bool, 2> bloomFrameEyesBuilt_ = {};
+    std::size_t bloomFrameEyeCount_ = 0;
+    bool bloomFrameTimingActive_ = false;
+    bool bloomTimingsReported_ = false;
     SharedTextureLogCallback logCallback_ = nullptr;
     void* logContext_ = nullptr;
 };
