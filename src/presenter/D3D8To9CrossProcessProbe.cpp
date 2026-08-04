@@ -107,10 +107,12 @@ bool RunD3D8To9CrossProcessProbe(
     const wchar_t* consumerPath,
     const wchar_t* consumerLogPath,
     bool enableAmbientOcclusion,
+    bool enableScreenSpaceGlobalIllumination,
     bool enableWaterReflections)
 {
     const bool enableDepthEffects =
-        enableAmbientOcclusion || enableWaterReflections;
+        enableAmbientOcclusion || enableScreenSpaceGlobalIllumination ||
+        enableWaterReflections;
     if (device == nullptr ||
         createSharedTarget == nullptr ||
         waitForGpu == nullptr ||
@@ -134,6 +136,27 @@ bool RunD3D8To9CrossProcessProbe(
         0xFF123456u,
         0xFF654321u,
         0x9E1452EBu};
+    std::array<DWORD, kTextureCount> expectedPixels = kClearColors;
+    if (enableScreenSpaceGlobalIllumination)
+    {
+        wchar_t debugMode[2] = {};
+        const DWORD debugLength = GetEnvironmentVariableW(
+            L"BFVR_OPENXR_SSGI_DEBUG",
+            debugMode,
+            static_cast<DWORD>(std::size(debugMode)));
+        if (debugLength == 1 && debugMode[0] == L'1')
+        {
+            // The uniform plane has a valid guide but zero form factor, so the
+            // exposed-radiance evidence view must be black for both world eyes.
+            expectedPixels[0] = 0xFF000000u;
+            expectedPixels[1] = 0xFF000000u;
+        }
+        else if (debugLength == 1 && debugMode[0] == L'2')
+        {
+            expectedPixels[0] = 0xFFFFFFFFu;
+            expectedPixels[1] = 0xFFFFFFFFu;
+        }
+    }
 
     std::array<IDirect3DSurface8*, kTextureCount> surfaces = {};
     std::array<HANDLE, kTextureCount> handles = {};
@@ -397,6 +420,9 @@ bool RunD3D8To9CrossProcessProbe(
         (enableAmbientOcclusion
             ? kProducerFlagAmbientOcclusionRequested
             : 0u) |
+        (enableScreenSpaceGlobalIllumination
+            ? kProducerFlagScreenSpaceGlobalIlluminationRequested
+            : 0u) |
         (enableWaterReflections
             ? kProducerFlagWaterReflectionsRequested
             : 0u);
@@ -436,9 +462,9 @@ bool RunD3D8To9CrossProcessProbe(
                 &block->transportedFrameCount,
                 0,
                 0) == 1 &&
-            pixels == kClearColors;
+            pixels == expectedPixels;
         wprintf(
-            L"[CROSS-PROCESS] consumed=%ld transported=%ld pixels=[%08lX,%08lX,%08lX] exact=%d.\n",
+            L"[CROSS-PROCESS] consumed=%ld transported=%ld pixels=[%08lX,%08lX,%08lX] expected=[%08lX,%08lX,%08lX] exact=%d.\n",
             InterlockedCompareExchange(
                 &block->consumedFrameSequence,
                 0,
@@ -450,6 +476,9 @@ bool RunD3D8To9CrossProcessProbe(
             static_cast<unsigned long>(pixels[0]),
             static_cast<unsigned long>(pixels[1]),
             static_cast<unsigned long>(pixels[2]),
+            static_cast<unsigned long>(expectedPixels[0]),
+            static_cast<unsigned long>(expectedPixels[1]),
+            static_cast<unsigned long>(expectedPixels[2]),
             succeeded ? 1 : 0);
     }
 

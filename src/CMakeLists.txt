@@ -38,6 +38,7 @@ if(BFVR_PRESENTER_ONLY)
     presenter/DesktopMirror.cpp
     presenter/D3D11AmbientOcclusion.cpp
     presenter/D3D11MainMenuOverlay.cpp
+    presenter/D3D11ScreenSpaceGlobalIllumination.cpp
     presenter/D3D11TextureScaler.cpp
     presenter/D3D11WaterReflection.cpp
     presenter/SharedControlChannel.cpp
@@ -55,6 +56,7 @@ if(BFVR_PRESENTER_ONLY)
     presenter/BFVRSharedTextureConsumerProbe.cpp
     presenter/D3D11AmbientOcclusion.cpp
     presenter/D3D11MainMenuOverlay.cpp
+    presenter/D3D11ScreenSpaceGlobalIllumination.cpp
     presenter/D3D11TextureScaler.cpp
     presenter/D3D11WaterReflection.cpp
     presenter/SharedControlChannel.cpp
@@ -69,11 +71,15 @@ if(BFVR_PRESENTER_ONLY)
     presenter/BFVRBloomGpuProbe.cpp
     presenter/D3D11TextureScaler.cpp
   )
+  add_executable(BFVRScreenSpaceGlobalIlluminationGpuProbe
+    presenter/BFVRScreenSpaceGlobalIlluminationGpuProbe.cpp
+    presenter/D3D11ScreenSpaceGlobalIllumination.cpp
+  )
   add_executable(BFVRWaterReflectionGpuProbe
     presenter/BFVRWaterReflectionGpuProbe.cpp
     presenter/D3D11WaterReflection.cpp
   )
-  foreach(target BFVRPresenter BFVRSharedTextureConsumerProbe BFVRAmbientOcclusionGpuProbe BFVRBloomGpuProbe BFVRWaterReflectionGpuProbe)
+  foreach(target BFVRPresenter BFVRSharedTextureConsumerProbe BFVRAmbientOcclusionGpuProbe BFVRBloomGpuProbe BFVRScreenSpaceGlobalIlluminationGpuProbe BFVRWaterReflectionGpuProbe)
     target_compile_definitions(${target} PRIVATE
       WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
     target_include_directories(${target} PRIVATE

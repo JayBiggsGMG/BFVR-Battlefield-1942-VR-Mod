@@ -15,6 +15,7 @@ bool RunD3D8To9CrossProcessProbe(
     const wchar_t* consumerPath,
     const wchar_t* consumerLogPath,
     bool enableAmbientOcclusion,
+    bool enableScreenSpaceGlobalIllumination,
     bool enableWaterReflections);
 
 } // namespace bfvr::shared

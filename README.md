@@ -406,6 +406,15 @@ world conversion with and without the AO sample:
   --width 1872 --height 2016 --iterations 64
 ```
 
+The SSGI hardware control renders a synthetic red-source/neutral-source corner,
+requires measurable red-only radiance across at least 5% of receiver pixels,
+and reports per-eye/stereo GPU time for native preparation, gather, and denoise:
+
+```powershell
+.\build\bfvr-presenter-x64\Release\BFVRScreenSpaceGlobalIlluminationGpuProbe.exe `
+  --width 1872 --height 2016 --iterations 64
+```
+
 Brightness bloom has a separate x64 hardware control. It renders a small
 white source over a dark world, proves that the halo changes pixels outside
 the source, and reports the GPU time for quarter-resolution extraction plus
@@ -419,6 +428,10 @@ the horizontal/vertical blur:
 Add `--ambient-occlusion` to `BFVRD3D8To9SharedSurfaceProbe` for the complete
 no-game INTZ -> packed D3D9 shared depth -> x64 AO -> world-composite control.
 The ordinary invocation above remains the exact no-AO regression.
+
+Add `--ssgi` for the complete no-game INTZ -> packed D3D9 shared depth -> x64
+native-resolution SSGI -> world-composite control. Its
+uniform-depth scene must preserve all transported world/UI pixels exactly.
 
 Add `--water-reflections` instead for the complete water-SSR transport control.
 It clears the packed target's alpha mask, resolves depth into RGB without
@@ -446,6 +459,34 @@ when its projected footprint becomes subpixel. Native resolution avoids
 stretching a half-resolution result through the ordinary color sampler. The AO
 pass explicitly installs its complete viewport/scissor/blend/depth/raster
 state, and packed-depth transport is unchanged.
+
+Live screen-space global illumination is a rejected experiment and is disabled
+in the current launcher with `BFVR_OPENXR_SSGI=0` and intensity `0.0`. The x86
+producer accepts only the exact value `1`; every other value omits the SSGI
+protocol flag. Consequently the x64 consumer does not initialize SSGI shaders,
+allocate its native-resolution intermediates, select an SSGI composite shader,
+or enter its per-frame gather/denoise path. AO or water SSR can still request the
+shared packed-depth targets independently.
+
+`BFVR_OPENXR_SSGI_DEBUG=1` replaces each world eye with a 32x-exposed SSGI
+radiance diagnostic: valid pixels with zero bounce are black, while pixels
+whose packed-depth/reconstructed-normal guide did not survive preparation and
+denoising are magenta. Value `2` shows guide coverage directly (white valid,
+black invalid). Both diagnostics leave Ref2 UI unchanged; use `0` for the
+ordinary composite.
+
+SSGI reconstructs per-eye view positions and normals from the same packed depth
+used by AO, prepares a native-resolution guide, and gathers four per-pixel-
+rotated spatial samples from the matching final world-colour texture inside a
+4.0 m view-space radius. Directional two-surface bounce is supplemented by a
+bounded finite-patch term that spreads only brighter-neighbour colour contrast;
+a flat uniformly coloured surface therefore remains unchanged. Projected radii
+enter a C1-continuous 320-pixel safety limit, and a 3x3 relative-depth/normal
+denoiser runs three ping-pong passes at native resolution. Each eye is processed
+independently; Ref2 UI, menus, water-mask alpha, and the other eye are never
+sampled. There are no
+motion vectors, frame-varying noise, or temporal history. Allocation, shader,
+depth, or projection failure falls back to the normal world image for that frame.
 
 The native additive-water repair keeps complete stereo View/Projection
 geometry and uses `D3DRS_LOCALVIEWER=FALSE` only for the exact reflection pass.

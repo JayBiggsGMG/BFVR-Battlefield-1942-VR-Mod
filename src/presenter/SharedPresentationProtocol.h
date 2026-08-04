@@ -11,13 +11,14 @@ namespace bfvr::shared
 using SharedTextureLogCallback = void (*)(void* context, const wchar_t* message);
 
 constexpr DWORD kProtocolMagic = 0x52564642; // "BFVR"
-constexpr DWORD kProtocolVersion = 13;
+constexpr DWORD kProtocolVersion = 14;
 constexpr std::size_t kTextureCount = 3;
 constexpr std::size_t kDepthTextureCount = 2;
 constexpr std::size_t kSharedNameCapacity = 128;
 constexpr DWORD kProducerFlagRuntimeTimedRender = 0x1;
 constexpr DWORD kProducerFlagAmbientOcclusionRequested = 0x2;
 constexpr DWORD kProducerFlagWaterReflectionsRequested = 0x4;
+constexpr DWORD kProducerFlagScreenSpaceGlobalIlluminationRequested = 0x8;
 constexpr LONG kFrameOverlayBackToGameVisible = 0x1;
 constexpr LONG kFrameOverlayBackToGameHovered = 0x2;
 constexpr LONG kFramePresentationEyeFillingScope = 0x1;

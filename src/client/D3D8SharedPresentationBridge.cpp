@@ -117,6 +117,18 @@ bool ReadAmbientOcclusionRequested()
         !(length == 1 && value[0] == L'0');
 }
 
+bool ReadScreenSpaceGlobalIlluminationRequested()
+{
+    wchar_t value[2] = {};
+    const DWORD length = GetEnvironmentVariableW(
+        L"BFVR_OPENXR_SSGI",
+        value,
+        static_cast<DWORD>(std::size(value)));
+    // SSGI is an explicit visual experiment. Fail closed unless the owner
+    // selected exactly 1 for this launch.
+    return length == 1 && value[0] == L'1';
+}
+
 bool ReadWaterReflectionsRequested()
 {
     wchar_t value[2] = {};
@@ -253,10 +265,15 @@ public:
         }
         block = channel.Get();
         ambientOcclusionRequested = ReadAmbientOcclusionRequested();
+        screenSpaceGlobalIlluminationRequested =
+            ReadScreenSpaceGlobalIlluminationRequested();
         waterReflectionsRequested = ReadWaterReflectionsRequested();
         block->producerFlags = shared::kProducerFlagRuntimeTimedRender |
             (ambientOcclusionRequested
                 ? shared::kProducerFlagAmbientOcclusionRequested
+                : 0) |
+            (screenSpaceGlobalIlluminationRequested
+                ? shared::kProducerFlagScreenSpaceGlobalIlluminationRequested
                 : 0) |
             (waterReflectionsRequested
                 ? shared::kProducerFlagWaterReflectionsRequested
@@ -502,7 +519,9 @@ public:
         }
 
         depthTexturesPublished = false;
-        if (ambientOcclusionRequested || waterReflectionsRequested)
+        if (ambientOcclusionRequested ||
+            screenSpaceGlobalIlluminationRequested ||
+            waterReflectionsRequested)
         {
             std::array<
                 shared::SharedTextureDescription,
@@ -529,12 +548,13 @@ public:
                     &block->depthTextureCount,
                     static_cast<LONG>(shared::kDepthTextureCount));
                 WriteLog(
-                    L"Published optional packed INTZ depth/water-mask exports: left=%ux%u right=%ux%u D3D9 A8R8G8B8/D3D11 B8G8R8A8_UNORM (AO=%d waterSSR=%d).",
+                    L"Published optional packed INTZ depth/water-mask exports: left=%ux%u right=%ux%u D3D9 A8R8G8B8/D3D11 B8G8R8A8_UNORM (AO=%d SSGI=%d waterSSR=%d).",
                     requirements.leftWorldWidth,
                     requirements.leftWorldHeight,
                     requirements.rightWorldWidth,
                     requirements.rightWorldHeight,
                     ambientOcclusionRequested ? 1 : 0,
+                    screenSpaceGlobalIlluminationRequested ? 1 : 0,
                     waterReflectionsRequested ? 1 : 0);
             }
             else
@@ -544,7 +564,7 @@ public:
                     static_cast<LONG>(shared::DepthEncoding::None));
                 InterlockedExchange(&block->depthTextureCount, 0);
                 WriteLog(
-                    L"Optional INTZ depth targets are unavailable (HRESULT=0x%08lX); continuing with ordinary D24S8 and depth-based AO/water SSR disabled.",
+                    L"Optional INTZ depth targets are unavailable (HRESULT=0x%08lX); continuing with ordinary D24S8 and depth-based AO/SSGI/water SSR disabled.",
                     static_cast<unsigned long>(
                         gpuProducer.LastDepthCreateResult()));
             }
@@ -1152,6 +1172,7 @@ public:
         gpuSharedTargets = false;
         texturesPublished = false;
         ambientOcclusionRequested = false;
+        screenSpaceGlobalIlluminationRequested = false;
         waterReflectionsRequested = false;
         depthTexturesPublished = false;
         depthResolveSuccessLogged = false;
@@ -1335,6 +1356,7 @@ public:
     bool gpuSharedTargets = false;
     bool texturesPublished = false;
     bool ambientOcclusionRequested = false;
+    bool screenSpaceGlobalIlluminationRequested = false;
     bool waterReflectionsRequested = false;
     bool depthTexturesPublished = false;
     bool depthResolveSuccessLogged = false;

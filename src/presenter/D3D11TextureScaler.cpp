@@ -45,6 +45,9 @@ Texture2D bloomTexture : register(t2);
 #if BFVR_WATER_REFLECTIONS
 Texture2D waterReflectionTexture : register(t3);
 #endif
+#if BFVR_SSGI
+Texture2D screenSpaceGlobalIlluminationTexture : register(t4);
+#endif
 SamplerState sourceSampler : register(s0);
 cbuffer Configuration : register(b0)
 {
@@ -54,7 +57,9 @@ cbuffer Configuration : register(b0)
     float ambientOcclusionIntensity;
     float2 bloomTexelSize;
     float waterReflectionIntensity;
-    float configurationPadding1;
+    float screenSpaceGlobalIlluminationIntensity;
+    float screenSpaceGlobalIlluminationDebugMode;
+    float3 configurationPadding2;
 };
 
 float3 SrgbToLinear(float3 color)
@@ -74,6 +79,22 @@ float4 main(float4 position : SV_Position, float2 texcoord : TEXCOORD0) : SV_Tar
     const float ao = ambientOcclusionTexture.SampleLevel(
         sourceSampler, texcoord, 0.0).r;
     linearColor *= lerp(1.0, ao, ambientOcclusionIntensity);
+#endif
+#if BFVR_SSGI
+    const float4 ssgi = screenSpaceGlobalIlluminationTexture.SampleLevel(
+        sourceSampler, texcoord, 0.0);
+    if (screenSpaceGlobalIlluminationDebugMode > 1.5)
+        return float4(ssgi.aaa, encoded.a);
+    if (screenSpaceGlobalIlluminationDebugMode > 0.5)
+    {
+        const float3 exposedRadiance =
+            1.0 - exp2(-ssgi.rgb * 32.0);
+        const float3 invalidGuide = float3(0.25, 0.0, 0.25);
+        return float4(
+            lerp(invalidGuide, exposedRadiance, saturate(ssgi.a)),
+            encoded.a);
+    }
+    linearColor += ssgi.rgb * screenSpaceGlobalIlluminationIntensity;
 #endif
 #if BFVR_WATER_REFLECTIONS
     const float4 reflection = waterReflectionTexture.SampleLevel(
@@ -102,6 +123,9 @@ Texture2D bloomTexture : register(t2);
 #if BFVR_WATER_REFLECTIONS
 Texture2D waterReflectionTexture : register(t3);
 #endif
+#if BFVR_SSGI
+Texture2D screenSpaceGlobalIlluminationTexture : register(t4);
+#endif
 SamplerState sourceSampler : register(s0);
 cbuffer Configuration : register(b0)
 {
@@ -111,7 +135,9 @@ cbuffer Configuration : register(b0)
     float ambientOcclusionIntensity;
     float2 bloomTexelSize;
     float waterReflectionIntensity;
-    float configurationPadding1;
+    float screenSpaceGlobalIlluminationIntensity;
+    float screenSpaceGlobalIlluminationDebugMode;
+    float3 configurationPadding2;
 };
 
 // NVIDIA FXAA quality controls, retained as compile-time constants because
@@ -233,6 +259,22 @@ float4 main(float4 position : SV_Position, float2 texcoord : TEXCOORD0) : SV_Tar
     const float ao = ambientOcclusionTexture.SampleLevel(
         sourceSampler, texcoord, 0.0).r;
     linearColor *= lerp(1.0, ao, ambientOcclusionIntensity);
+#endif
+#if BFVR_SSGI
+    const float4 ssgi = screenSpaceGlobalIlluminationTexture.SampleLevel(
+        sourceSampler, texcoord, 0.0);
+    if (screenSpaceGlobalIlluminationDebugMode > 1.5)
+        return float4(ssgi.aaa, center.a);
+    if (screenSpaceGlobalIlluminationDebugMode > 0.5)
+    {
+        const float3 exposedRadiance =
+            1.0 - exp2(-ssgi.rgb * 32.0);
+        const float3 invalidGuide = float3(0.25, 0.0, 0.25);
+        return float4(
+            lerp(invalidGuide, exposedRadiance, saturate(ssgi.a)),
+            center.a);
+    }
+    linearColor += ssgi.rgb * screenSpaceGlobalIlluminationIntensity;
 #endif
 #if BFVR_WATER_REFLECTIONS
     const float4 reflection = waterReflectionTexture.SampleLevel(
@@ -378,11 +420,13 @@ bool CompileShader(
     bfvr::shared::SharedTextureLogCallback logCallback,
     void* logContext,
     bool ambientOcclusionVariant = false,
+    bool screenSpaceGlobalIlluminationVariant = false,
     bool bloomVariant = false,
     bool waterReflectionVariant = false)
 {
     const D3D_SHADER_MACRO defines[] = {
         {"BFVR_AMBIENT_OCCLUSION", ambientOcclusionVariant ? "1" : "0"},
+        {"BFVR_SSGI", screenSpaceGlobalIlluminationVariant ? "1" : "0"},
         {"BFVR_BLOOM", bloomVariant ? "1" : "0"},
         {"BFVR_WATER_REFLECTIONS", waterReflectionVariant ? "1" : "0"},
         {nullptr, nullptr}};
@@ -443,6 +487,7 @@ bool D3D11TextureScaler::Initialize(
     void* logContext,
     bool enableBloom,
     bool enableAmbientOcclusion,
+    bool enableScreenSpaceGlobalIllumination,
     bool enableWaterReflections)
 {
     Shutdown();
@@ -516,7 +561,8 @@ bool D3D11TextureScaler::Initialize(
         pixelBytecode = nullptr;
     }
 
-    if (enableAmbientOcclusion || enableBloom || enableWaterReflections)
+    if (enableAmbientOcclusion || enableScreenSpaceGlobalIllumination ||
+        enableBloom || enableWaterReflections)
     {
         if (SUCCEEDED(result) &&
             CompileShader(
@@ -526,6 +572,7 @@ bool D3D11TextureScaler::Initialize(
                 logCallback_,
                 logContext_,
                 enableAmbientOcclusion,
+                enableScreenSpaceGlobalIllumination,
                 enableBloom,
                 enableWaterReflections))
         {
@@ -548,6 +595,7 @@ bool D3D11TextureScaler::Initialize(
                 logCallback_,
                 logContext_,
                 enableAmbientOcclusion,
+                enableScreenSpaceGlobalIllumination,
                 enableBloom,
                 enableWaterReflections))
         {
@@ -626,7 +674,7 @@ bool D3D11TextureScaler::Initialize(
     }
 
     D3D11_BUFFER_DESC configurationDescription = {};
-    configurationDescription.ByteWidth = sizeof(float) * 8;
+    configurationDescription.ByteWidth = sizeof(float) * 12;
     configurationDescription.Usage = D3D11_USAGE_DEFAULT;
     configurationDescription.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
     if (SUCCEEDED(result))
@@ -673,7 +721,8 @@ bool D3D11TextureScaler::Initialize(
         vertexShader_ == nullptr ||
         colorPixelShader_ == nullptr ||
         fxaaPixelShader_ == nullptr ||
-        ((enableAmbientOcclusion || enableBloom || enableWaterReflections) &&
+        ((enableAmbientOcclusion || enableScreenSpaceGlobalIllumination ||
+             enableBloom || enableWaterReflections) &&
             (compositeColorPixelShader_ == nullptr ||
              compositeFxaaPixelShader_ == nullptr)) ||
         (enableBloom &&
@@ -697,7 +746,12 @@ bool D3D11TextureScaler::Initialize(
 
     context_ = context;
     context_->AddRef();
-    if (enableWaterReflections)
+    if (enableScreenSpaceGlobalIllumination)
+    {
+        WriteLog(
+            L"D3D11 texture scaler initialized with an additive linear SSGI input; the input is sampled only for world eyes and Ref2 UI remains isolated.");
+    }
+    else if (enableWaterReflections)
     {
         WriteLog(
             L"D3D11 texture scaler initialized with a water-reflection composite input; the input is sampled only for world eyes and Ref2 UI remains isolated.");
@@ -731,6 +785,9 @@ bool D3D11TextureScaler::ScaleAspectFit(
     bool applyAntialiasing,
     ID3D11ShaderResourceView* ambientOcclusionView,
     float ambientOcclusionIntensity,
+    ID3D11ShaderResourceView* screenSpaceGlobalIlluminationView,
+    float screenSpaceGlobalIlluminationIntensity,
+    float screenSpaceGlobalIlluminationDebugMode,
     ID3D11ShaderResourceView* waterReflectionView,
     float waterReflectionIntensity,
     bool applyBloom,
@@ -760,6 +817,22 @@ bool D3D11TextureScaler::ScaleAspectFit(
         ambientOcclusionIntensity = 0.0F;
     }
     const bool applyAmbientOcclusion = ambientOcclusionIntensity > 0.0F;
+    screenSpaceGlobalIlluminationIntensity = std::clamp(
+        screenSpaceGlobalIlluminationIntensity,
+        0.0F,
+        2.0F);
+    screenSpaceGlobalIlluminationDebugMode = std::clamp(
+        screenSpaceGlobalIlluminationDebugMode,
+        0.0F,
+        2.0F);
+    if (screenSpaceGlobalIlluminationView == nullptr)
+    {
+        screenSpaceGlobalIlluminationIntensity = 0.0F;
+        screenSpaceGlobalIlluminationDebugMode = 0.0F;
+    }
+    const bool applyScreenSpaceGlobalIllumination =
+        screenSpaceGlobalIlluminationIntensity > 0.0F ||
+        screenSpaceGlobalIlluminationDebugMode > 0.0F;
     waterReflectionIntensity = std::clamp(
         waterReflectionIntensity,
         0.0F,
@@ -767,7 +840,8 @@ bool D3D11TextureScaler::ScaleAspectFit(
     if (waterReflectionView == nullptr)
         waterReflectionIntensity = 0.0F;
     const bool applyWaterReflections = waterReflectionIntensity > 0.0F;
-    if ((applyAmbientOcclusion || applyWaterReflections) &&
+    if ((applyAmbientOcclusion || applyScreenSpaceGlobalIllumination ||
+            applyWaterReflections) &&
         (compositeColorPixelShader_ == nullptr ||
          compositeFxaaPixelShader_ == nullptr))
     {
@@ -814,9 +888,12 @@ bool D3D11TextureScaler::ScaleAspectFit(
         applyBloom ? bloomIntensity : 0.0F,
         applyBloom ? 1.0F / static_cast<float>(bloomWidth_) : 0.0F,
         applyBloom ? 1.0F / static_cast<float>(bloomHeight_) : 0.0F,
+        screenSpaceGlobalIlluminationIntensity,
+        screenSpaceGlobalIlluminationDebugMode,
         waterReflectionIntensity);
     context_->PSSetShader(
-        applyAmbientOcclusion || applyBloom || applyWaterReflections
+        applyAmbientOcclusion || applyScreenSpaceGlobalIllumination ||
+                applyBloom || applyWaterReflections
             ? applyAntialiasing
                 ? compositeFxaaPixelShader_
                 : compositeColorPixelShader_
@@ -825,16 +902,17 @@ bool D3D11TextureScaler::ScaleAspectFit(
         0);
     context_->PSSetConstantBuffers(0, 1, &configurationBuffer_);
     context_->PSSetSamplers(0, 1, &sampler_);
-    ID3D11ShaderResourceView* sourceViews[4] = {
+    ID3D11ShaderResourceView* sourceViews[5] = {
         sourceView,
         ambientOcclusionView,
         applyBloom ? bloomViews_[0] : nullptr,
-        waterReflectionView};
-    context_->PSSetShaderResources(0, 4, sourceViews);
+        waterReflectionView,
+        screenSpaceGlobalIlluminationView};
+    context_->PSSetShaderResources(0, 5, sourceViews);
     context_->Draw(3, 0);
 
-    ID3D11ShaderResourceView* nullViews[4] = {};
-    context_->PSSetShaderResources(0, 4, nullViews);
+    ID3D11ShaderResourceView* nullViews[5] = {};
+    context_->PSSetShaderResources(0, 5, nullViews);
     ID3D11RenderTargetView* nullTarget = nullptr;
     context_->OMSetRenderTargets(1, &nullTarget, nullptr);
     return true;
@@ -945,6 +1023,8 @@ bool D3D11TextureScaler::BuildBloom(
             0.0F,
             1.0F / static_cast<float>(bloomWidth_),
             1.0F / static_cast<float>(bloomHeight_),
+            0.0F,
+            0.0F,
             0.0F);
         context_->OMSetRenderTargets(1, &output, nullptr);
         context_->RSSetViewports(1, &bloomViewport);
@@ -1096,9 +1176,11 @@ void D3D11TextureScaler::UpdateConfiguration(
     float bloomIntensity,
     float bloomTexelWidth,
     float bloomTexelHeight,
+    float screenSpaceGlobalIlluminationIntensity,
+    float screenSpaceGlobalIlluminationDebugMode,
     float waterReflectionIntensity)
 {
-    const float configuration[8] = {
+    const float configuration[12] = {
         sourceAlreadyLinear ? 1.0F : 0.0F,
         bloomThreshold,
         bloomIntensity,
@@ -1106,6 +1188,10 @@ void D3D11TextureScaler::UpdateConfiguration(
         bloomTexelWidth,
         bloomTexelHeight,
         waterReflectionIntensity,
+        screenSpaceGlobalIlluminationIntensity,
+        screenSpaceGlobalIlluminationDebugMode,
+        0.0F,
+        0.0F,
         0.0F};
     context_->UpdateSubresource(
         configurationBuffer_,

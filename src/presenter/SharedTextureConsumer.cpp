@@ -165,6 +165,16 @@ bool SharedTextureConsumer::Initialize(
     worldBloomEnabled_ = bloom.enabled;
     worldBloomThreshold_ = bloom.threshold;
     worldBloomIntensity_ = bloom.intensity;
+    screenSpaceGlobalIlluminationIntensity_ = ReadEnvironmentFloat(
+        L"BFVR_OPENXR_SSGI_INTENSITY",
+        0.65F,
+        0.0F,
+        2.0F);
+    screenSpaceGlobalIlluminationDebugMode_ = ReadEnvironmentFloat(
+        L"BFVR_OPENXR_SSGI_DEBUG",
+        0.0F,
+        0.0F,
+        2.0F);
     waterReflectionIntensity_ = ReadEnvironmentFloat(
         L"BFVR_OPENXR_WATER_SSR_INTENSITY",
         1.0F,
@@ -172,6 +182,9 @@ bool SharedTextureConsumer::Initialize(
         2.0F);
     const bool ambientOcclusionRequested =
         (producerFlags & kProducerFlagAmbientOcclusionRequested) != 0;
+    const bool screenSpaceGlobalIlluminationRequested =
+        (producerFlags &
+            kProducerFlagScreenSpaceGlobalIlluminationRequested) != 0;
     const bool waterReflectionsRequested =
         (producerFlags & kProducerFlagWaterReflectionsRequested) != 0;
     const std::array<UINT, kTextureCount> destinationWidths = {
@@ -235,6 +248,15 @@ bool SharedTextureConsumer::Initialize(
     {
         ambientOcclusionEnabled_ = true;
     }
+    if (depthOpened && screenSpaceGlobalIlluminationRequested &&
+        screenSpaceGlobalIllumination_.Initialize(
+            device_,
+            context_,
+            logCallback_,
+            logContext_))
+    {
+        screenSpaceGlobalIlluminationEnabled_ = true;
+    }
     if (depthOpened && waterReflectionsRequested && waterReflection_.Initialize(
             device_,
             context_,
@@ -243,7 +265,8 @@ bool SharedTextureConsumer::Initialize(
     {
         waterReflectionsEnabled_ = true;
     }
-    if (ambientOcclusionEnabled_ || waterReflectionsEnabled_)
+    if (ambientOcclusionEnabled_ || screenSpaceGlobalIlluminationEnabled_ ||
+        waterReflectionsEnabled_)
     {
         scalerRequired_ = true;
         for (std::size_t index = 0; index < depthTextures_.size(); ++index)
@@ -270,15 +293,19 @@ bool SharedTextureConsumer::Initialize(
         logContext_,
         worldBloomEnabled_,
         ambientOcclusionEnabled_,
+        screenSpaceGlobalIlluminationEnabled_,
         waterReflectionsEnabled_);
     if (!scalerReady &&
-        (ambientOcclusionEnabled_ || waterReflectionsEnabled_))
+        (ambientOcclusionEnabled_ || screenSpaceGlobalIlluminationEnabled_ ||
+            waterReflectionsEnabled_))
     {
         WriteLog(
-            L"Shared texture consumer could not initialize the depth-effect composite variant; retrying the mandatory color/UI scaler with AO and water SSR disabled.");
+            L"Shared texture consumer could not initialize the depth-effect composite variant; retrying the mandatory color/UI scaler with AO, SSGI, and water SSR disabled.");
         ambientOcclusion_.Shutdown();
+        screenSpaceGlobalIllumination_.Shutdown();
         waterReflection_.Shutdown();
         ambientOcclusionEnabled_ = false;
+        screenSpaceGlobalIlluminationEnabled_ = false;
         waterReflectionsEnabled_ = false;
         for (DepthTexture& texture : depthTextures_)
             ReleaseDepthTexture(texture);
@@ -288,6 +315,7 @@ bool SharedTextureConsumer::Initialize(
             logCallback_,
             logContext_,
             worldBloomEnabled_,
+            false,
             false,
             false);
     }
@@ -301,6 +329,19 @@ bool SharedTextureConsumer::Initialize(
         WriteLog(
             L"Water-only per-eye SSR is active (fixed roughness, Fresnel, intensity=%.3f); frames without a valid water mask fall back to native water.",
             waterReflectionIntensity_);
+    }
+    if (screenSpaceGlobalIlluminationEnabled_)
+    {
+        WriteLog(
+            L"Spatial SSGI is active (intensity=%.2f): each eye runs native-resolution four-tap directional-plus-contrast bounce and three depth/normal-aware denoise passes before world composition. Temporal history and Ref2 UI input are disabled.",
+            screenSpaceGlobalIlluminationIntensity_);
+        if (screenSpaceGlobalIlluminationDebugMode_ > 0.0F)
+        {
+            WriteLog(
+                screenSpaceGlobalIlluminationDebugMode_ > 1.5F
+                    ? L"SSGI diagnostic guide-coverage view is active: white means the packed-depth/normal guide survived native preparation and denoise; black means it did not."
+                    : L"SSGI diagnostic radiance view is active: bounced radiance is exposed 32x, valid zero-radiance pixels are black, and invalid packed-depth/normal guide pixels are magenta.");
+        }
     }
     if (requiresLegacyCompletionWait_)
     {
@@ -352,13 +393,24 @@ bool SharedTextureConsumer::Initialize(
         }
         else
         {
-            WriteLog(
-                ambientOcclusionEnabled_
-                    ? L"Shared texture consumer opened the three color resources plus two packed-depth resources; native-resolution world AO is active at intensity %.2f, temporal history and bloom are disabled."
-                    : worldFxaaEnabled_
-                    ? L"Shared texture consumer opened all three x86-produced resources and enabled x64 aspect-fit conversion with world FXAA; AO and bloom are disabled."
-                    : L"Shared texture consumer opened all three x86-produced resources and enabled x64 aspect-fit conversion with world FXAA disabled by BFVR_OPENXR_FXAA=0; AO and bloom are disabled.",
-                ambientOcclusionIntensity_);
+            if (screenSpaceGlobalIlluminationEnabled_)
+            {
+                WriteLog(
+                    L"Shared texture consumer opened the three color resources plus two packed-depth resources; native-resolution four-tap spatial SSGI is active at intensity %.2f (AO=%d, worldFXAA=%d). Ref2 UI, bloom, and temporal history are outside SSGI.",
+                    screenSpaceGlobalIlluminationIntensity_,
+                    ambientOcclusionEnabled_ ? 1 : 0,
+                    worldFxaaEnabled_ ? 1 : 0);
+            }
+            else
+            {
+                WriteLog(
+                    ambientOcclusionEnabled_
+                        ? L"Shared texture consumer opened the three color resources plus two packed-depth resources; native-resolution world AO is active at intensity %.2f, temporal history and bloom are disabled."
+                        : worldFxaaEnabled_
+                        ? L"Shared texture consumer opened all three x86-produced resources and enabled x64 aspect-fit conversion with world FXAA; AO and bloom are disabled."
+                        : L"Shared texture consumer opened all three x86-produced resources and enabled x64 aspect-fit conversion with world FXAA disabled by BFVR_OPENXR_FXAA=0; AO and bloom are disabled.",
+                    ambientOcclusionIntensity_);
+            }
         }
     }
     else
@@ -382,8 +434,9 @@ bool SharedTextureConsumer::ConsumeFrame(
     std::array<bool, kTextureCount> acquired = {};
     std::array<bool, kDepthTextureCount> depthAcquired = {};
     const bool useDepth =
-        (ambientOcclusionEnabled_ ||
-         (waterReflectionsEnabled_ && waterMaskValid)) &&
+            (ambientOcclusionEnabled_ ||
+             screenSpaceGlobalIlluminationEnabled_ ||
+             (waterReflectionsEnabled_ && waterMaskValid)) &&
         depthValid && depthFrame != nullptr;
     for (std::size_t index = 0; index < textures_.size(); ++index)
     {
@@ -446,6 +499,30 @@ bool SharedTextureConsumer::ConsumeFrame(
         }
     }
 
+    bool ssgiFrameStarted = false;
+    bool applyScreenSpaceGlobalIllumination = false;
+    if (useDepth && screenSpaceGlobalIlluminationEnabled_)
+    {
+        ssgiFrameStarted = screenSpaceGlobalIllumination_.BeginFrame();
+        applyScreenSpaceGlobalIllumination = ssgiFrameStarted;
+        for (std::size_t eye = 0;
+             eye < depthTextures_.size() &&
+                 applyScreenSpaceGlobalIllumination;
+             ++eye)
+        {
+            applyScreenSpaceGlobalIllumination =
+                screenSpaceGlobalIllumination_.BuildEye(
+                    eye,
+                    textures_[eye].sharedView,
+                    textures_[eye].sourceAlreadyLinear,
+                    depthTextures_[eye].sharedView,
+                    depthTextures_[eye].width,
+                    depthTextures_[eye].height,
+                    depthFrame->projections[eye]);
+        }
+        screenSpaceGlobalIllumination_.EndFrame();
+    }
+
     bool applyWaterReflections =
         useDepth && waterReflectionsEnabled_ && waterMaskValid;
     for (std::size_t eye = 0;
@@ -498,6 +575,11 @@ bool SharedTextureConsumer::ConsumeFrame(
                 applyWaterReflections && index < depthTextures_.size()
                 ? waterReflection_.GetEyeView(index)
                 : nullptr;
+            ID3D11ShaderResourceView* const ssgiView =
+                applyScreenSpaceGlobalIllumination &&
+                    index < depthTextures_.size()
+                ? screenSpaceGlobalIllumination_.GetEyeView(index)
+                : nullptr;
             copied = scaler_.ScaleAspectFit(
                 texture.sharedView,
                 texture.sourceWidth,
@@ -510,6 +592,13 @@ bool SharedTextureConsumer::ConsumeFrame(
                 texture.applyAntialiasing,
                 aoView,
                 aoView != nullptr ? ambientOcclusionIntensity_ : 0.0F,
+                ssgiView,
+                ssgiView != nullptr
+                    ? screenSpaceGlobalIlluminationIntensity_
+                    : 0.0F,
+                ssgiView != nullptr
+                    ? screenSpaceGlobalIlluminationDebugMode_
+                    : 0.0F,
                 waterReflectionView,
                 waterReflectionView != nullptr
                     ? waterReflectionIntensity_
@@ -532,6 +621,17 @@ bool SharedTextureConsumer::ConsumeFrame(
     }
     if (aoFrameStarted)
         ambientOcclusion_.EndFrame();
+    if (useDepth && screenSpaceGlobalIlluminationEnabled_ &&
+        !applyScreenSpaceGlobalIllumination)
+    {
+        ++screenSpaceGlobalIlluminationFrameFailures_;
+        if (screenSpaceGlobalIlluminationFrameFailures_ <= 3)
+        {
+            WriteLog(
+                L"Shared texture consumer rejected SSGI inputs for frame failure %ld; presenting color/UI without SSGI.",
+                screenSpaceGlobalIlluminationFrameFailures_);
+        }
+    }
     if (useDepth && ambientOcclusionEnabled_ && !applyAmbientOcclusion)
     {
         ++ambientOcclusionFrameFailures_;
@@ -611,6 +711,8 @@ bool SharedTextureConsumer::ConsumeFrame(
     }
     if (aoFrameStarted)
         ambientOcclusion_.CollectFrameTimings();
+    if (ssgiFrameStarted)
+        screenSpaceGlobalIllumination_.CollectFrameTimings();
     if (bloomFrameStarted)
         scaler_.CollectBloomFrameTimings();
 
@@ -661,6 +763,7 @@ void SharedTextureConsumer::Shutdown()
 {
     mainMenuOverlay_.Shutdown();
     ambientOcclusion_.Shutdown();
+    screenSpaceGlobalIllumination_.Shutdown();
     waterReflection_.Shutdown();
     scaler_.Shutdown();
     scalerRequired_ = false;
@@ -668,9 +771,13 @@ void SharedTextureConsumer::Shutdown()
     worldFxaaEnabled_ = true;
     worldBloomEnabled_ = false;
     ambientOcclusionEnabled_ = false;
+    screenSpaceGlobalIlluminationEnabled_ = false;
     waterReflectionsEnabled_ = false;
     ambientOcclusionIntensity_ = 1.0F;
     ambientOcclusionFrameFailures_ = 0;
+    screenSpaceGlobalIlluminationIntensity_ = 0.65F;
+    screenSpaceGlobalIlluminationDebugMode_ = 0.0F;
+    screenSpaceGlobalIlluminationFrameFailures_ = 0;
     waterReflectionIntensity_ = 1.0F;
     waterReflectionFrameFailures_ = 0;
     worldBloomThreshold_ = 0.55F;

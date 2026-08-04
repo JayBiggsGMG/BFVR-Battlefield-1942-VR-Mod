@@ -366,7 +366,7 @@ int wmain(int argc, wchar_t** argv)
     passed = passed && SUCCEEDED(result) && colorView != nullptr &&
         destinationTarget != nullptr &&
         scaler.Initialize(
-            device, context, WriteLog, nullptr, false, true, false);
+            device, context, WriteLog, nullptr, false, true, false, false);
     auto drawStereoComposite = [&](bool applyAo)
     {
         bool drawn = true;
@@ -386,6 +386,9 @@ int wmain(int argc, wchar_t** argv)
                 true,
                 eyeAo,
                 eyeAo != nullptr ? 1.0F : 0.0F,
+                nullptr,
+                0.0F,
+                0.0F,
                 nullptr,
                 0.0F,
                 false,

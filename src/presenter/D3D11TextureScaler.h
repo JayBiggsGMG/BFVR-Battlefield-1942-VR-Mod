@@ -25,6 +25,7 @@ public:
         void* logContext,
         bool enableBloom,
         bool enableAmbientOcclusion,
+        bool enableScreenSpaceGlobalIllumination,
         bool enableWaterReflections);
     bool ScaleAspectFit(
         ID3D11ShaderResourceView* sourceView,
@@ -38,6 +39,9 @@ public:
         bool applyAntialiasing,
         ID3D11ShaderResourceView* ambientOcclusionView,
         float ambientOcclusionIntensity,
+        ID3D11ShaderResourceView* screenSpaceGlobalIlluminationView,
+        float screenSpaceGlobalIlluminationIntensity,
+        float screenSpaceGlobalIlluminationDebugMode,
         ID3D11ShaderResourceView* waterReflectionView,
         float waterReflectionIntensity,
         bool applyBloom,
@@ -63,6 +67,8 @@ private:
         float bloomIntensity,
         float bloomTexelWidth,
         float bloomTexelHeight,
+        float screenSpaceGlobalIlluminationIntensity,
+        float screenSpaceGlobalIlluminationDebugMode,
         float waterReflectionIntensity);
     void WriteLog(const wchar_t* format, ...) const;
 

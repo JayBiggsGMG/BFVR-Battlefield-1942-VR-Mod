@@ -3,6 +3,7 @@
 #include "openxr/OpenXRPresentation.h"
 #include "presenter/D3D11AmbientOcclusion.h"
 #include "presenter/D3D11MainMenuOverlay.h"
+#include "presenter/D3D11ScreenSpaceGlobalIllumination.h"
 #include "presenter/D3D11TextureScaler.h"
 #include "presenter/D3D11WaterReflection.h"
 #include "presenter/SharedPresentationProtocol.h"
@@ -92,6 +93,7 @@ private:
     ID3D11Query* legacyCompletionQuery_ = nullptr;
     D3D11MainMenuOverlay mainMenuOverlay_;
     D3D11AmbientOcclusion ambientOcclusion_;
+    D3D11ScreenSpaceGlobalIllumination screenSpaceGlobalIllumination_;
     D3D11WaterReflection waterReflection_;
     D3D11TextureScaler scaler_;
     bool requiresLegacyCompletionWait_ = false;
@@ -99,9 +101,13 @@ private:
     bool worldFxaaEnabled_ = true;
     bool worldBloomEnabled_ = false;
     bool ambientOcclusionEnabled_ = false;
+    bool screenSpaceGlobalIlluminationEnabled_ = false;
     bool waterReflectionsEnabled_ = false;
     float ambientOcclusionIntensity_ = 1.0F;
     LONG ambientOcclusionFrameFailures_ = 0;
+    float screenSpaceGlobalIlluminationIntensity_ = 0.65F;
+    float screenSpaceGlobalIlluminationDebugMode_ = 0.0F;
+    LONG screenSpaceGlobalIlluminationFrameFailures_ = 0;
     float waterReflectionIntensity_ = 1.0F;
     LONG waterReflectionFrameFailures_ = 0;
     float worldBloomThreshold_ = 0.55F;
