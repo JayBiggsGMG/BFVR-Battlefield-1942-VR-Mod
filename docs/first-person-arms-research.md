@@ -1115,6 +1115,20 @@ the pistol remained visual-only in the live session. The actual 35-degree
 limit, focus/tracking-loss fallback, semantic mod classification, native
 pistol-cup timing, and elbow-pole correction remain separate open checks.
 
+The owner's 2026-08-04 cross-side test supersedes the release radius and runtime
+35-degree cap. Pulling an established grip beyond 0.20 m could detach both the
+ordinary binding and the duplicate scoped continuation, while a far-side move
+could flip the sign of a capped cross-product swing and snap aim. Proximity and
+dwell remain acquisition requirements, but a successful grab is now retained
+independently of distance until squeeze-up or a real tracking/focus/IK-owner/
+item/soldier lifetime change. Primary and scoped steering use the full
+pi-radian directional range, and exact antiparallel input selects a stable
+perpendicular from the current gun basis. The right grip remains the pivot,
+radial mismatch still causes no weapon scaling, and pistol support remains
+visual-only. Deterministic coverage includes five-metre retention, uncapped
+90-degree steering, exact 180-degree steering, and explicit release; headset
+validation remains open.
+
 ### Elbow pole and shoulder-frame research
 
 The user's next live observations isolate an animation-dependent bend-plane

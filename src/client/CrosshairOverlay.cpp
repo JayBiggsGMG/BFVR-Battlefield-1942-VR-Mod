@@ -50,7 +50,7 @@ constexpr std::array<BYTE, 25> kExpectedPrefix = {
 class CrosshairOverlay
 {
 public:
-    using SetShowCrosshairFn = void(__thiscall*)(void* manager, BOOL show);
+    using SetShowCrosshairFn = void(__thiscall*)(void* manager, BYTE show);
 
     void Start(
         void* gameImage,
@@ -127,7 +127,7 @@ public:
         hookEnabled_ = true;
         bfvr::InitializeD3D8WorldCrosshairRenderer(log);
         WriteLog(
-            L"Native flat crosshair suppression and 3D reticle state armed at 0x006A97B0; maximumDistance=%.2f m angularDiameter=%.2f degrees. Ordinary HudManager requests are forced off, while a verified active scope may retain BF1942's native scope image; global HUD and unrelated Ref2 draw families remain unchanged.",
+            L"Native flat crosshair suppression and 3D reticle state armed at 0x006A97B0; maximumDistance=%.2f m angularDiameter=%.2f degrees. Ordinary HudManager requests are forced off, while a verified active exact scope forces BF1942's native CrossHair visible even through contradictory multiplayer HUD requests; global HUD and unrelated Ref2 draw families remain unchanged.",
             maximumDistance_,
             angularDiameterDegrees_);
     }
@@ -149,10 +149,15 @@ public:
             Sleep(0);
         }
         WriteLog(
-            L"Native crosshair suppression stopped: visibilityRequests=%ld forcedHidden=%ld scopeVisibilityPasses=%ld.",
+            L"Native crosshair suppression stopped: visibilityRequests=%ld forcedHidden=%ld scopeVisibilityPasses=%ld scopeVisibilityForces=%ld pendingScopeVisibilityPasses=%ld.",
             InterlockedCompareExchange(&visibilityRequests_, 0, 0),
             InterlockedCompareExchange(&forcedHidden_, 0, 0),
-            InterlockedCompareExchange(&scopeVisibilityPasses_, 0, 0));
+            InterlockedCompareExchange(&scopeVisibilityPasses_, 0, 0),
+            InterlockedCompareExchange(&scopeVisibilityForces_, 0, 0),
+            InterlockedCompareExchange(
+                &pendingScopeVisibilityPasses_,
+                0,
+                0));
         RemoveHook();
         bfvr::ShutdownD3D8WorldCrosshairRenderer();
         gameImage_ = nullptr;
@@ -261,7 +266,7 @@ private:
     static void __fastcall Hook(
         void* manager,
         void*,
-        BOOL requestedVisible)
+        BYTE requestedVisible)
     {
         InterlockedIncrement(&callbackEntrants_);
         CrosshairOverlay* const overlay =
@@ -276,11 +281,38 @@ private:
             InterlockedExchange(
                 &overlay->requestedVisible_,
                 requestedVisible ? 1 : 0);
-            const bool retainNativeScope =
-                requestedVisible && bfvr::IsScopeViewActive();
-            if (retainNativeScope)
+            const bool pendingScopeActivation =
+                bfvr::IsScopeViewActivationPending();
+            const bool forceExactScopeVisible =
+                bfvr::IsScopeViewActive() || pendingScopeActivation;
+            if (forceExactScopeVisible)
             {
                 InterlockedIncrement(&overlay->scopeVisibilityPasses_);
+                if (pendingScopeActivation)
+                {
+                    InterlockedIncrement(
+                        &overlay->pendingScopeVisibilityPasses_);
+                    if (InterlockedCompareExchange(
+                            &overlay->firstPendingScopeVisibilityLogged_,
+                            1,
+                            0) == 0)
+                    {
+                        overlay->WriteLog(
+                            L"Exact owned scope preserved its first nested native CrossHair visibility request during FireArms::setZoom(true), before the native call populated BFVR's post-transition scope state.");
+                    }
+                }
+                if (!requestedVisible)
+                {
+                    InterlockedIncrement(&overlay->scopeVisibilityForces_);
+                    if (InterlockedCompareExchange(
+                            &overlay->firstScopeVisibilityForceLogged_,
+                            1,
+                            0) == 0)
+                    {
+                        overlay->WriteLog(
+                            L"Verified exact scope overrode its first contradictory native setShowCrossHair(false) request so the transported scope image remains visible for the owned zoom lifetime.");
+                    }
+                }
             }
             else if (requestedVisible)
             {
@@ -288,7 +320,7 @@ private:
             }
             overlay->original_(
                 manager,
-                retainNativeScope ? TRUE : FALSE);
+                static_cast<BYTE>(forceExactScopeVisible ? 1 : 0));
         }
         InterlockedDecrement(&callbackEntrants_);
     }
@@ -374,6 +406,10 @@ private:
     volatile LONG visibilityRequests_ = 0;
     volatile LONG forcedHidden_ = 0;
     volatile LONG scopeVisibilityPasses_ = 0;
+    volatile LONG scopeVisibilityForces_ = 0;
+    volatile LONG firstScopeVisibilityForceLogged_ = 0;
+    volatile LONG pendingScopeVisibilityPasses_ = 0;
+    volatile LONG firstPendingScopeVisibilityLogged_ = 0;
     volatile LONG requestedVisible_ = 0;
     std::byte* gameImage_ = nullptr;
     float maximumDistance_ = kDefaultMaximumDistance;

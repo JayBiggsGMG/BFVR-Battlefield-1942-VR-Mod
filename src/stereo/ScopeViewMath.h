@@ -30,12 +30,14 @@ enum class ScopeAimSource
 };
 
 // Keeps native scope-mode lifetime independent from transient pose-cache
-// availability. A confirmed receiver/lifetime contradiction fails closed;
-// an ordinary cache miss may reuse only an already-validated gun basis.
+// availability. An exact owned weapon/soldier lifetime may retain its already
+// validated tracked or latched gun basis when BF1942 hides the native 1P arm
+// after entering scope; other confirmed lifetime contradictions fail closed.
 [[nodiscard]] ScopeAimSource SelectScopeAimSource(
     bool scopeRequested,
     bool freshPoseMatchesRequestedWeapon,
     bool freshPoseContradictsRequestedWeapon,
+    bool retainOwnedLifetimeThroughPoseContradiction,
     bool trackedPoseAvailable,
     bool latchedPoseAvailable) noexcept;
 
@@ -65,18 +67,15 @@ enum class ScopeAimSource
     const Matrix4& correction,
     const Matrix4& trackedGunWorld) noexcept;
 
-// Preserves the established primary-support binding only while the current
-// focused, tracked left squeeze remains within its ordinary release gate.
-// It is a view-policy check and does not acquire or mutate native grip state.
+// Preserves the established primary-support binding while the current focused,
+// tracked left squeeze remains held. Distance is deliberately acquisition-only;
+// this view-policy check does not acquire or mutate native grip state.
 [[nodiscard]] bool IsD3D8ScopeOffHandSupportHeld(
     bool bindingEstablished,
     bool sessionFocused,
     bool leftGripTracked,
     bool leftSqueezeActive,
-    float leftSqueezeValue,
-    const Matrix4& predictedSupportWorld,
-    const Matrix4& trackedLeftGripWorld,
-    float worldUnitsPerMetre = 1.0F) noexcept;
+    float leftSqueezeValue) noexcept;
 
 // Converts BF1942's saved normal vertical FOV and configured scope FOV into
 // the projection-axis scale needed to preserve the weapon's exact relative

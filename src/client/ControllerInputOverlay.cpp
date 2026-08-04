@@ -1,6 +1,7 @@
 #include "client/ControllerInputOverlay.h"
 
 #include "client/ControllerInputCache.h"
+#include "client/ScopeViewOverlay.h"
 #include "presenter/SharedPresentationProtocol.h"
 #include "stereo/VehicleMotionAimMath.h"
 
@@ -21,7 +22,12 @@
 namespace
 {
 constexpr std::ptrdiff_t kFrameBuilderRva = 0x000B6A30;
+constexpr std::ptrdiff_t kPlayerActionEncoderRva = 0x00083E70;
 constexpr std::ptrdiff_t kNormalizerRva = 0x000913A0;
+constexpr std::ptrdiff_t kMultiplayerEncoderCallSiteRva = 0x000B8E45;
+constexpr std::ptrdiff_t kMultiplayerEncoderReturnRva = 0x000B8E53;
+constexpr std::ptrdiff_t kMultiplayerNormalizerCallSiteRva = 0x000B8E53;
+constexpr std::ptrdiff_t kMultiplayerNormalizerReturnRva = 0x000B8E61;
 constexpr std::ptrdiff_t kGameInputQueryRva = 0x00046490;
 constexpr std::ptrdiff_t kSetupScoreboardQueryReturnRva = 0x000469A2;
 constexpr std::ptrdiff_t kHudManagerSetShowScoreboardRva = 0x002A9C90;
@@ -84,9 +90,23 @@ enum class ControllerControlMode : BYTE
 constexpr BYTE kFrameBuilderPrefix[] = {
     0x81, 0xEC, 0x34, 0x01, 0x00, 0x00, 0x53, 0x55,
     0x8B, 0xAC, 0x24, 0x40, 0x01, 0x00, 0x00, 0x33};
+constexpr BYTE kPlayerActionEncoderPrefix[] = {
+    0x81, 0xEC, 0xFC, 0x00, 0x00, 0x00, 0x56, 0x8B,
+    0xB4, 0x24, 0x04, 0x01, 0x00, 0x00, 0x8B, 0x86,
+    0xE0, 0x00, 0x00, 0x00, 0x57, 0x8B, 0xF9};
 constexpr BYTE kNormalizerPrefix[] = {
     0x83, 0xEC, 0x10, 0x89, 0x4C, 0x24, 0x00, 0x33,
     0xC0, 0x8D, 0xA4, 0x24, 0x00, 0x00, 0x00, 0x00};
+// The multiplayer loop must receive BFVR input before this encoder converts
+// six logical axes and the button mask to its compact PlayerAction record.
+constexpr BYTE kMultiplayerEncoderCallSitePrefix[] = {
+    0x8D, 0x4C, 0x24, 0x30, 0x51, 0x8D, 0x4C,
+    0x24, 0x1C, 0xE8, 0x1D, 0xB0, 0xFC, 0xFF};
+// FUN_004B8D70 resolves the current BFPlayer into EBX, prepares its temporary
+// logical frame, and calls the shared normalizer through this exact sequence.
+constexpr BYTE kMultiplayerNormalizerCallSitePrefix[] = {
+    0x8D, 0x54, 0x24, 0x30, 0x52, 0x8D, 0x4C,
+    0x24, 0x1C, 0xE8, 0x3F, 0x85, 0xFD, 0xFF};
 constexpr BYTE kGameInputQueryPrefix[] = {
     0x56, 0x57, 0x8B, 0x7C, 0x24, 0x0C, 0x83, 0xFF,
     0x2F, 0x8B, 0xF1, 0x73, 0x43, 0xB8, 0x01, 0x00};
@@ -160,12 +180,30 @@ int ThumbstickDirection(float value) noexcept
     return 0;
 }
 
+class ControllerInputOverlay;
+void ControllerInputPlayerActionEncodeHook();
+void __stdcall ControllerInputPlayerActionEncodeHookImpl(
+    void* encodedDestination,
+    float* logicalFrame,
+    void* callerEbx,
+    const void* returnAddress);
+DWORD ControllerInputNormalizeHook();
+DWORD __stdcall ControllerInputNormalizeHookImpl(
+    void* rawSource,
+    float* destination,
+    void* callerEbx,
+    const void* returnAddress);
+
 class ControllerInputOverlay
 {
 public:
     using FrameBuilderFn = DWORD(__thiscall*)(void* owner, void* player, void* context);
+    using PlayerActionEncodeFn = void(__thiscall*)(
+        void* encodedDestination,
+        float* logicalFrame);
     using NormalizeFn = DWORD(__thiscall*)(void* rawSource, float* destination);
     using GameInputQueryFn = DWORD(__thiscall*)(void* gameInput, DWORD inputId);
+    using BFPlayerGetCurrentControlObjectFn = void*(__thiscall*)(void* player);
     using HudManagerSetShowScoreboardFn =
         void(__thiscall*)(void* hudManager, int source, int state);
 
@@ -181,9 +219,18 @@ public:
         frameBuilderTarget = gameImage == nullptr
             ? nullptr
             : gameImage + kFrameBuilderRva;
+        playerActionEncoderTarget = gameImage == nullptr
+            ? nullptr
+            : gameImage + kPlayerActionEncoderRva;
         normalizerTarget = gameImage == nullptr
             ? nullptr
             : gameImage + kNormalizerRva;
+        multiplayerEncoderCallSite = gameImage == nullptr
+            ? nullptr
+            : gameImage + kMultiplayerEncoderCallSiteRva;
+        multiplayerNormalizerCallSite = gameImage == nullptr
+            ? nullptr
+            : gameImage + kMultiplayerNormalizerCallSiteRva;
         gameInputQueryTarget = gameImage == nullptr
             ? nullptr
             : gameImage + kGameInputQueryRva;
@@ -191,27 +238,58 @@ public:
             ? nullptr
             : reinterpret_cast<HudManagerSetShowScoreboardFn>(
                 gameImage + kHudManagerSetShowScoreboardRva);
-        if (!HasExpectedPrefix(
-                frameBuilderTarget,
-                kFrameBuilderPrefix,
-                sizeof(kFrameBuilderPrefix)) ||
-            !HasExpectedPrefix(
-                normalizerTarget,
-                kNormalizerPrefix,
-                sizeof(kNormalizerPrefix)) ||
-            !HasExpectedPrefix(
-                gameInputQueryTarget,
-                kGameInputQueryPrefix,
-                sizeof(kGameInputQueryPrefix)) ||
-            !HasExpectedPrefix(
-                reinterpret_cast<const void*>(hudManagerSetShowScoreboard),
-                kHudManagerSetShowScoreboardPrefix,
-                sizeof(kHudManagerSetShowScoreboardPrefix)))
+        const bool frameBuilderPrefixMatches = HasExpectedPrefix(
+            frameBuilderTarget,
+            kFrameBuilderPrefix,
+            sizeof(kFrameBuilderPrefix));
+        const bool playerActionEncoderPrefixMatches = HasExpectedPrefix(
+            playerActionEncoderTarget,
+            kPlayerActionEncoderPrefix,
+            sizeof(kPlayerActionEncoderPrefix));
+        const bool normalizerPrefixMatches = HasExpectedPrefix(
+            normalizerTarget,
+            kNormalizerPrefix,
+            sizeof(kNormalizerPrefix));
+        const bool multiplayerEncoderCallSitePrefixMatches = HasExpectedPrefix(
+            multiplayerEncoderCallSite,
+            kMultiplayerEncoderCallSitePrefix,
+            sizeof(kMultiplayerEncoderCallSitePrefix));
+        const bool multiplayerNormalizerCallSitePrefixMatches = HasExpectedPrefix(
+            multiplayerNormalizerCallSite,
+            kMultiplayerNormalizerCallSitePrefix,
+            sizeof(kMultiplayerNormalizerCallSitePrefix));
+        const bool gameInputQueryPrefixMatches = HasExpectedPrefix(
+            gameInputQueryTarget,
+            kGameInputQueryPrefix,
+            sizeof(kGameInputQueryPrefix));
+        const bool scoreboardPrefixMatches = HasExpectedPrefix(
+            reinterpret_cast<const void*>(hudManagerSetShowScoreboard),
+            kHudManagerSetShowScoreboardPrefix,
+            sizeof(kHudManagerSetShowScoreboardPrefix));
+        if (!frameBuilderPrefixMatches ||
+            !playerActionEncoderPrefixMatches ||
+            !normalizerPrefixMatches ||
+            !multiplayerEncoderCallSitePrefixMatches ||
+            !multiplayerNormalizerCallSitePrefixMatches ||
+            !gameInputQueryPrefixMatches ||
+            !scoreboardPrefixMatches)
         {
             WriteLog(
-                L"Controller input overlay rejected profiled targets frameBuilder=%p normalizer=%p gameInputQuery=%p setShowScoreboard=%p: one or more prefixes differ.",
+                L"Controller input overlay rejected profiled targets because prefix checks failed: frameBuilder=%d encoder=%d multiplayerEncoderCallSite=%d normalizer=%d multiplayerNormalizerCallSite=%d gameInputQuery=%d setShowScoreboard=%d (1=match, 0=mismatch).",
+                frameBuilderPrefixMatches ? 1 : 0,
+                playerActionEncoderPrefixMatches ? 1 : 0,
+                multiplayerEncoderCallSitePrefixMatches ? 1 : 0,
+                normalizerPrefixMatches ? 1 : 0,
+                multiplayerNormalizerCallSitePrefixMatches ? 1 : 0,
+                gameInputQueryPrefixMatches ? 1 : 0,
+                scoreboardPrefixMatches ? 1 : 0);
+            WriteLog(
+                L"Controller input overlay rejected addresses frameBuilder=%p encoder=%p multiplayerEncoderCallSite=%p normalizer=%p multiplayerNormalizerCallSite=%p gameInputQuery=%p setShowScoreboard=%p.",
                 frameBuilderTarget,
+                playerActionEncoderTarget,
+                multiplayerEncoderCallSite,
                 normalizerTarget,
+                multiplayerNormalizerCallSite,
                 gameInputQueryTarget,
                 reinterpret_cast<void*>(hudManagerSetShowScoreboard));
             return;
@@ -233,10 +311,16 @@ public:
             frameBuilderTarget,
             reinterpret_cast<LPVOID>(&ControllerInputOverlay::FrameBuilderHook),
             reinterpret_cast<LPVOID*>(&originalFrameBuilder));
-        const MH_STATUS createNormalizer = createFrameBuilder == MH_OK
+        const MH_STATUS createPlayerActionEncoder = createFrameBuilder == MH_OK
+            ? MH_CreateHook(
+                playerActionEncoderTarget,
+                reinterpret_cast<LPVOID>(&ControllerInputPlayerActionEncodeHook),
+                reinterpret_cast<LPVOID*>(&originalPlayerActionEncode))
+            : MH_ERROR_NOT_CREATED;
+        const MH_STATUS createNormalizer = createPlayerActionEncoder == MH_OK
             ? MH_CreateHook(
                 normalizerTarget,
-                reinterpret_cast<LPVOID>(&ControllerInputOverlay::NormalizeHook),
+                reinterpret_cast<LPVOID>(&ControllerInputNormalizeHook),
                 reinterpret_cast<LPVOID*>(&originalNormalize))
             : MH_ERROR_NOT_CREATED;
         const MH_STATUS createGameInputQuery = createNormalizer == MH_OK
@@ -246,16 +330,20 @@ public:
                 reinterpret_cast<LPVOID*>(&originalGameInputQuery))
             : MH_ERROR_NOT_CREATED;
         frameBuilderCreated = createFrameBuilder == MH_OK;
+        playerActionEncoderCreated = createPlayerActionEncoder == MH_OK;
         normalizerCreated = createNormalizer == MH_OK;
         gameInputQueryCreated = createGameInputQuery == MH_OK;
-        if (createFrameBuilder != MH_OK || createNormalizer != MH_OK ||
+        if (createFrameBuilder != MH_OK || createPlayerActionEncoder != MH_OK ||
+            createNormalizer != MH_OK ||
             createGameInputQuery != MH_OK ||
-            originalFrameBuilder == nullptr || originalNormalize == nullptr ||
+            originalFrameBuilder == nullptr ||
+            originalPlayerActionEncode == nullptr || originalNormalize == nullptr ||
             originalGameInputQuery == nullptr)
         {
             WriteLog(
-                L"Controller input overlay could not create its native-frame hooks (frameBuilder=%d normalizer=%d gameInputQuery=%d).",
+                L"Controller input overlay could not create its native-frame hooks (frameBuilder=%d encoder=%d normalizer=%d gameInputQuery=%d).",
                 static_cast<int>(createFrameBuilder),
+                static_cast<int>(createPlayerActionEncoder),
                 static_cast<int>(createNormalizer),
                 static_cast<int>(createGameInputQuery));
             RemoveHooks();
@@ -263,28 +351,34 @@ public:
         }
         active = this;
         const MH_STATUS enableFrameBuilder = MH_EnableHook(frameBuilderTarget);
-        const MH_STATUS enableNormalizer = enableFrameBuilder == MH_OK
+        const MH_STATUS enablePlayerActionEncoder = enableFrameBuilder == MH_OK
+            ? MH_EnableHook(playerActionEncoderTarget)
+            : MH_ERROR_ENABLED;
+        const MH_STATUS enableNormalizer = enablePlayerActionEncoder == MH_OK
             ? MH_EnableHook(normalizerTarget)
             : MH_ERROR_ENABLED;
         const MH_STATUS enableGameInputQuery = enableNormalizer == MH_OK
             ? MH_EnableHook(gameInputQueryTarget)
             : MH_ERROR_ENABLED;
         frameBuilderEnabled = enableFrameBuilder == MH_OK;
+        playerActionEncoderEnabled = enablePlayerActionEncoder == MH_OK;
         normalizerEnabled = enableNormalizer == MH_OK;
         gameInputQueryEnabled = enableGameInputQuery == MH_OK;
-        if (enableFrameBuilder != MH_OK || enableNormalizer != MH_OK ||
+        if (enableFrameBuilder != MH_OK || enablePlayerActionEncoder != MH_OK ||
+            enableNormalizer != MH_OK ||
             enableGameInputQuery != MH_OK)
         {
             WriteLog(
-                L"Controller input overlay could not enable its native-frame hooks (frameBuilder=%d normalizer=%d gameInputQuery=%d).",
+                L"Controller input overlay could not enable its native-frame hooks (frameBuilder=%d encoder=%d normalizer=%d gameInputQuery=%d).",
                 static_cast<int>(enableFrameBuilder),
+                static_cast<int>(enablePlayerActionEncoder),
                 static_cast<int>(enableNormalizer),
                 static_cast<int>(enableGameInputQuery));
             RemoveHooks();
             return;
         }
         WriteLog(
-            L"Controller input overlay armed at 0x004B6A30/0x004913A0, native GameInput action query 0x00446490, and HudManager scoreboard state machine 0x006A9C90. At the exact Setup scoreboard branch, controller Y submits the missing player-side source-0 state, then makes global logical action 35 true so BF1942 performs its ordinary paired dispatch; keyboard/mouse bindings remain native.");
+            L"Controller input overlay armed at local/offline scope 0x004B6A30, multiplayer PlayerAction encoder 0x00483E70/call 0x004B8E45, shared normalizer 0x004913A0/call 0x004B8E53, native GameInput action query 0x00446490, and HudManager scoreboard state machine 0x006A9C90. Multiplayer controller values are admitted only before encoding at return 0x004B8E53 when preserved EBX exactly equals the current manager local BFPlayer; the post-encode normalizer is observation-only for that route. Keyboard/mouse bindings remain native.");
     }
 
     void Stop()
@@ -294,6 +388,17 @@ public:
     }
 
 private:
+    friend void __stdcall ControllerInputPlayerActionEncodeHookImpl(
+        void* encodedDestination,
+        float* logicalFrame,
+        void* callerEbx,
+        const void* returnAddress);
+    friend DWORD __stdcall ControllerInputNormalizeHookImpl(
+        void* rawSource,
+        float* destination,
+        void* callerEbx,
+        const void* returnAddress);
+
     static DWORD __fastcall FrameBuilderHook(
         void* owner,
         void*,
@@ -310,22 +415,6 @@ private:
         scopedPlayer = player;
         const DWORD result = overlay->originalFrameBuilder(owner, player, context);
         scopedPlayer = previousPlayer;
-        return result;
-    }
-
-    static DWORD __fastcall NormalizeHook(
-        void* rawSource,
-        void*,
-        float* destination)
-    {
-        ControllerInputOverlay* const overlay = active;
-        if (overlay == nullptr || overlay->originalNormalize == nullptr)
-        {
-            return 0;
-        }
-        InterlockedIncrement(&overlay->normalizerCalls);
-        const DWORD result = overlay->originalNormalize(rawSource, destination);
-        overlay->OverlayCurrentLocalAliveFrame(destination);
         return result;
     }
 
@@ -457,9 +546,9 @@ private:
         }
     }
 
-    bool IsCurrentLocalAlivePlayer() noexcept
+    bool IsCurrentLocalAlivePlayer(void* candidatePlayer) noexcept
     {
-        if (gameImage == nullptr || scopedPlayer == nullptr)
+        if (gameImage == nullptr || candidatePlayer == nullptr)
         {
             InterlockedIncrement(&missingScopedPlayerFrames);
             return false;
@@ -476,7 +565,7 @@ private:
             const auto* const localPlayer = *reinterpret_cast<void* const*>(
                 static_cast<const std::byte*>(manager) +
                 kPlayerManagerLocalPlayerOffset);
-            if (localPlayer == nullptr || localPlayer != scopedPlayer)
+            if (localPlayer == nullptr || localPlayer != candidatePlayer)
             {
                 InterlockedIncrement(&nonLocalPlayerFrames);
                 return false;
@@ -499,9 +588,11 @@ private:
         }
     }
 
-    ControllerControlMode ReadCurrentControlMode() noexcept
+    ControllerControlMode ReadCurrentControlMode(
+        void* player,
+        bool multiplayerRoute) noexcept
     {
-        if (scopedPlayer == nullptr)
+        if (player == nullptr)
         {
             return ControllerControlMode::Unknown;
         }
@@ -511,9 +602,32 @@ private:
         __try
         {
             const auto* const playerBytes =
-                static_cast<const std::byte*>(scopedPlayer);
-            currentControlObject = *reinterpret_cast<void* const*>(
-                playerBytes + kBFPlayerCurrentControlObjectOffset);
+                static_cast<const std::byte*>(player);
+            if (multiplayerRoute)
+            {
+                auto* const vtable = *reinterpret_cast<void***>(player);
+                if (vtable == nullptr)
+                {
+                    return ControllerControlMode::Unknown;
+                }
+                const auto getCurrentControlObject =
+                    reinterpret_cast<BFPlayerGetCurrentControlObjectFn>(
+                        vtable[0x38 / sizeof(void*)]);
+                if (getCurrentControlObject == nullptr)
+                {
+                    return ControllerControlMode::Unknown;
+                }
+                // FUN_004B7FC0 is the consumer immediately downstream of the
+                // recovered multiplayer frame. It obtains the current object
+                // through this exact virtual +0x38 call before comparing it
+                // with BFPlayer +0x98 at 0x004B8092..0x004B80A1.
+                currentControlObject = getCurrentControlObject(player);
+            }
+            else
+            {
+                currentControlObject = *reinterpret_cast<void* const*>(
+                    playerBytes + kBFPlayerCurrentControlObjectOffset);
+            }
             defaultControlObject = *reinterpret_cast<void* const*>(
                 playerBytes + kBFPlayerDefaultControlObjectOffset);
         }
@@ -522,13 +636,34 @@ private:
             return ControllerControlMode::Unknown;
         }
 
-        if (currentControlObject == nullptr || defaultControlObject == nullptr)
+        ControllerControlMode mode = ControllerControlMode::Unknown;
+        if (currentControlObject != nullptr && defaultControlObject != nullptr)
         {
-            return ControllerControlMode::Unknown;
+            mode = currentControlObject == defaultControlObject
+                ? ControllerControlMode::Infantry
+                : ControllerControlMode::SurfaceVehicle;
         }
-        if (currentControlObject == defaultControlObject)
+        if (multiplayerRoute &&
+            InterlockedCompareExchange(
+                &firstMultiplayerControlModeLogged,
+                1,
+                0) == 0)
         {
-            return ControllerControlMode::Infantry;
+            WriteLog(
+                L"Multiplayer controller mode used BFPlayer virtual +0x38 exactly like native FUN_004B7FC0: player=%p current=%p default(+0x98)=%p initialMode=%s.",
+                player,
+                currentControlObject,
+                defaultControlObject,
+                mode == ControllerControlMode::Infantry
+                    ? L"infantry"
+                    : (mode == ControllerControlMode::SurfaceVehicle
+                        ? L"surface/non-default"
+                        : L"unknown"));
+        }
+        if (mode == ControllerControlMode::Unknown ||
+            mode == ControllerControlMode::Infantry)
+        {
+            return mode;
         }
 
         // PlayerControlObjectTemplate::vehicleCategory uses
@@ -559,7 +694,7 @@ private:
             // The current/default-object comparison has already established
             // vehicle control. Fail closed only on the air specialization.
         }
-        return ControllerControlMode::SurfaceVehicle;
+        return mode;
     }
 
     static bool IsHandButtonPressed(
@@ -620,6 +755,28 @@ private:
         }
     }
 
+    static bool IsInputActive(
+        const float* source,
+        DWORD input) noexcept
+    {
+        if (source == nullptr || input >= kLogicalInputCount ||
+            !std::isfinite(source[input]) || source[input] <= 0.5F)
+        {
+            return false;
+        }
+        const auto* const sourceBytes =
+            reinterpret_cast<const std::byte*>(source);
+        if (input < 32)
+        {
+            const DWORD lowMask = *reinterpret_cast<const DWORD*>(
+                sourceBytes + kLogicalInputEnableMaskLowOffset);
+            return (lowMask & (1U << input)) != 0;
+        }
+        const DWORD highMask = *reinterpret_cast<const DWORD*>(
+            sourceBytes + kLogicalInputEnableMaskHighOffset);
+        return (highMask & (1U << (input - 32))) != 0;
+    }
+
     static void AddAxisInput(
         float* destination,
         DWORD input,
@@ -666,6 +823,7 @@ private:
         }
         rightStickVerticalDirection = 0;
         crouchToggled = false;
+        nativeAltFireWasDown = false;
         bfvr::stereo::ResetVehicleMotionAim(surfaceVehicleMotionAim);
         activeControlMode = controlMode;
 
@@ -689,11 +847,18 @@ private:
         const bfvr::D3D8RuntimeControllerHand& left,
         const bfvr::D3D8RuntimeControllerHand& right,
         ControllerControlMode controlMode,
-        std::int64_t predictedDisplayTime) noexcept
+        std::int64_t predictedDisplayTime,
+        bool multiplayerRoute) noexcept
     {
         const bool quickMenuHeld = IsHandButtonPressed(
             right,
             bfvr::shared::kControllerHandButtonPrimary);
+        const bool nativeAltFireActive = IsInputActive(
+            destination,
+            kLogicalInputAltFire);
+        const bool nativeAltFirePressed =
+            nativeAltFireActive && !nativeAltFireWasDown;
+        nativeAltFireWasDown = nativeAltFireActive;
         bool jumpAndParachutePressed = false;
         bool crouchTogglePressed = false;
         bool mouseLookEnabled = false;
@@ -808,17 +973,44 @@ private:
                         bfvr::shared::kControllerHandFlagThumbstickActive) != 0)
                 {
                     // Ground and sea engines bind c_PIYaw as steering and
-                    // c_PIThrottle as gas/reverse. Preserve the post-deadzone
-                    // analogue magnitude instead of reducing either axis to
-                    // an on/off key value.
+                    // c_PIThrottle as gas/reverse. The proven multiplayer
+                    // infantry route establishes that these key-bound native
+                    // axes require full directional values; retain only the
+                    // controller deadzone and submit keyboard-equivalent
+                    // +/-1 values for reliable land/sea driving.
+                    const float steering =
+                        ApplyThumbstickDeadzone(left.thumbstickX);
+                    const float throttle =
+                        ApplyThumbstickDeadzone(left.thumbstickY);
+                    const float submittedSteering = steering == 0.0F
+                        ? 0.0F
+                        : std::copysign(1.0F, steering);
+                    const float submittedThrottle = throttle == 0.0F
+                        ? 0.0F
+                        : std::copysign(1.0F, throttle);
                     AddAxisInput(
                         destination,
                         kLogicalInputYaw,
-                        ApplyThumbstickDeadzone(left.thumbstickX));
+                        submittedSteering);
                     AddAxisInput(
                         destination,
                         kLogicalInputThrottle,
-                        ApplyThumbstickDeadzone(left.thumbstickY));
+                        submittedThrottle);
+                    if ((submittedSteering != 0.0F ||
+                         submittedThrottle != 0.0F) &&
+                        InterlockedCompareExchange(
+                            &firstSurfaceDriveInputLogged,
+                            1,
+                            0) == 0)
+                    {
+                        WriteLog(
+                            L"Surface vehicle controller drive submitted its first non-zero keyboard-equivalent axes before PlayerAction encoding: rawStick=(%.3f,%.3f) yaw/steer=%.1f throttle=%.1f multiplayerRoute=%d.",
+                            left.thumbstickX,
+                            left.thumbstickY,
+                            submittedSteering,
+                            submittedThrottle,
+                            multiplayerRoute ? 1 : 0);
+                    }
                 }
                 if ((right.flags &
                         bfvr::shared::kControllerHandFlagThumbstickActive) != 0)
@@ -933,15 +1125,49 @@ private:
 
         const bool rightSqueezeActive =
             (right.flags & bfvr::shared::kControllerHandFlagSqueezeActive) != 0;
-        SetHeldInput(
-            destination,
-            kLogicalInputAltFire,
-            UpdateAnalogHeld(
-                rightSqueezeActive,
-                right.squeezeValue,
-                kControllerSqueezePressThreshold,
-                kControllerSqueezeReleaseThreshold,
-                rightSqueezeHeld));
+        const bool rightSqueezeWasHeld = rightSqueezeHeld;
+        const bool rightSqueezeIsHeld = UpdateAnalogHeld(
+            rightSqueezeActive,
+            right.squeezeValue,
+            kControllerSqueezePressThreshold,
+            kControllerSqueezeReleaseThreshold,
+            rightSqueezeHeld);
+        const bool multiplayerInfantryAltFire =
+            multiplayerRoute &&
+            controlMode == ControllerControlMode::Infantry;
+        if (multiplayerInfantryAltFire)
+        {
+            const bool altFirePressed =
+                rightSqueezeIsHeld && !rightSqueezeWasHeld;
+            if (nativeAltFirePressed)
+            {
+                bfvr::NotifyMultiplayerNativeAltFireInput();
+            }
+            SetPulseInput(
+                destination,
+                kLogicalInputAltFire,
+                altFirePressed);
+            if (altFirePressed &&
+                InterlockedCompareExchange(
+                    &firstMultiplayerInfantryAltFirePulseLogged,
+                    1,
+                    0) == 0)
+            {
+                WriteLog(
+                    L"Multiplayer infantry right grip emitted one alt-fire action pulse on its hysteresis-filtered press edge. Native BF1942 scope/secondary-fire state now owns the lifetime; holding the grip cannot redispatch the toggle every PlayerAction frame.");
+            }
+            if (altFirePressed)
+            {
+                bfvr::NotifyMultiplayerInfantryAltFirePulse();
+            }
+        }
+        else
+        {
+            SetHeldInput(
+                destination,
+                kLogicalInputAltFire,
+                rightSqueezeIsHeld);
+        }
 
         const float vehiclePitch =
             (IsHandButtonPressed(
@@ -987,7 +1213,10 @@ private:
                 rightSecondaryWasDown));
     }
 
-    void OverlayCurrentLocalAliveFrame(float* destination) noexcept
+    void OverlayCurrentLocalAliveFrame(
+        float* destination,
+        void* candidatePlayer,
+        bool multiplayerRoute) noexcept
     {
         if (destination == nullptr)
         {
@@ -996,7 +1225,7 @@ private:
             ReportGateDiagnostics();
             return;
         }
-        if (!IsCurrentLocalAlivePlayer())
+        if (!IsCurrentLocalAlivePlayer(candidatePlayer))
         {
             // The native loop also builds remote-player frames between local
             // frames. They must not reset the local controller button/axis
@@ -1021,7 +1250,8 @@ private:
             sample.hands[kControllerHandLeft];
         const bfvr::D3D8RuntimeControllerHand& right =
             sample.hands[kControllerHandRight];
-        const ControllerControlMode controlMode = ReadCurrentControlMode();
+        const ControllerControlMode controlMode =
+            ReadCurrentControlMode(candidatePlayer, multiplayerRoute);
         UpdateControllerControlMode(controlMode);
         __try
         {
@@ -1030,7 +1260,8 @@ private:
                 left,
                 right,
                 controlMode,
-                sample.predictedDisplayTime);
+                sample.predictedDisplayTime,
+                multiplayerRoute);
         }
         __except (EXCEPTION_EXECUTE_HANDLER)
         {
@@ -1041,11 +1272,24 @@ private:
         }
 
         InterlockedIncrement(&appliedFrames);
+        if (multiplayerRoute)
+        {
+            InterlockedIncrement(&multiplayerAppliedFrames);
+            if (InterlockedCompareExchange(
+                    &firstMultiplayerEligibleFrameLogged,
+                    1,
+                    0) == 0)
+            {
+                WriteLog(
+                    L"Controller input overlay accepted its first prefix-verified multiplayer local frame before PlayerAction encoding: callerReturn=0x004B8E53 candidate=%p matched manager local BFPlayer, alive byte +0xA9 was set, and a fresh focused controller sample was applied to the temporary 55-slot frame before native axis/button quantization.",
+                    candidatePlayer);
+            }
+        }
 
         if (InterlockedCompareExchange(&firstEligibleFrameLogged, 1, 0) == 0)
         {
             WriteLog(
-                L"Controller input overlay accepted its first fresh focused local frame. Infantry layout remains: left stick move; right stick smooth-turn, up jump+parachute, down crouch toggle. Non-default surface control objects use analogue left throttle/steer plus complementary right-stick and mirrored right-grip-motion turret/station aim; VCAir objects use analogue left throttle/roll and right yaw/pitch (stick up dives). Stick clicks retain vehicle pitch hatch/dive actions. Right trigger fire; right grip supplies native alt-fire input without imposing BFVR toggle/hold semantics; left trigger use; A Quick Menu; B reload; X prone; Y native paired scoreboard; left grip off-hand support. Unknown control transitions enable no vehicle-only stick mapping. Logical actions remain independent of configurable keyboard/mouse bindings.");
+                L"Controller input overlay accepted its first fresh focused local frame. Infantry layout remains: left stick move; right stick smooth-turn, up jump+parachute, down crouch toggle. Non-default surface control objects use full-direction left throttle/steer plus complementary right-stick and mirrored right-grip-motion turret/station aim; VCAir objects use analogue left throttle/roll and right yaw/pitch (stick up dives). Stick clicks retain vehicle pitch hatch/dive actions. Right trigger fire; right grip emits one multiplayer-infantry alt-fire pulse per press while offline and non-default vehicle/mounted routes retain held alt-fire; left trigger use; A Quick Menu; B reload; X prone; Y native paired scoreboard; left grip off-hand support. Unknown control transitions enable no vehicle-only stick mapping. Logical actions remain independent of configurable keyboard/mouse bindings.");
         }
     }
 
@@ -1073,9 +1317,11 @@ private:
             return;
         }
         WriteLog(
-            L"Controller input overlay gate report (one second): frameBuilders=%ld normalizers=%ld localPlayer=%ld missingScope=%ld missingManager=%ld otherPlayer=%ld dead=%ld unreadable=%ld noDestination=%ld controllerUnavailable=%ld freshController=%ld writeFault=%ld applied=%ld.",
+            L"Controller input overlay gate report (one second): frameBuilders=%ld multiplayerEncoders=%ld normalizers=%ld multiplayerNormalizers=%ld localPlayer=%ld missingScope=%ld missingManager=%ld otherPlayer=%ld dead=%ld unreadable=%ld noDestination=%ld controllerUnavailable=%ld freshController=%ld writeFault=%ld applied=%ld multiplayerApplied=%ld.",
             InterlockedExchange(&frameBuilderCalls, 0),
+            InterlockedExchange(&multiplayerEncoderCalls, 0),
             normalizers,
+            InterlockedExchange(&multiplayerNormalizerCalls, 0),
             InterlockedExchange(&eligibleLocalPlayerFrames, 0),
             InterlockedExchange(&missingScopedPlayerFrames, 0),
             InterlockedExchange(&missingManagerFrames, 0),
@@ -1086,7 +1332,8 @@ private:
             InterlockedExchange(&staleOrMissingControllerFrames, 0),
             InterlockedExchange(&freshControllerFrames, 0),
             InterlockedExchange(&unwritableDestinationFrames, 0),
-            InterlockedExchange(&appliedFrames, 0));
+            InterlockedExchange(&appliedFrames, 0),
+            InterlockedExchange(&multiplayerAppliedFrames, 0));
     }
 
     void ResetControllerState() noexcept
@@ -1094,6 +1341,7 @@ private:
         triggerHeld = false;
         leftTriggerHeld = false;
         rightSqueezeHeld = false;
+        nativeAltFireWasDown = false;
         leftPrimaryWasDown = false;
         rightSecondaryWasDown = false;
         rightStickVerticalDirection = 0;
@@ -1114,6 +1362,11 @@ private:
             MH_DisableHook(normalizerTarget);
             normalizerEnabled = false;
         }
+        if (playerActionEncoderEnabled)
+        {
+            MH_DisableHook(playerActionEncoderTarget);
+            playerActionEncoderEnabled = false;
+        }
         if (frameBuilderEnabled)
         {
             MH_DisableHook(frameBuilderTarget);
@@ -1123,6 +1376,11 @@ private:
         {
             MH_RemoveHook(normalizerTarget);
             normalizerCreated = false;
+        }
+        if (playerActionEncoderCreated)
+        {
+            MH_RemoveHook(playerActionEncoderTarget);
+            playerActionEncoderCreated = false;
         }
         if (gameInputQueryCreated)
         {
@@ -1139,6 +1397,7 @@ private:
             active = nullptr;
         }
         originalFrameBuilder = nullptr;
+        originalPlayerActionEncode = nullptr;
         originalNormalize = nullptr;
         originalGameInputQuery = nullptr;
         hudManagerSetShowScoreboard = nullptr;
@@ -1176,14 +1435,22 @@ private:
     std::byte* gameImage = nullptr;
     void (*appendLog)(const wchar_t* message) = nullptr;
     void* frameBuilderTarget = nullptr;
+    void* playerActionEncoderTarget = nullptr;
     void* normalizerTarget = nullptr;
+    const std::byte* multiplayerEncoderCallSite = nullptr;
+    const std::byte* multiplayerNormalizerCallSite = nullptr;
     void* gameInputQueryTarget = nullptr;
     FrameBuilderFn originalFrameBuilder = nullptr;
+    PlayerActionEncodeFn originalPlayerActionEncode = nullptr;
     NormalizeFn originalNormalize = nullptr;
     GameInputQueryFn originalGameInputQuery = nullptr;
     HudManagerSetShowScoreboardFn hudManagerSetShowScoreboard = nullptr;
     volatile LONG started = 0;
     volatile LONG firstEligibleFrameLogged = 0;
+    volatile LONG firstMultiplayerEligibleFrameLogged = 0;
+    volatile LONG firstMultiplayerControlModeLogged = 0;
+    volatile LONG firstSurfaceDriveInputLogged = 0;
+    volatile LONG firstMultiplayerInfantryAltFirePulseLogged = 0;
     volatile LONG firstScoreboardQueryOverrideLogged = 0;
     volatile LONG firstPlayerScoreboardCallLogged = 0;
     volatile LONG firstPlayerScoreboardFaultLogged = 0;
@@ -1193,6 +1460,8 @@ private:
     volatile LONG lastGateDiagnosticsAt = 0;
     volatile LONG frameBuilderCalls = 0;
     volatile LONG normalizerCalls = 0;
+    volatile LONG multiplayerEncoderCalls = 0;
+    volatile LONG multiplayerNormalizerCalls = 0;
     volatile LONG eligibleLocalPlayerFrames = 0;
     volatile LONG missingScopedPlayerFrames = 0;
     volatile LONG missingManagerFrames = 0;
@@ -1204,9 +1473,11 @@ private:
     volatile LONG freshControllerFrames = 0;
     volatile LONG unwritableDestinationFrames = 0;
     volatile LONG appliedFrames = 0;
+    volatile LONG multiplayerAppliedFrames = 0;
     bool triggerHeld = false;
     bool leftTriggerHeld = false;
     bool rightSqueezeHeld = false;
+    bool nativeAltFireWasDown = false;
     bool leftPrimaryWasDown = false;
     bool rightSecondaryWasDown = false;
     int rightStickVerticalDirection = 0;
@@ -1216,15 +1487,116 @@ private:
     bool controllerScoreboardWasHeld = false;
     bool ownsMinHook = false;
     bool frameBuilderCreated = false;
+    bool playerActionEncoderCreated = false;
     bool normalizerCreated = false;
     bool gameInputQueryCreated = false;
     bool frameBuilderEnabled = false;
+    bool playerActionEncoderEnabled = false;
     bool normalizerEnabled = false;
     bool gameInputQueryEnabled = false;
 };
 
 ControllerInputOverlay* ControllerInputOverlay::active = nullptr;
 __declspec(thread) void* ControllerInputOverlay::scopedPlayer = nullptr;
+
+void __declspec(naked) ControllerInputPlayerActionEncodeHook()
+{
+    __asm
+    {
+        // Original __thiscall entry: ECX=compact PlayerAction destination,
+        // [ESP+4]=logical PlayerInput frame, and the verified multiplayer
+        // caller preserves its current BFPlayer in EBX.
+        mov eax, dword ptr [esp]
+        mov edx, dword ptr [esp + 4]
+        push eax
+        push ebx
+        push edx
+        push ecx
+        call ControllerInputPlayerActionEncodeHookImpl
+        ret 4
+    }
+}
+
+void __stdcall ControllerInputPlayerActionEncodeHookImpl(
+    void* encodedDestination,
+    float* logicalFrame,
+    void* callerEbx,
+    const void* returnAddress)
+{
+    ControllerInputOverlay* const overlay = ControllerInputOverlay::active;
+    if (overlay == nullptr || overlay->originalPlayerActionEncode == nullptr)
+    {
+        return;
+    }
+    const bool multiplayerRoute =
+        overlay->gameImage != nullptr &&
+        returnAddress == overlay->gameImage + kMultiplayerEncoderReturnRva;
+    if (multiplayerRoute)
+    {
+        InterlockedIncrement(&overlay->multiplayerEncoderCalls);
+        // This must happen before the original encoder. FUN_00483E70 converts
+        // the first six axes and discrete button mask to the compact record
+        // that FUN_004913A0 decodes immediately afterward.
+        overlay->OverlayCurrentLocalAliveFrame(
+            logicalFrame,
+            callerEbx,
+            true);
+    }
+    overlay->originalPlayerActionEncode(encodedDestination, logicalFrame);
+}
+
+DWORD __declspec(naked) ControllerInputNormalizeHook()
+{
+    __asm
+    {
+        // Original __thiscall entry: ECX=raw source, [ESP]=caller return,
+        // [ESP+4]=temporary logical-frame destination. FUN_004B8D70 keeps
+        // its currently resolved BFPlayer in callee-saved EBX across the
+        // normalizer call. Preserve that register as evidence; the C++
+        // implementation admits it only for the exact verified caller.
+        mov eax, dword ptr [esp]
+        mov edx, dword ptr [esp + 4]
+        push eax
+        push ebx
+        push edx
+        push ecx
+        call ControllerInputNormalizeHookImpl
+        ret 4
+    }
+}
+
+DWORD __stdcall ControllerInputNormalizeHookImpl(
+    void* rawSource,
+    float* destination,
+    void* callerEbx,
+    const void* returnAddress)
+{
+    static_cast<void>(callerEbx);
+    ControllerInputOverlay* const overlay = ControllerInputOverlay::active;
+    if (overlay == nullptr || overlay->originalNormalize == nullptr)
+    {
+        return 0;
+    }
+    InterlockedIncrement(&overlay->normalizerCalls);
+    const DWORD result = overlay->originalNormalize(rawSource, destination);
+    const bool multiplayerRoute =
+        overlay->gameImage != nullptr &&
+        returnAddress ==
+            overlay->gameImage + kMultiplayerNormalizerReturnRva;
+    if (multiplayerRoute)
+    {
+        InterlockedIncrement(&overlay->multiplayerNormalizerCalls);
+    }
+    if (!multiplayerRoute)
+    {
+        overlay->OverlayCurrentLocalAliveFrame(
+            destination,
+            ControllerInputOverlay::scopedPlayer,
+            false);
+    }
+    return result;
+}
+
 ControllerInputOverlay g_controllerInputOverlay = {};
 } // namespace
 

@@ -179,8 +179,38 @@ ComputeBoundedOffHandWeaponSteering(
     Direction axis = Cross(authored, tracked);
     if (!Normalize(axis, kDirectionEpsilon))
     {
-        // The nearly opposite case has no unique minimal swing axis.
-        return std::nullopt;
+        if (cosine > 0.0F)
+        {
+            return std::nullopt;
+        }
+
+        // At exactly 180 degrees the minimal axis is mathematically
+        // ambiguous. Choose a stable perpendicular from the current gun basis
+        // instead of dropping steering or allowing the capped axis to flip.
+        const Direction gunBasis[] = {
+            {controllerGunWorld.values[0][0],
+             controllerGunWorld.values[0][1],
+             controllerGunWorld.values[0][2]},
+            {controllerGunWorld.values[1][0],
+             controllerGunWorld.values[1][1],
+             controllerGunWorld.values[1][2]},
+            {controllerGunWorld.values[2][0],
+             controllerGunWorld.values[2][1],
+             controllerGunWorld.values[2][2]}};
+        bool foundAxis = false;
+        for (const Direction& basis : gunBasis)
+        {
+            axis = Cross(authored, basis);
+            if (Normalize(axis, kDirectionEpsilon))
+            {
+                foundAxis = true;
+                break;
+            }
+        }
+        if (!foundAxis)
+        {
+            return std::nullopt;
+        }
     }
     const Matrix4 swing =
         MakeRowVectorAxisRotation(axis, appliedAngle);

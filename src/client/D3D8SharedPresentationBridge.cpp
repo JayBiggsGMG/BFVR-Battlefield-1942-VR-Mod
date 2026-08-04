@@ -909,6 +909,7 @@ public:
         MemoryBarrier();
         InterlockedExchange(&block->frameSequence, request.sequence);
         (void)channel.SignalProducerUpdate();
+        NotifyScopeViewFramePublished(request.sequence);
         return true;
     }
 
@@ -1001,6 +1002,7 @@ public:
         MemoryBarrier();
         InterlockedExchange(&block->frameSequence, request.sequence);
         (void)channel.SignalProducerUpdate();
+        NotifyScopeViewFramePublished(request.sequence);
         return true;
     }
 
@@ -1611,6 +1613,11 @@ bool BuildD3D8RuntimeStereoTransforms(
     {
         return false;
     }
+    RecordScopeViewProjectionReplay(
+        request.sequence,
+        projection,
+        adjustedPair.leftProjection,
+        adjustedPair.rightProjection);
     std::memcpy(&leftView, &adjustedPair.leftView, sizeof(leftView));
     std::memcpy(&rightView, &adjustedPair.rightView, sizeof(rightView));
     std::memcpy(

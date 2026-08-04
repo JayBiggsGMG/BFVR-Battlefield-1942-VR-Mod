@@ -18,7 +18,6 @@ enum class OffHandSupportState
 struct OffHandSupportConfiguration
 {
     float acquireDistanceMetres = 0.12F;
-    float releaseDistanceMetres = 0.20F;
     double candidateHoldSeconds = 0.04;
 };
 

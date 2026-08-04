@@ -73,7 +73,7 @@ struct BFSoldierOffHandSteeringInput
 
 // Owns squeeze hysteresis and pure support state. It never reads game memory
 // or writes a Skeleton. Only an already-supported AuthoredHandSpan may request
-// bounded weapon steering; CapturedClose is permanently visual-only.
+// full-direction weapon steering; CapturedClose is permanently visual-only.
 class BFSoldierOffHandSupportBinding final
 {
 public:

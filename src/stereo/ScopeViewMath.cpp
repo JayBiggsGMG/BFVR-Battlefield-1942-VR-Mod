@@ -133,16 +133,22 @@ ScopeAimSource SelectScopeAimSource(
     bool scopeRequested,
     bool freshPoseMatchesRequestedWeapon,
     bool freshPoseContradictsRequestedWeapon,
+    bool retainOwnedLifetimeThroughPoseContradiction,
     bool trackedPoseAvailable,
     bool latchedPoseAvailable) noexcept
 {
-    if (!scopeRequested || freshPoseContradictsRequestedWeapon)
+    if (!scopeRequested)
     {
         return ScopeAimSource::None;
     }
     if (freshPoseMatchesRequestedWeapon)
     {
         return ScopeAimSource::Fresh;
+    }
+    if (freshPoseContradictsRequestedWeapon &&
+        !retainOwnedLifetimeThroughPoseContradiction)
+    {
+        return ScopeAimSource::None;
     }
     if (trackedPoseAvailable)
     {
@@ -205,33 +211,16 @@ bool IsD3D8ScopeOffHandSupportHeld(
     const bool sessionFocused,
     const bool leftGripTracked,
     const bool leftSqueezeActive,
-    const float leftSqueezeValue,
-    const Matrix4& predictedSupportWorld,
-    const Matrix4& trackedLeftGripWorld,
-    const float worldUnitsPerMetre) noexcept
+    const float leftSqueezeValue) noexcept
 {
     constexpr float kSqueezeReleaseThreshold = 0.45F;
-    constexpr float kSupportReleaseDistanceMetres = 0.20F;
     if (!bindingEstablished || !sessionFocused || !leftGripTracked ||
         !leftSqueezeActive || !std::isfinite(leftSqueezeValue) ||
-        leftSqueezeValue < kSqueezeReleaseThreshold ||
-        !IsRigidAffine(predictedSupportWorld) ||
-        !IsRigidAffine(trackedLeftGripWorld) ||
-        !std::isfinite(worldUnitsPerMetre) || worldUnitsPerMetre <= 0.0F)
+        leftSqueezeValue < kSqueezeReleaseThreshold)
     {
         return false;
     }
-    const float x = predictedSupportWorld.values[3][0] -
-        trackedLeftGripWorld.values[3][0];
-    const float y = predictedSupportWorld.values[3][1] -
-        trackedLeftGripWorld.values[3][1];
-    const float z = predictedSupportWorld.values[3][2] -
-        trackedLeftGripWorld.values[3][2];
-    const float releaseDistance =
-        kSupportReleaseDistanceMetres * worldUnitsPerMetre;
-    const float distanceSquared = x * x + y * y + z * z;
-    return std::isfinite(distanceSquared) &&
-        distanceSquared <= releaseDistance * releaseDistance;
+    return true;
 }
 
 std::optional<float> ComputeD3D8ScopeProjectionScale(

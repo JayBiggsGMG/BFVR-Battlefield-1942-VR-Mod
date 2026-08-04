@@ -65,8 +65,6 @@ constexpr DWORD kLeftControllerHand = 0;
 constexpr DWORD kRightControllerHand = 1;
 constexpr float kBf1942WorldUnitsPerMeter = 1.0F;
 constexpr float kMaximumLeftHandDisplacement = 1.5F;
-constexpr float kMaximumPrimarySupportSwingRadians =
-    35.0F * 3.14159265358979323846F / 180.0F;
 // Move BF1942's floating 1P arm root forward as one unit so shoulder, solved
 // hand, and game-attached weapon retain their authored relationships.
 constexpr float kFirstPersonArmRootForwardOffset = 0.15F;
@@ -463,7 +461,7 @@ public:
             L"Native 1P right-arm IK armed at Skeleton::transform and the exact active-item AnimatedBundle attachment callback. Primary slot 3 retains direct OpenXR gun aim and automatically establishes one controller-grip-to-anatomical-wrist reference; non-primary items use that wrist reference and BF1942's selected-item relation to reconstruct their authored functional basis. No shot, spawn-camera, or per-item user calibration is required. BF1942's authored crouch/prone camera translation is inherited without changing controller orientation. The complete native 1P arm root is shifted %.2f metres forward for VR shoulder placement. Existing authored IK targets are left untouched.",
             kFirstPersonArmRootForwardOffset);
         WriteLog(
-            L"Native 1P left-hand IK follows tracked OpenXR grip position and relative wrist rotation after selected-item warm-up. A successful authored primary support grip establishes one automatic anatomical left-wrist reference for later item switches; the prior native per-item zero remains the fail-closed fallback until then. Left squeeze is reserved for proximity-gated support. Primary slot 3 preserves BF1942's native left-to-right-hand relation and permits a minimal fixed-pivot swing capped at 35 degrees; the exact result is shared by weapon presentation and fire. Close sidearm slot 2 captures the user's current visual cup without a jump and is permanently visual-only. Elbow bend uses only Maya's direction-only rotate-plane pole for exact BFVR-owned 1P targets; no third-person body position is consumed.");
+            L"Native 1P left-hand IK follows tracked OpenXR grip position and relative wrist rotation after selected-item warm-up. A successful authored primary support grip establishes one automatic anatomical left-wrist reference for later item switches; the prior native per-item zero remains the fail-closed fallback until then. Left squeeze is reserved for proximity-gated acquisition; a held grip has no distance auto-detach. Primary slot 3 preserves BF1942's native left-to-right-hand relation and permits full-direction fixed-pivot steering; the exact result is shared by weapon presentation and fire. Close sidearm slot 2 captures the user's current visual cup without a jump and is permanently visual-only. Elbow bend uses only Maya's direction-only rotate-plane pole for exact BFVR-owned 1P targets; no third-person body position is consumed.");
         return true;
     }
 
@@ -1344,7 +1342,8 @@ private:
                     kTrackingToSkeletonPositionOffset;
                 input.stanceTranslation = stanceTranslation;
                 input.maximumSwingRadians =
-                    kMaximumPrimarySupportSwingRadians;
+                    bfvr::stereo::
+                        kUnrestrictedOffHandWeaponSwingRadians;
                 input.worldUnitsPerMetre =
                     kBf1942WorldUnitsPerMeter;
                 const auto steering =
@@ -1369,7 +1368,7 @@ private:
                             loggedPrimarySteeringBindingId_ =
                                 input.bindingId;
                             WriteLog(
-                                L"Native 1P two-hand primary steering active: soldier=%p item=%p activeItemIndex=%ld requested=%.2f deg applied=%.2f deg limit=35.00 deg. The right grip remains the fixed pivot; no scale is applied; this exact gun basis feeds right-hand IK, weapon presentation, and WeaponFire_Core. Sidearm support remains visual-only.",
+                                L"Native 1P two-hand primary steering active: soldier=%p item=%p activeItemIndex=%ld requested=%.2f deg applied=%.2f deg fullDirectionalRange=1. The right grip remains the fixed pivot; no scale is applied; this exact gun basis feeds right-hand IK, weapon presentation, and WeaponFire_Core. Sidearm support remains visual-only.",
                                 soldier,
                                 alignment.activeItem,
                                 alignment.activeItemIndex,
@@ -1749,7 +1748,7 @@ private:
                         ? L"captured close sidearm cup"
                         : L"native left-to-right-hand span";
                     WriteLog(
-                        L"Native 1P off-hand support acquired: soldier=%p item=%p activeItemIndex=%ld bone=%ld controllerGeneration=%ld distance=%.4f m mode=%ls. Close sidearms remain visual-only; the authored primary span becomes eligible for bounded fixed-pivot steering on the next matched frame.",
+                        L"Native 1P off-hand support acquired: soldier=%p item=%p activeItemIndex=%ld bone=%ld controllerGeneration=%ld distance=%.4f m mode=%ls. Close sidearms remain visual-only; the authored primary span becomes eligible for full-direction fixed-pivot steering on the next matched frame and remains held until an explicit or lifecycle release.",
                         soldier,
                         activeItem,
                         activeItemIndex,
@@ -1889,7 +1888,7 @@ private:
                 loggedFreeLeftSkeleton_ = skeleton;
                 loggedFreeLeftBone_ = leftHandBone;
                 WriteLog(
-                    L"Native 1P free left hand bound to tracked OpenXR grip: soldier=%p skeleton=%p bone=%ld generation=%ld native=(%.4f,%.4f,%.4f) target=(%.4f,%.4f,%.4f). Position is absolute; wrist rotation uses the learned anatomical primary-grip reference when available and otherwise the selected item's native fallback. After proximity acquisition, primary slot 3 may steer by a bounded fixed-pivot swing; close sidearm slot 2 captures only a visual cup. Elbow/pole correction is not active.",
+                    L"Native 1P free left hand bound to tracked OpenXR grip: soldier=%p skeleton=%p bone=%ld generation=%ld native=(%.4f,%.4f,%.4f) target=(%.4f,%.4f,%.4f). Position is absolute; wrist rotation uses the learned anatomical primary-grip reference when available and otherwise the selected item's native fallback. After proximity acquisition, primary slot 3 may steer through the full directional range about the fixed right-grip pivot and remains grabbed until explicit/lifecycle release; close sidearm slot 2 captures only a visual cup. Elbow/pole correction is not active.",
                     soldier,
                     skeleton,
                     leftHandBone,

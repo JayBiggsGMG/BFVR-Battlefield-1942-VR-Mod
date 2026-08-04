@@ -273,10 +273,6 @@ OffHandSupportPolicy::OffHandSupportPolicy(
 {
     configuration_.acquireDistanceMetres =
         std::max(0.0F, configuration_.acquireDistanceMetres);
-    configuration_.releaseDistanceMetres =
-        std::max(
-            configuration_.acquireDistanceMetres,
-            configuration_.releaseDistanceMetres);
     configuration_.candidateHoldSeconds =
         std::max(0.0, configuration_.candidateHoldSeconds);
 }
@@ -341,12 +337,9 @@ OffHandSupportResult OffHandSupportPolicy::Update(
         break;
 
     case OffHandSupportState::Supported:
-        if (sample.supportDistanceMetres >
-            configuration_.releaseDistanceMetres)
-        {
-            SetFree();
-            bindingId_ = sample.bindingId;
-        }
+        // Once acquired, support is a held grab rather than a proximity
+        // tether. Distance remains acquisition-only; explicit squeeze-up,
+        // tracking/focus loss, native IK ownership, or binding changes release.
         break;
     }
 

@@ -505,10 +505,10 @@ bool SoldierSteeringFrameUsesTrackedGripAndRejectsPistol() noexcept
         "soldier steering frame accepted pistol mode");
 }
 
-bool SteeringUsesFixedPivotAndBoundedSwing() noexcept
+bool SteeringUsesFixedPivotAndFullDirectionalSwing() noexcept
 {
     constexpr float kPi = 3.14159265358979323846F;
-    const float maximumSwing = 35.0F * kPi / 180.0F;
+    const float requestedSwing = 0.5F * kPi;
     const auto gun = Translation(2.0F, 1.0F, -3.0F);
     const auto predicted =
         Translation(2.0F, 1.0F, -2.6F);
@@ -519,7 +519,7 @@ bool SteeringUsesFixedPivotAndBoundedSwing() noexcept
             gun,
             predicted,
             tracked,
-            maximumSwing,
+            bfvr::stereo::kUnrestrictedOffHandWeaponSwingRadians,
             1.0F);
     if (!Expect(
             result.has_value(),
@@ -528,13 +528,13 @@ bool SteeringUsesFixedPivotAndBoundedSwing() noexcept
         return false;
     }
 
-    const float sine = std::sin(maximumSwing);
-    const float cosine = std::cos(maximumSwing);
+    const float sine = std::sin(requestedSwing);
+    const float cosine = std::cos(requestedSwing);
     return Expect(
                std::fabs(
                    result->appliedSwingRadians -
-                   maximumSwing) < 0.0001F,
-               "large off-hand swing was not bounded") &&
+                    requestedSwing) < 0.0001F,
+               "full off-hand swing retained the obsolete 35-degree cap") &&
         Expect(
             std::fabs(result->gunWorld.values[3][0] - 2.0F) <
                     0.0001F &&
@@ -548,7 +548,7 @@ bool SteeringUsesFixedPivotAndBoundedSwing() noexcept
                     0.0001F &&
                 std::fabs(result->gunWorld.values[2][2] - cosine) <
                     0.0001F,
-            "bounded row-vector swing used the wrong direction") &&
+            "full-range row-vector swing used the wrong direction") &&
         Expect(
             std::fabs(
                 result->gunWorld.values[2][0] *
@@ -561,7 +561,7 @@ bool SteeringUsesFixedPivotAndBoundedSwing() noexcept
             "off-hand steering introduced weapon scale");
 }
 
-bool SteeringIgnoresRadialMismatchAndRejectsDegeneracy() noexcept
+bool SteeringIgnoresRadialMismatchAndHandlesOppositeDirection() noexcept
 {
     constexpr float kPi = 3.14159265358979323846F;
     const float requested = 10.0F * kPi / 180.0F;
@@ -577,7 +577,7 @@ bool SteeringIgnoresRadialMismatchAndRejectsDegeneracy() noexcept
             gun,
             predicted,
             tracked,
-            35.0F * kPi / 180.0F,
+            bfvr::stereo::kUnrestrictedOffHandWeaponSwingRadians,
             1.0F);
     if (!Expect(
             result.has_value() &&
@@ -594,25 +594,29 @@ bool SteeringIgnoresRadialMismatchAndRejectsDegeneracy() noexcept
             gun,
             predicted,
             gun,
-            35.0F * kPi / 180.0F,
+            bfvr::stereo::kUnrestrictedOffHandWeaponSwingRadians,
             1.0F);
     const auto opposite = Translation(2.0F, 1.0F, -3.4F);
-    const auto ambiguous =
+    const auto oppositeResult =
         bfvr::stereo::ComputeBoundedOffHandWeaponSteering(
             gun,
             predicted,
             opposite,
-            35.0F * kPi / 180.0F,
+            bfvr::stereo::kUnrestrictedOffHandWeaponSwingRadians,
             1.0F);
     return Expect(
                !collapsed.has_value(),
                "collapsed tracked support span was accepted") &&
         Expect(
-            !ambiguous.has_value(),
-            "ambiguous opposite support direction was accepted");
+            oppositeResult.has_value() &&
+                std::fabs(oppositeResult->appliedSwingRadians - kPi) <
+                    0.0001F &&
+                std::fabs(oppositeResult->gunWorld.values[2][2] + 1.0F) <
+                    0.0001F,
+            "opposite support direction did not use a deterministic full swing");
 }
 
-bool AcquireAndReleaseWithHysteresis() noexcept
+bool AcquireByProximityAndRetainUntilExplicitRelease() noexcept
 {
     OffHandSupportPolicy policy;
     if (!Expect(
@@ -638,17 +642,19 @@ bool AcquireAndReleaseWithHysteresis() noexcept
         return false;
     }
     if (!Expect(
-            policy.Update(ValidSample(1.06, 0.17F)).state ==
+            policy.Update(ValidSample(1.06, 5.0F)).state ==
                 OffHandSupportState::Supported,
-            "support did not retain inside the release radius"))
+            "held support auto-detached after pulling away"))
     {
         return false;
     }
-    const auto released = policy.Update(ValidSample(1.07, 0.21F));
+    auto releaseSample = ValidSample(1.07, 5.0F);
+    releaseSample.leftGripHeld = false;
+    const auto released = policy.Update(releaseSample);
     return Expect(
         released.state == OffHandSupportState::Free &&
             released.exitedSupport,
-        "support did not release outside the hysteresis radius");
+        "support did not release on explicit squeeze-up");
 }
 
 bool RejectsUnsafeInputs() noexcept
@@ -757,9 +763,9 @@ int main()
         CloseBindingCapturesAndIgnoresLeftNoise() &&
         AuthoredBindingAllowsOnlyCurrentSupportedSteering() &&
         SoldierSteeringFrameUsesTrackedGripAndRejectsPistol() &&
-        SteeringUsesFixedPivotAndBoundedSwing() &&
-        SteeringIgnoresRadialMismatchAndRejectsDegeneracy() &&
-        AcquireAndReleaseWithHysteresis() &&
+        SteeringUsesFixedPivotAndFullDirectionalSwing() &&
+        SteeringIgnoresRadialMismatchAndHandlesOppositeDirection() &&
+        AcquireByProximityAndRetainUntilExplicitRelease() &&
         RejectsUnsafeInputs() &&
         ReleasesOnTrackingOrBindingChange() &&
         RequiresContinuousAcquisition();

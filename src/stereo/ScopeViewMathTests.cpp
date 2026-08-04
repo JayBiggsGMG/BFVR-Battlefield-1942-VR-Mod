@@ -67,17 +67,23 @@ bool TestScopeAimSourceKeepsModeIndependentFromTransientFreshness() noexcept
 {
     using bfvr::stereo::ScopeAimSource;
     using bfvr::stereo::SelectScopeAimSource;
-    return SelectScopeAimSource(true, true, false, false, false) ==
+    return SelectScopeAimSource(true, true, false, false, false, false) ==
             ScopeAimSource::Fresh &&
-        SelectScopeAimSource(true, false, false, true, true) ==
+        SelectScopeAimSource(true, false, false, false, true, true) ==
             ScopeAimSource::Tracked &&
-        SelectScopeAimSource(true, false, false, false, true) ==
+        SelectScopeAimSource(true, false, false, false, false, true) ==
             ScopeAimSource::Latched &&
-        SelectScopeAimSource(true, false, true, true, true) ==
+        SelectScopeAimSource(true, false, true, false, true, true) ==
             ScopeAimSource::None &&
-        SelectScopeAimSource(true, false, false, false, false) ==
+        SelectScopeAimSource(true, false, true, true, true, true) ==
+            ScopeAimSource::Tracked &&
+        SelectScopeAimSource(true, false, true, true, false, true) ==
+            ScopeAimSource::Latched &&
+        SelectScopeAimSource(true, false, true, true, false, false) ==
             ScopeAimSource::None &&
-        SelectScopeAimSource(false, true, false, true, true) ==
+        SelectScopeAimSource(true, false, false, false, false, false) ==
+            ScopeAimSource::None &&
+        SelectScopeAimSource(false, true, false, true, true, true) ==
             ScopeAimSource::None;
 }
 
@@ -166,26 +172,23 @@ bool TestTrackedScopeAimRetainsAuthoritativeLocalCorrection() noexcept
     return true;
 }
 
-bool TestScopedOffHandSupportRequiresEstablishedHeldNearGrip() noexcept
+bool TestScopedOffHandSupportRemainsHeldRegardlessOfDistance() noexcept
 {
-    Matrix4 predicted = Identity();
-    predicted.values[3][0] = 1.0F;
-    Matrix4 tracked = predicted;
-    tracked.values[3][0] += 0.12F;
     if (!bfvr::stereo::IsD3D8ScopeOffHandSupportHeld(
-            true, true, true, true, 0.8F, predicted, tracked))
+            true, true, true, true, 0.8F))
     {
         return false;
     }
-    tracked.values[3][0] = 1.21F;
     return !bfvr::stereo::IsD3D8ScopeOffHandSupportHeld(
-               true, true, true, true, 0.8F, predicted, tracked) &&
+               false, true, true, true, 0.8F) &&
         !bfvr::stereo::IsD3D8ScopeOffHandSupportHeld(
-            false, true, true, true, 0.8F, predicted, predicted) &&
+            true, false, true, true, 0.8F) &&
         !bfvr::stereo::IsD3D8ScopeOffHandSupportHeld(
-            true, true, true, false, 0.8F, predicted, predicted) &&
+            true, true, false, true, 0.8F) &&
         !bfvr::stereo::IsD3D8ScopeOffHandSupportHeld(
-            true, true, true, true, 0.44F, predicted, predicted);
+            true, true, true, false, 0.8F) &&
+        !bfvr::stereo::IsD3D8ScopeOffHandSupportHeld(
+            true, true, true, true, 0.44F);
 }
 
 bool TestInvalidFovFailsClosed() noexcept
@@ -323,7 +326,7 @@ int main()
         !TestScopeAimSourceKeepsModeIndependentFromTransientFreshness() ||
         !TestScopedFireRequiresExactWeaponAndSoldierLifetime() ||
         !TestTrackedScopeAimRetainsAuthoritativeLocalCorrection() ||
-        !TestScopedOffHandSupportRequiresEstablishedHeldNearGrip() ||
+        !TestScopedOffHandSupportRemainsHeldRegardlessOfDistance() ||
         !TestInvalidFovFailsClosed() ||
         !TestScopeCameraUsesGunRotationAndHeadPosition() ||
         !TestProjectionScalePreservesCentreAndDepth() ||
