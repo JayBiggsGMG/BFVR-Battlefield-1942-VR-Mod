@@ -232,7 +232,7 @@ void ReportStereoFrameResult(
         kMaximumProvenanceSites,
         InterlockedCompareExchange(&frame.provenanceOverflow, 0, 0));
     appendLog(
-        L"D3D8 full-draw-frame composition: worldEyeDraws=%ld uiLayerDraws=%ld partitionExact=%d. Confirmed Ref2 font and menu-quad draws are omitted from both world-eye targets and replayed once into the separate transparent UI layer.",
+        L"D3D8 full-draw-frame composition: worldEyeDraws=%ld uiLayerDraws=%ld partitionExact=%d. All monoscopic pretransformed/non-perspective draws, including confirmed Ref2 font and menu-quad families, are omitted from both world-eye targets and replayed once into the separate transparent UI layer.",
         InterlockedCompareExchange(&frame.worldEyeDraws, 0, 0),
         InterlockedCompareExchange(&frame.menuLayerDraws, 0, 0),
         InterlockedCompareExchange(&frame.mirroredDraws, 0, 0) ==

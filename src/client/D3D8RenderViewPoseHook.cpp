@@ -27,12 +27,19 @@ constexpr std::ptrdiff_t kSetTransformationRva = 0x001B7E00;
 constexpr std::ptrdiff_t kExpectedCallerReturnRva = 0x000668D1;
 constexpr std::ptrdiff_t kGetFrustumRva = 0x001B7E40;
 constexpr std::size_t kRenderViewFieldOfViewOffset = 0x24;
+constexpr std::size_t kRenderViewAspectOffset = 0x30;
 constexpr std::size_t kRenderViewFrustumDirtyOffset = 0x312;
 constexpr float kWorldUnitsPerMeter = 1.0F;
-// The scope path needs this verified boundary even though the older proposed
-// ordinary-camera caller gate never matched. Runtime work remains gated to an
-// exact active RenderView and a fresh useScope-enabled local handweapon.
-constexpr bool kEnableScopeFrustumHook = true;
+// RenderView::getFrustum derives its left/right planes from
+// (verticalFov * 0.5) / aspect and its top/bottom planes directly from
+// verticalFov * 0.5. Scaling both temporary inputs widens only top/bottom:
+// their ratio, and therefore horizontal culling coverage, stays unchanged.
+constexpr float kVerticalFrustumHalfAngleScale = 1.50F;
+// The scoped path proved this exact target after the older proposed ordinary
+// caller-return gate never matched. Runtime work is now gated to an active
+// BFVR request and the exact active RenderView; scope-specific camera/FOV work
+// still additionally requires a fresh useScope-enabled local handweapon.
+constexpr bool kEnableFrustumHook = true;
 
 bfvr::stereo::Pose ToPose(const bfvr::D3D8RuntimeView& view)
 {
@@ -119,7 +126,7 @@ public:
                 target);
             return false;
         }
-        if constexpr (kEnableScopeFrustumHook)
+        if constexpr (kEnableFrustumHook)
         {
             if (!IsVerifiedFrustumTarget(frustumTarget))
             {
@@ -143,7 +150,7 @@ public:
                 reinterpret_cast<void*>(original));
             return false;
         }
-        if constexpr (kEnableScopeFrustumHook)
+        if constexpr (kEnableFrustumHook)
         {
             const MH_STATUS frustumStatus = MH_CreateHook(
                 frustumTarget,
@@ -555,17 +562,16 @@ private:
         (void)callerReturn;
         const LONG sequence =
             InterlockedCompareExchange(&requestedSequence, 0, 0);
-        ScopeViewFrameState scope = {};
         if (sequence <= 0 ||
             renderView == nullptr ||
-            renderView != ActiveRenderView() ||
-            !ReadScopeViewFrameState(scope) ||
-            !std::isfinite(scope.normalFov) ||
-            scope.normalFov <= 0.0F)
+            renderView != ActiveRenderView())
         {
             return originalGetFrustum(renderView);
         }
 
+        ScopeViewFrameState scope = {};
+        const bool scoped = ReadScopeViewFrameState(scope) &&
+            std::isfinite(scope.normalFov) && scope.normalFov > 0.0F;
         InterlockedIncrement(&frustumMatchingCalls);
         bool poseApplied = false;
         if (lastSourceValid)
@@ -575,18 +581,18 @@ private:
                 ToPose(referenceHead),
                 ToPose(currentHead),
                 kWorldUnitsPerMeter);
-            const auto scoped = adjusted.has_value()
+            const auto visibilityCamera = adjusted.has_value() && scoped
                 ? stereo::MakeD3D8WeaponDirectedScopeCamera(
                     *adjusted,
                     scope.controllerGunWorld)
-                : std::nullopt;
-            if (scoped.has_value())
+                : adjusted;
+            if (visibilityCamera.has_value())
             {
                 // BF1942 performs this visibility query before its ordinary
-                // per-view camera setter. Advance the verified active
-                // RenderView to the current gun direction here so its scope
-                // frustum and the later rendered camera share one basis.
-                original(renderView, &*scoped);
+                // per-view camera setter. Advance the verified active view to
+                // the current HMD basis (or scoped gun basis) so culling and
+                // the later rendered camera share one orientation.
+                original(renderView, &*visibilityCamera);
                 poseApplied = true;
             }
             else
@@ -601,66 +607,103 @@ private:
 
         auto* const renderViewBytes = static_cast<std::byte*>(renderView);
         float nativeFov = -1.0F;
-        bool fovCaptured = false;
-        bool fovPrepared = false;
+        float nativeAspect = -1.0F;
+        float visibilityFov = -1.0F;
+        float visibilityAspect = -1.0F;
+        bool fieldsCaptured = false;
+        bool fieldsPrepared = false;
         __try
         {
             auto* const fieldOfView = reinterpret_cast<float*>(
                 renderViewBytes + kRenderViewFieldOfViewOffset);
+            auto* const aspect = reinterpret_cast<float*>(
+                renderViewBytes + kRenderViewAspectOffset);
             nativeFov = *fieldOfView;
-            if (std::isfinite(nativeFov) && nativeFov > 0.0F)
+            nativeAspect = *aspect;
+            visibilityFov =
+                (scoped ? scope.normalFov : nativeFov) *
+                kVerticalFrustumHalfAngleScale;
+            visibilityAspect =
+                nativeAspect * kVerticalFrustumHalfAngleScale;
+            if (std::isfinite(nativeFov) && nativeFov > 0.0F &&
+                std::isfinite(nativeAspect) && nativeAspect > 0.0F &&
+                std::isfinite(visibilityFov) && visibilityFov > 0.0F &&
+                std::isfinite(visibilityAspect) && visibilityAspect > 0.0F)
             {
-                fovCaptured = true;
-                *fieldOfView = scope.normalFov;
+                fieldsCaptured = true;
+                *fieldOfView = visibilityFov;
+                *aspect = visibilityAspect;
                 renderViewBytes[kRenderViewFrustumDirtyOffset] =
                     std::byte{1};
-                fovPrepared = true;
+                fieldsPrepared = true;
             }
         }
         __except (EXCEPTION_EXECUTE_HANDLER)
         {
-            fovPrepared = false;
+            fieldsPrepared = false;
         }
 
         void* const frustum = originalGetFrustum(renderView);
-        bool fovRestored = !fovCaptured;
-        if (fovCaptured)
+        bool fieldsRestored = !fieldsCaptured;
+        if (fieldsCaptured)
         {
             __try
             {
                 // Only the cached visibility volume is intentionally broad.
-                // Restore BF1942's scope FOV before the projection query so
-                // BFVR can preserve the weapon's exact requested zoom.
+                // Restore BF1942's FOV/aspect before the projection query so
+                // ordinary rendering and exact scope zoom remain unchanged.
                 *reinterpret_cast<float*>(
                     renderViewBytes + kRenderViewFieldOfViewOffset) =
                         nativeFov;
-                fovRestored = true;
+                *reinterpret_cast<float*>(
+                    renderViewBytes + kRenderViewAspectOffset) =
+                        nativeAspect;
+                fieldsRestored = true;
             }
             __except (EXCEPTION_EXECUTE_HANDLER)
             {
-                fovRestored = false;
+                fieldsRestored = false;
             }
         }
 
-        if (!fovPrepared || !fovRestored)
+        if (!fieldsPrepared || !fieldsRestored)
         {
-            InvalidateScopeViewFrameState(scope.weapon);
+            if (scoped)
+            {
+                InvalidateScopeViewFrameState(scope.weapon);
+            }
             InterlockedIncrement(&frustumRejected);
             return frustum;
         }
 
         InterlockedIncrement(&frustumAppliedCalls);
         InterlockedExchange(&appliedFrustumSequence, sequence);
-        if (InterlockedCompareExchange(
+        if (scoped && InterlockedCompareExchange(
                 &firstScopedFrustumLogged,
                 1,
                 0) == 0)
         {
             WriteLog(
-                L"Scoped pre-cull correction reached verified RenderView::getFrustum: currentGunPose=%d nativeScopeFov=%.6f broadVisibilityFov=%.6f. Exact magnification remains in the per-eye projection.",
+                L"Scoped pre-cull correction reached verified RenderView::getFrustum: currentGunPose=%d nativeScopeFov=%.6f broadVisibilityFov=%.6f nativeAspect=%.6f cullAspect=%.6f verticalScale=%.2f. Exact magnification remains in the per-eye projection.",
                 poseApplied ? 1 : 0,
                 nativeFov,
-                scope.normalFov);
+                visibilityFov,
+                nativeAspect,
+                visibilityAspect,
+                kVerticalFrustumHalfAngleScale);
+        }
+        else if (!scoped && InterlockedCompareExchange(
+                     &firstOrdinaryFrustumLogged,
+                     1,
+                     0) == 0)
+        {
+            WriteLog(
+                L"Ordinary VR pre-cull correction reached verified RenderView::getFrustum: currentHeadPose=%d cullVerticalFov=%.6f nativeAspect=%.6f cullAspect=%.6f verticalScale=%.2f. Horizontal culling coverage and rendered per-eye projections are unchanged.",
+                poseApplied ? 1 : 0,
+                visibilityFov,
+                nativeAspect,
+                visibilityAspect,
+                kVerticalFrustumHalfAngleScale);
         }
         return frustum;
     }
@@ -753,6 +796,7 @@ private:
     volatile LONG mountedCameraDecoupled = 0;
     volatile LONG appliedFrustumSequence = 0;
     volatile LONG firstScopedFrustumLogged = 0;
+    volatile LONG firstOrdinaryFrustumLogged = 0;
     stereo::MountedCameraControlState mountedCameraControl = {};
     bool created = false;
     bool frustumCreated = false;

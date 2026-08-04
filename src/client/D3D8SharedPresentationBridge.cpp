@@ -670,28 +670,18 @@ public:
         LONG sequence,
         const D3D8RuntimeControllerSample& sample)
     {
-        constexpr DWORD kControllerDiagnosticLogPeriodMs = 5000;
-        const D3D8RuntimeControllerHand& left = sample.hands[0];
-        const D3D8RuntimeControllerHand& right = sample.hands[1];
-        const DWORD flags = left.flags ^ (right.flags << 16);
-        const DWORD buttons = left.buttons ^ (right.buttons << 16);
-        const DWORD analogPresses =
-            (left.triggerValue >= 0.55F ? 0x1U : 0U) |
-            (left.squeezeValue >= 0.55F ? 0x2U : 0U) |
-            (right.triggerValue >= 0.55F ? 0x4U : 0U) |
-            (right.squeezeValue >= 0.55F ? 0x8U : 0U);
-        const DWORD now = GetTickCount();
-        // This is diagnostic output only. Input samples continue to be
-        // copied every frame; keep controller movement from opening and
-        // closing observer.log at render cadence.
-        if (now - lastControllerLogAt < kControllerDiagnosticLogPeriodMs)
+        // This callback runs on the frame-request bridge. A prior diagnostic
+        // reopened observer.log every five seconds for the entire session,
+        // which creates a periodic synchronous stall that is especially
+        // visible through a strongly magnified scope. One accepted sample is
+        // enough to confirm controller transport for normal runtime.
+        if (controllerSampleLogged)
         {
             return;
         }
-        lastControllerFlags = flags;
-        lastControllerButtons = buttons;
-        lastControllerAnalogPresses = analogPresses;
-        lastControllerLogAt = now;
+        controllerSampleLogged = true;
+        const D3D8RuntimeControllerHand& left = sample.hands[0];
+        const D3D8RuntimeControllerHand& right = sample.hands[1];
         WriteLog(
             L"OpenXR controller sample %ld accepted for the local-frame overlay: left flags=0x%03lX buttons=0x%02lX trigger=%.3f squeeze=%.3f stick=(%.3f,%.3f); right flags=0x%03lX buttons=0x%02lX trigger=%.3f squeeze=%.3f stick=(%.3f,%.3f).",
             sequence,
@@ -1183,10 +1173,7 @@ public:
         depthExportGpuMilliseconds = {};
         companionStopped = false;
         pendingRenderRequest = 0;
-        lastControllerFlags = 0;
-        lastControllerButtons = 0;
-        lastControllerAnalogPresses = 0;
-        lastControllerLogAt = 0;
+        controllerSampleLogged = false;
         initialized = false;
     }
 
@@ -1368,10 +1355,7 @@ public:
         depthExportGpuMilliseconds = {};
     bool companionStopped = false;
     LONG pendingRenderRequest = 0;
-    DWORD lastControllerFlags = 0;
-    DWORD lastControllerButtons = 0;
-    DWORD lastControllerAnalogPresses = 0;
-    DWORD lastControllerLogAt = 0;
+    bool controllerSampleLogged = false;
     UINT runtimeUiWidth = 0;
     UINT runtimeUiHeight = 0;
     bool initialized = false;

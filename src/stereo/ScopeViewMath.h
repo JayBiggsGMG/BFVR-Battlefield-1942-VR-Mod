@@ -30,9 +30,10 @@ enum class ScopeAimSource
 };
 
 // Keeps native scope-mode lifetime independent from transient pose-cache
-// availability. An exact owned weapon/soldier lifetime may retain its already
-// validated tracked or latched gun basis when BF1942 hides the native 1P arm
-// after entering scope; other confirmed lifetime contradictions fail closed.
+// availability. Once available, the corrected continuous tracked basis stays
+// authoritative even if BF1942 intermittently republishes its hidden 1P arm;
+// native and latched poses remain fallbacks. Confirmed lifetime contradictions
+// still fail closed.
 [[nodiscard]] ScopeAimSource SelectScopeAimSource(
     bool scopeRequested,
     bool freshPoseMatchesRequestedWeapon,

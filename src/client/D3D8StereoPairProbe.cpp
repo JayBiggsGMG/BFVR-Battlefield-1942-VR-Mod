@@ -895,7 +895,9 @@ FrameMirrorResult MirrorDrawIntoFrame(
         &snapshot.leftProjection,
         &snapshot.rightProjection};
     const auto compositionLayer =
-        bfvr::stereo::SelectD3D8FrameCompositionLayer(snapshot.semanticClass);
+        bfvr::stereo::SelectD3D8FrameCompositionLayer(
+            snapshot.semanticClass,
+            snapshot.drawPolicy);
     if (compositionLayer ==
             bfvr::stereo::D3D8FrameCompositionLayer::WorldEyes &&
         snapshot.drawPolicy ==
@@ -2278,7 +2280,7 @@ DWORD WINAPI RunProbe(void*)
         AppendLog(
             g_runUntilStopped
                 ? L"Enabled process-lifetime full-draw-frame D3D8 stereo presentation after launch-time CPU-bridge handoff: Reset=%p Present=%p DrawPrimitive=%p DrawIndexedPrimitive=%p DrawPrimitiveUP=%p DrawIndexedPrimitiveUP=%p. It requests OpenXR frames from the first game-device Present, including spawn/death/pause Ref2-only transitions, and mirrors at most %ld eligible full-size draws per frame into frame-lived BFVR-owned left/right world targets plus one transparent Ref2 UI target. Native menus use a latched world-space reference and the gameplay HUD uses a head-locked reference. Gameplay input/weapon overlays retain their independent alive-local-player gates; Reset-safe transport recreation and exact state restoration remain active."
-                : L"Enabled bounded full-draw-frame D3D8 stereo probe: Reset=%p Present=%p DrawPrimitive=%p DrawIndexedPrimitive=%p DrawPrimitiveUP=%p DrawIndexedPrimitiveUP=%p. After the sustained local-player-isAlive gate it will mirror at most %ld eligible full-size draws into frame-lived BFVR-owned left/right world targets plus one transparent Ref2 UI target. Exact NewRendFont glyph batches and Ref2 menu quads are omitted from both world eyes and replayed once into that layer; the skybox policy remains separate. The probe excludes non-presentation/depthless targets, verifies state after every draw, finalizes at the next Present, and releases before Reset.",
+                : L"Enabled bounded full-draw-frame D3D8 stereo probe: Reset=%p Present=%p DrawPrimitive=%p DrawIndexedPrimitive=%p DrawPrimitiveUP=%p DrawIndexedPrimitiveUP=%p. After the sustained local-player-isAlive gate it will mirror at most %ld eligible full-size draws into frame-lived BFVR-owned left/right world targets plus one transparent Ref2 UI target. Monoscopic pretransformed/non-perspective draws, including exact NewRendFont glyph batches and Ref2 menu quads, are omitted from both world eyes and replayed once into that layer; the skybox policy remains separate. The probe excludes non-presentation/depthless targets, verifies state after every draw, finalizes at the next Present, and releases before Reset.",
             g_record.resetTarget,
             g_record.presentTarget,
             g_record.drawPrimitiveTarget,

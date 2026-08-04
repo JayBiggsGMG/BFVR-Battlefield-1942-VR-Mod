@@ -197,11 +197,12 @@ D3D8SemanticDrawClass ClassifyBF1942Win32SemanticDraw(
         signature.primitiveCount != 0 &&
         (signature.primitiveCount % 2) == 0 &&
         signature.vertexShaderOrFvf == kRef2FontFvf &&
-        signature.zEnable == 0 &&
-        signature.zWriteEnable == 1 &&
-        signature.alphaBlendEnable == 1 &&
-        signature.fogEnable == 0 &&
-        signature.lighting == 0;
+        // NewRendFont always disables depth testing, but its authored font
+        // flags choose alpha blending, alpha testing, or neither. The method
+        // does not own Z-write, fog, or lighting, so those inherited states
+        // cannot be part of the semantic identity. The exact renderer return,
+        // wrapper, topology, and XYZRHW glyph format remain fail-closed.
+        signature.zEnable == 0;
     if (ref2FontGlyphBatch)
     {
         return D3D8SemanticDrawClass::Ref2FontGlyphBatch;

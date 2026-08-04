@@ -69,6 +69,8 @@ bool TestScopeAimSourceKeepsModeIndependentFromTransientFreshness() noexcept
     using bfvr::stereo::SelectScopeAimSource;
     return SelectScopeAimSource(true, true, false, false, false, false) ==
             ScopeAimSource::Fresh &&
+        SelectScopeAimSource(true, true, false, false, true, true) ==
+            ScopeAimSource::Tracked &&
         SelectScopeAimSource(true, false, false, false, true, true) ==
             ScopeAimSource::Tracked &&
         SelectScopeAimSource(true, false, false, false, false, true) ==

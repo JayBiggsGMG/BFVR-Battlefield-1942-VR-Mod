@@ -393,8 +393,8 @@ const wchar_t* QuickMenuSelectionName(
     case QuickMenuSelection::CameraF12: return L"F12 / camera";
     case QuickMenuSelection::MountedCameraDecouple:
         return L"mounted-camera decouple toggle";
-    case QuickMenuSelection::MapToggle:
-        return L"M / map size toggle";
+    case QuickMenuSelection::SwapKit:
+        return L"G / swap kit";
     case QuickMenuSelection::VrSettings:
         return L"VR settings (not yet implemented)";
     default: return L"none";

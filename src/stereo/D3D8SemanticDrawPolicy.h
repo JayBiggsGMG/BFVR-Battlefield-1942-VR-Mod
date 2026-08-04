@@ -40,7 +40,9 @@ struct BF1942D3D8DrawSignature
 };
 
 // This classifier is deliberately specific to the profiled BF1942 Win32
-// executable. Every field is required so an unknown draw fails closed.
+// executable. Each semantic family requires its proven structural signature;
+// renderer-owned state variants are accepted only where static evidence shows
+// that the family intentionally permits them.
 [[nodiscard]] D3D8SemanticDrawClass ClassifyBF1942Win32SemanticDraw(
     const BF1942D3D8DrawSignature& signature) noexcept;
 

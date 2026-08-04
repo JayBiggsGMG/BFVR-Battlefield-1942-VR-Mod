@@ -97,7 +97,7 @@ bool TestBounds()
         bfvr::stereo::QuickMenuUtilitySelectionAt(0.0F, 0.5F) ==
             QuickMenuSelection::MountedCameraDecouple &&
         bfvr::stereo::QuickMenuUtilitySelectionAt(0.5F, 0.5F) ==
-            QuickMenuSelection::MapToggle &&
+            QuickMenuSelection::SwapKit &&
         bfvr::stereo::QuickMenuUtilitySelectionAt(1.0F, 0.5F) ==
             QuickMenuSelection::VrSettings &&
         bfvr::stereo::QuickMenuUtilitySelectionAt(0.5F, -0.1F) ==
@@ -476,7 +476,7 @@ bool TestArt(const wchar_t* assetsDirectory)
             comparedWidth,
             comparedHeight) ||
         !art.CopyUtilityStripPixels(
-            QuickMenuSelection::MapToggle,
+            QuickMenuSelection::SwapKit,
             false,
             utilityMapHovered,
             comparedWidth,

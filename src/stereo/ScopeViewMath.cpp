@@ -141,18 +141,23 @@ ScopeAimSource SelectScopeAimSource(
     {
         return ScopeAimSource::None;
     }
-    if (freshPoseMatchesRequestedWeapon)
-    {
-        return ScopeAimSource::Fresh;
-    }
     if (freshPoseContradictsRequestedWeapon &&
         !retainOwnedLifetimeThroughPoseContradiction)
     {
         return ScopeAimSource::None;
     }
+    // Once an exact scope has established its native-to-controller
+    // correction, keep the continuously tracked basis authoritative. BF1942
+    // can intermittently republish its otherwise hidden 1P arm while scoped;
+    // preferring that asynchronous cache for one frame and then returning to
+    // tracked aim produces a visible magnified camera hitch.
     if (trackedPoseAvailable)
     {
         return ScopeAimSource::Tracked;
+    }
+    if (freshPoseMatchesRequestedWeapon)
+    {
+        return ScopeAimSource::Fresh;
     }
     return latchedPoseAvailable
         ? ScopeAimSource::Latched

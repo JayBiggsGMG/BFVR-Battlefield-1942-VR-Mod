@@ -1,5 +1,6 @@
 #pragma once
 
+#include "stereo/D3D8DrawPolicy.h"
 #include "stereo/D3D8SemanticDrawPolicy.h"
 
 namespace bfvr::stereo
@@ -24,7 +25,8 @@ struct D3D8FrameCompletionFacts
 };
 
 [[nodiscard]] D3D8FrameCompositionLayer SelectD3D8FrameCompositionLayer(
-    D3D8SemanticDrawClass semanticClass) noexcept;
+    D3D8SemanticDrawClass semanticClass,
+    D3D8DrawPolicy drawPolicy) noexcept;
 
 // A standalone capture needs both stereo world eyes and the UI layer to prove
 // its diagnostic result. A live compositor frame instead needs an exact,

@@ -591,6 +591,14 @@ public:
         {
             return;
         }
+        // Projection telemetry is only needed to confirm that the first
+        // scoped frame reached the published world-eye boundary. Continuing
+        // to collect and report it while the scope remains open puts logging
+        // work on the render path and can cause a visible periodic hitch.
+        if (projectionPublicationConfirmed_.load(std::memory_order_acquire))
+        {
+            return;
+        }
         const float scale = projectionScale_.load(
             std::memory_order_acquire);
         if (!std::isfinite(scale) || scale <= 1.0F)
@@ -627,7 +635,7 @@ public:
             std::memory_order_acquire);
         if (weapon == nullptr || frameSequence <= 0 || !IsActive())
         {
-            if (projectionTelemetryActive_.exchange(
+            if (projectionPublicationConfirmed_.exchange(
                     false,
                     std::memory_order_acq_rel))
             {
@@ -635,46 +643,37 @@ public:
                     L"Scoped projection publication interval ended; subsequent world-eye frames are unscaled until another exact scope activates.");
             }
             projectionReplayBuilds_.store(0, std::memory_order_release);
-            projectionPublishedFrames_.store(0, std::memory_order_release);
             return;
         }
 
-        const bool sequenceMatched =
-            projectionReplaySequence_.load(std::memory_order_acquire) ==
-            frameSequence;
-        if (sequenceMatched)
-        {
-            projectionPublishedFrames_.fetch_add(
-                1,
-                std::memory_order_relaxed);
-        }
-        const bool firstActive = !projectionTelemetryActive_.exchange(
-            true,
-            std::memory_order_acq_rel);
-        const DWORD now = GetTickCount();
-        const DWORD last = projectionLastReportTick_.load(
-            std::memory_order_relaxed);
-        if (!firstActive && now - last < 1000)
+        if (projectionPublicationConfirmed_.load(std::memory_order_acquire))
         {
             return;
         }
-        projectionLastReportTick_.store(now, std::memory_order_relaxed);
+        const bool sequenceMatched =
+            projectionReplaySequence_.load(std::memory_order_acquire) ==
+            frameSequence;
+        if (!sequenceMatched)
+        {
+            return;
+        }
+        if (projectionPublicationConfirmed_.exchange(
+                true,
+                std::memory_order_acq_rel))
+        {
+            return;
+        }
 
         RuntimeZoomFields runtime = {};
         const bool runtimeReadable = ReadRuntimeZoomFields(weapon, runtime);
         const LONG replayBuilds = projectionReplayBuilds_.exchange(
             0,
             std::memory_order_acq_rel);
-        const LONG publishedFrames = projectionPublishedFrames_.exchange(
-            0,
-            std::memory_order_acq_rel);
         WriteLog(
-            L"Scoped projection reached the published world-eye boundary: weapon=%p frame=%ld replaySequenceMatch=%d replayTransforms=%ld publishedFrames=%ld requestedScale=%.6f nativeFieldsReadable=%d savedNormalFov=%.6f targetFov=%.6f zoomedByte=%d sourceM00/M11=(%.6f,%.6f) leftM00/M11=(%.6f,%.6f) rightM00/M11=(%.6f,%.6f).",
+            L"Scoped projection reached the published world-eye boundary: weapon=%p frame=%ld replaySequenceMatch=1 replayTransforms=%ld requestedScale=%.6f nativeFieldsReadable=%d savedNormalFov=%.6f targetFov=%.6f zoomedByte=%d sourceM00/M11=(%.6f,%.6f) leftM00/M11=(%.6f,%.6f) rightM00/M11=(%.6f,%.6f).",
             weapon,
             static_cast<long>(frameSequence),
-            sequenceMatched ? 1 : 0,
             replayBuilds,
-            publishedFrames,
             projectionScale_.load(std::memory_order_acquire),
             runtimeReadable ? 1 : 0,
             runtime.savedNormalFov,
@@ -1222,8 +1221,7 @@ private:
         projectionScale_.store(1.0F, std::memory_order_release);
         projectionReplaySequence_.store(0, std::memory_order_release);
         projectionReplayBuilds_.store(0, std::memory_order_release);
-        projectionPublishedFrames_.store(0, std::memory_order_release);
-        projectionTelemetryActive_.store(false, std::memory_order_release);
+        projectionPublicationConfirmed_.store(false, std::memory_order_release);
     }
 
     void ReleaseOwnedScopePolicy(const void* weapon) noexcept
@@ -1347,9 +1345,7 @@ private:
     std::atomic<float> projectionScale_ = 1.0F;
     std::atomic<LONG> projectionReplaySequence_ = 0;
     std::atomic<LONG> projectionReplayBuilds_ = 0;
-    std::atomic<LONG> projectionPublishedFrames_ = 0;
-    std::atomic<DWORD> projectionLastReportTick_ = 0;
-    std::atomic<bool> projectionTelemetryActive_ = false;
+    std::atomic<bool> projectionPublicationConfirmed_ = false;
     std::atomic<float> projectionSourceX_ = 0.0F;
     std::atomic<float> projectionSourceY_ = 0.0F;
     std::atomic<float> projectionLeftX_ = 0.0F;

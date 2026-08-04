@@ -1,6 +1,7 @@
 #include "client/MainMenuOverlay.h"
 
 #include "stereo/MainMenuOverlayLayout.h"
+#include "stereo/MainMenuScroll.h"
 
 #include <windows.h>
 
@@ -56,6 +57,31 @@ bool ChangedOnlyInsideButton(const std::vector<DWORD>& pixels)
     return true;
 }
 
+bool TestMainMenuScrollRepeat()
+{
+    bfvr::stereo::MainMenuScrollRepeatState state = {};
+    return
+        bfvr::stereo::UpdateMainMenuScrollRepeat(
+            state, false, 1.0F, 10) == 0 &&
+        bfvr::stereo::UpdateMainMenuScrollRepeat(
+            state, true, 0.64F, 20) == 0 &&
+        bfvr::stereo::UpdateMainMenuScrollRepeat(
+            state, true, 0.80F, 100) == 1 &&
+        bfvr::stereo::UpdateMainMenuScrollRepeat(
+            state, true, 0.80F, 419) == 0 &&
+        bfvr::stereo::UpdateMainMenuScrollRepeat(
+            state, true, 0.80F, 420) == 1 &&
+        bfvr::stereo::UpdateMainMenuScrollRepeat(
+            state, true, 0.0F, 430) == 0 &&
+        bfvr::stereo::UpdateMainMenuScrollRepeat(
+            state, true, -0.80F, 500) == -1 &&
+        bfvr::stereo::UpdateMainMenuScrollRepeat(
+            state, true, 0.80F, 510) == 1 &&
+        bfvr::stereo::UpdateMainMenuScrollRepeat(
+            state, false, 0.80F, 520) == 0 &&
+        state.heldDirection == 0;
+}
+
 } // namespace
 
 int wmain(int argumentCount, wchar_t** arguments)
@@ -63,6 +89,12 @@ int wmain(int argumentCount, wchar_t** arguments)
     if (argumentCount != 2 || arguments[1] == nullptr)
     {
         std::cerr << "Expected one BFVR assets-directory argument.\n";
+        return 1;
+    }
+
+    if (!TestMainMenuScrollRepeat())
+    {
+        std::cerr << "The main-menu right-stick wheel repeat policy failed.\n";
         return 1;
     }
 

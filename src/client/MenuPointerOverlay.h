@@ -9,7 +9,9 @@ namespace bfvr
 
 // Routes the fresh right-hand OpenXR aim pose through BF1942's native
 // BfMenu::setGameInput boundary. It does not synthesize a Windows cursor or
-// window message; Ref2 continues to own hit testing, focus, and click dispatch.
+// directly post window messages; Ref2 continues to own hit testing, focus, and
+// click dispatch. Exact frontend state 0 may additionally emit foreground-
+// checked SendInput mouse-wheel detents from the right stick.
 void StartMenuPointerOverlay(
     void* gameImage,
     UINT runtimeUiWidth,

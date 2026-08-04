@@ -2055,6 +2055,22 @@ void TestBF1942SemanticDrawPolicy()
     {
         Fail(test, "exact profiled Ref2 font signature was rejected");
     }
+    signature.zWriteEnable = 0;
+    signature.alphaBlendEnable = 0;
+    signature.fogEnable = 1;
+    signature.lighting = 1;
+    if (bfvr::stereo::ClassifyBF1942Win32SemanticDraw(signature) !=
+        D3D8SemanticDrawClass::Ref2FontGlyphBatch)
+    {
+        Fail(test, "authored alpha-test Ref2 font variant was rejected");
+    }
+    signature.zEnable = 1;
+    if (bfvr::stereo::ClassifyBF1942Win32SemanticDraw(signature) !=
+        D3D8SemanticDrawClass::Unclassified)
+    {
+        Fail(test, "depth-enabled Ref2 font near miss did not fail closed");
+    }
+    signature.zEnable = 0;
     signature.wrapperReturnAddress = 0x00667EF5;
     if (bfvr::stereo::ClassifyBF1942Win32SemanticDraw(signature) !=
         D3D8SemanticDrawClass::Unclassified)
@@ -2137,46 +2153,68 @@ void TestBF1942SemanticDrawPolicy()
 void TestD3D8FrameCompositionPolicy()
 {
     constexpr std::string_view test = "D3D8 frame composition policy";
+    using bfvr::stereo::D3D8DrawPolicy;
     using bfvr::stereo::D3D8FrameCompositionLayer;
     using bfvr::stereo::D3D8SemanticDrawClass;
     if (bfvr::stereo::SelectD3D8FrameCompositionLayer(
-            D3D8SemanticDrawClass::Ref2MenuQuad) !=
+            D3D8SemanticDrawClass::Ref2MenuQuad,
+            D3D8DrawPolicy::MonoNonPerspective) !=
         D3D8FrameCompositionLayer::Ref2Ui)
     {
         Fail(test, "Ref2 menu quad was not routed to the UI layer");
     }
     if (bfvr::stereo::SelectD3D8FrameCompositionLayer(
-            D3D8SemanticDrawClass::Ref2FontGlyphBatch) !=
+            D3D8SemanticDrawClass::Ref2FontGlyphBatch,
+            D3D8DrawPolicy::MonoPretransformed) !=
         D3D8FrameCompositionLayer::Ref2Ui)
     {
         Fail(test, "Ref2 font batch was not routed to the UI layer");
     }
     if (bfvr::stereo::SelectD3D8FrameCompositionLayer(
-            D3D8SemanticDrawClass::SkyboxCubeFace) !=
+            D3D8SemanticDrawClass::SkyboxCubeFace,
+            D3D8DrawPolicy::StereoPerspective) !=
             D3D8FrameCompositionLayer::WorldEyes ||
         bfvr::stereo::SelectD3D8FrameCompositionLayer(
-            D3D8SemanticDrawClass::BillboardBatch) !=
+            D3D8SemanticDrawClass::BillboardBatch,
+            D3D8DrawPolicy::StereoPerspective) !=
             D3D8FrameCompositionLayer::WorldEyes ||
         bfvr::stereo::SelectD3D8FrameCompositionLayer(
-            D3D8SemanticDrawClass::TreeMeshAlphaBlock) !=
+            D3D8SemanticDrawClass::TreeMeshAlphaBlock,
+            D3D8DrawPolicy::StereoPerspective) !=
             D3D8FrameCompositionLayer::WorldEyes ||
         bfvr::stereo::SelectD3D8FrameCompositionLayer(
-            D3D8SemanticDrawClass::TreeMeshProgrammableSprite) !=
+            D3D8SemanticDrawClass::TreeMeshProgrammableSprite,
+            D3D8DrawPolicy::StereoPerspective) !=
             D3D8FrameCompositionLayer::WorldEyes ||
         bfvr::stereo::SelectD3D8FrameCompositionLayer(
-            D3D8SemanticDrawClass::AnimatedMeshSkinning) !=
+            D3D8SemanticDrawClass::AnimatedMeshSkinning,
+            D3D8DrawPolicy::StereoPerspective) !=
             D3D8FrameCompositionLayer::WorldEyes ||
         bfvr::stereo::SelectD3D8FrameCompositionLayer(
-            D3D8SemanticDrawClass::WaterSurface) !=
+            D3D8SemanticDrawClass::WaterSurface,
+            D3D8DrawPolicy::StereoPerspective) !=
             D3D8FrameCompositionLayer::WorldEyes ||
         bfvr::stereo::SelectD3D8FrameCompositionLayer(
-            D3D8SemanticDrawClass::TranslucentSprite) !=
+            D3D8SemanticDrawClass::TranslucentSprite,
+            D3D8DrawPolicy::StereoPerspective) !=
             D3D8FrameCompositionLayer::WorldEyes ||
         bfvr::stereo::SelectD3D8FrameCompositionLayer(
-            D3D8SemanticDrawClass::Unclassified) !=
+            D3D8SemanticDrawClass::Unclassified,
+            D3D8DrawPolicy::StereoPerspective) !=
             D3D8FrameCompositionLayer::WorldEyes)
     {
         Fail(test, "non-UI semantic class escaped the world-eye layer");
+    }
+    if (bfvr::stereo::SelectD3D8FrameCompositionLayer(
+            D3D8SemanticDrawClass::Unclassified,
+            D3D8DrawPolicy::MonoPretransformed) !=
+            D3D8FrameCompositionLayer::Ref2Ui ||
+        bfvr::stereo::SelectD3D8FrameCompositionLayer(
+            D3D8SemanticDrawClass::Unclassified,
+            D3D8DrawPolicy::MonoNonPerspective) !=
+            D3D8FrameCompositionLayer::Ref2Ui)
+    {
+        Fail(test, "unclassified monoscopic draw escaped the UI layer");
     }
 
     bfvr::stereo::D3D8FrameCompletionFacts standalone = {};

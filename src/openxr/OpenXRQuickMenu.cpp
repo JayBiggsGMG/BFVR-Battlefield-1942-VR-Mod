@@ -251,7 +251,7 @@ bool OpenXRQuickMenu::Initialize(
         return false;
     }
     WriteLog(
-        L"Quick Menu OpenXR resources are ready: menu=%ux%u utilityStrip=%ux%u cursor=%ux%u panel=%.2fx%.2f m, positioned %.2f m ahead of the right grip. The authored strip provides Decouple Turret, native M map toggle, and reserved VR Settings buttons; decoupling defaults to coupled. Right A is the dedicated hold action.",
+        L"Quick Menu OpenXR resources are ready: menu=%ux%u utilityStrip=%ux%u cursor=%ux%u panel=%.2fx%.2f m, positioned %.2f m ahead of the right grip. The authored strip provides Decouple Turret, native G swap-kit, and reserved VR Settings buttons; decoupling defaults to coupled. Right A is the dedicated hold action.",
         menuSwapchain_.width,
         menuSwapchain_.height,
         utilitySwapchain_.width,

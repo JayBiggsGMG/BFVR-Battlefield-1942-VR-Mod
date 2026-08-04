@@ -24,7 +24,7 @@ enum class QuickMenuSelection : std::uint32_t
     CameraF11,
     CameraF12,
     MountedCameraDecouple,
-    MapToggle,
+    SwapKit,
     VrSettings,
     Count
 };

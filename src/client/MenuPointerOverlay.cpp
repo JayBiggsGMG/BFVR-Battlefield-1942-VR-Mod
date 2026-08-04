@@ -3,6 +3,7 @@
 #include "client/ControllerInputCache.h"
 #include "presenter/SharedPresentationProtocol.h"
 #include "stereo/MainMenuOverlayLayout.h"
+#include "stereo/MainMenuScroll.h"
 #include "stereo/UiPointerMath.h"
 
 #include <MinHook.h>
@@ -104,6 +105,30 @@ bool SendEscapeKeyPress() noexcept
                sizeof(INPUT)) == static_cast<UINT>(inputs.size());
 }
 
+bool SendMouseWheelStep(int direction) noexcept
+{
+    if (direction == 0)
+    {
+        return false;
+    }
+    const HWND foregroundWindow = GetForegroundWindow();
+    DWORD foregroundProcessId = 0;
+    if (foregroundWindow == nullptr ||
+        GetWindowThreadProcessId(
+            foregroundWindow,
+            &foregroundProcessId) == 0 ||
+        foregroundProcessId != GetCurrentProcessId())
+    {
+        return false;
+    }
+    INPUT input = {};
+    input.type = INPUT_MOUSE;
+    input.mi.mouseData = static_cast<DWORD>(
+        direction > 0 ? WHEEL_DELTA : -WHEEL_DELTA);
+    input.mi.dwFlags = MOUSEEVENTF_WHEEL;
+    return SendInput(1, &input, sizeof(input)) == 1;
+}
+
 bfvr::stereo::Pose ToPose(
     const bfvr::D3D8RuntimeControllerPose& source) noexcept
 {
@@ -150,6 +175,7 @@ public:
         triggerPressed = false;
         okPressedLastFrame = false;
         overlayVisibleLastFrame = false;
+        scrollRepeat = {};
         if (runtimeWidth == 0 || runtimeHeight == 0 ||
             sourceWidth == 0 || sourceHeight == 0)
         {
@@ -223,7 +249,7 @@ public:
         }
         hookEnabled = true;
         WriteLog(
-            L"Controller menu pointer armed at 0x0045DE60 for world-locked native menus: runtime=%ux%u source=%ux%u logical=800x600. The presentation path supplies the yaw-only LOCAL anchor shared by this mapper; a fresh tracked right aim ray supplies native c_GIMouseLookX/Y, and right trigger supplies native c_GIOk with hysteresis. The BFVR back-to-game button is gated to BfMenu Battlefield state 0 and emits one focus-checked Escape scan-code down/up pair on a new click edge.",
+            L"Controller menu pointer armed at 0x0045DE60 for world-locked native menus: runtime=%ux%u source=%ux%u logical=800x600. The presentation path supplies the yaw-only LOCAL anchor shared by this mapper; a fresh tracked right aim ray supplies native c_GIMouseLookX/Y, and right trigger supplies native c_GIOk with hysteresis. In BfMenu Battlefield frontend state 0, right-stick up/down emits focus-checked mouse-wheel detents with bounded repeat while the Quick Menu is not held. The BFVR back-to-game button emits one focus-checked Escape scan-code down/up pair on a new click edge.",
             runtimeUiWidth,
             runtimeUiHeight,
             sourceUiWidth,
@@ -251,7 +277,7 @@ public:
         InterlockedExchange(&g_mainMenuOverlayHovered, 0);
         InterlockedExchange(&g_mainMenuOverlayAvailable, 0);
         WriteLog(
-            L"Controller menu pointer report: calls=%ld nativeMenuFrames=%ld mainMenuFrames=%ld hoverFrames=%ld freshTracking=%ld rayHits=%ld applied=%ld escapePresses=%ld escapeFailures=%ld readFaults=%ld restoreFaults=%ld.",
+            L"Controller menu pointer report: calls=%ld nativeMenuFrames=%ld mainMenuFrames=%ld hoverFrames=%ld freshTracking=%ld rayHits=%ld applied=%ld wheelUp=%ld wheelDown=%ld wheelFailures=%ld escapePresses=%ld escapeFailures=%ld readFaults=%ld restoreFaults=%ld.",
             observedCalls,
             nativeMenuFrames,
             mainMenuFrames,
@@ -259,6 +285,9 @@ public:
             freshTrackingFrames,
             rayHits,
             appliedFrames,
+            wheelUpSteps,
+            wheelDownSteps,
+            wheelFailures,
             escapePresses,
             escapeFailures,
             readFaults,
@@ -295,6 +324,7 @@ private:
     {
         InterlockedIncrement(&observedCalls);
         bool nativeMenuActive = false;
+        bool battlefieldFrontend = false;
         bool battlefieldMainMenu = false;
         int activeIndex = -1;
         float currentPointerX = 0.0F;
@@ -311,9 +341,11 @@ private:
                     *reinterpret_cast<int*>(
                         static_cast<std::byte*>(menu) +
                         kBfMenuActiveIndexOffset);
-                battlefieldMainMenu =
+                battlefieldFrontend =
                     activeIndex == kBfMenuBattlefieldState &&
-                    ref2System != nullptr &&
+                    ref2System != nullptr;
+                battlefieldMainMenu =
+                    battlefieldFrontend &&
                     InterlockedCompareExchange(
                         &g_mainMenuOverlayAvailable,
                         0,
@@ -343,6 +375,7 @@ private:
         __except (EXCEPTION_EXECUTE_HANDLER)
         {
             nativeMenuActive = false;
+            battlefieldFrontend = false;
             battlefieldMainMenu = false;
             InterlockedIncrement(&readFaults);
         }
@@ -373,6 +406,22 @@ private:
         {
             InterlockedIncrement(&freshTrackingFrames);
         }
+        const bool thumbstickActive =
+            right != nullptr &&
+            (right->flags &
+             bfvr::shared::kControllerHandFlagThumbstickActive) != 0;
+        const bool quickMenuHeld =
+            right != nullptr &&
+            (right->buttons &
+             bfvr::shared::kControllerHandButtonPrimary) != 0;
+        const int requestedWheelDirection =
+            bfvr::stereo::UpdateMainMenuScrollRepeat(
+                scrollRepeat,
+                battlefieldFrontend && nativeMenuActive && fresh &&
+                    sample.valid && sample.sessionFocused &&
+                    thumbstickActive && !quickMenuHeld,
+                thumbstickActive ? right->thumbstickY : 0.0F,
+                GetTickCount());
 
         bfvr::stereo::UiCanvasPoint canvasPoint = {};
         bool rayHit = false;
@@ -647,6 +696,20 @@ private:
                 InterlockedIncrement(&escapeFailures);
             }
         }
+        if (requestedWheelDirection != 0)
+        {
+            if (SendMouseWheelStep(requestedWheelDirection))
+            {
+                InterlockedIncrement(
+                    requestedWheelDirection > 0
+                        ? &wheelUpSteps
+                        : &wheelDownSteps);
+            }
+            else
+            {
+                InterlockedIncrement(&wheelFailures);
+            }
+        }
     }
 
     void RemoveHook()
@@ -699,6 +762,9 @@ private:
     volatile LONG freshTrackingFrames = 0;
     volatile LONG rayHits = 0;
     volatile LONG appliedFrames = 0;
+    volatile LONG wheelUpSteps = 0;
+    volatile LONG wheelDownSteps = 0;
+    volatile LONG wheelFailures = 0;
     volatile LONG escapePresses = 0;
     volatile LONG escapeFailures = 0;
     volatile LONG readFaults = 0;
@@ -715,6 +781,7 @@ private:
     bool okPressedLastFrame = false;
     bool overlayVisibleLastFrame = false;
     bool menuAnchorValid = false;
+    bfvr::stereo::MainMenuScrollRepeatState scrollRepeat = {};
     bfvr::stereo::Pose menuAnchorHead = {};
     bool ownsMinHook = false;
     bool hookCreated = false;
