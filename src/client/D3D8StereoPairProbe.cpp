@@ -79,6 +79,7 @@ constexpr std::size_t kDirect3DDevice8SetTransformSlot = 37;
 constexpr std::size_t kDirect3DDevice8GetTransformSlot = 38;
 constexpr std::size_t kDirect3DDevice8SetViewportSlot = 40;
 constexpr std::size_t kDirect3DDevice8GetViewportSlot = 41;
+constexpr std::size_t kDirect3DDevice8SetRenderStateSlot = 50;
 constexpr std::size_t kDirect3DDevice8GetRenderStateSlot = 51;
 // IDirect3DDevice8::GetTextureStageState follows GetTexture/SetTexture at
 // slots 60/61. Slot 64 is ValidateDevice and has an incompatible signature.
@@ -105,9 +106,12 @@ constexpr DWORD kD3DRenderStateZWriteEnable = 14;
 constexpr DWORD kD3DRenderStateAlphaBlendEnable = 27;
 constexpr DWORD kD3DRenderStateFogEnable = 28;
 constexpr DWORD kD3DRenderStateLighting = 137;
+constexpr DWORD kD3DRenderStateLocalViewer = 142;
 constexpr DWORD kD3DRenderStateSourceBlend = 19;
 constexpr DWORD kD3DRenderStateDestinationBlend = 20;
 constexpr DWORD kD3DRenderStateTextureFactor = 60;
+constexpr DWORD kD3DRenderStateColorWriteEnable = 168;
+constexpr DWORD kD3DColorWriteEnableAlpha = 0x8;
 constexpr DWORD kOwnedTargetClearColor = 0xFF102030;
 constexpr DWORD kMenuLayerClearColor = 0x00000000;
 constexpr UINT kMinimumCandidatePrimitiveCount = 1000;
@@ -183,6 +187,7 @@ using SetTransformFn = HRESULT(WINAPI*)(void* device, DWORD state, const void* m
 using GetTransformFn = HRESULT(WINAPI*)(void* device, DWORD state, void* matrix);
 using SetViewportFn = HRESULT(WINAPI*)(void* device, const D3DViewport* viewport);
 using GetViewportFn = HRESULT(WINAPI*)(void* device, D3DViewport* viewport);
+using SetRenderStateFn = HRESULT(WINAPI*)(void* device, DWORD state, DWORD value);
 using GetRenderStateFn = HRESULT(WINAPI*)(void* device, DWORD state, DWORD* value);
 using GetTextureStageStateFn = HRESULT(WINAPI*)(
     void* device,
@@ -281,6 +286,7 @@ struct DeviceMethods
     GetTransformFn getTransform = nullptr;
     SetViewportFn setViewport = nullptr;
     GetViewportFn getViewport = nullptr;
+    SetRenderStateFn setRenderState = nullptr;
     GetRenderStateFn getRenderState = nullptr;
     GetTextureStageStateFn getTextureStageState = nullptr;
     DrawPrimitiveFn drawPrimitive = nullptr;
@@ -315,6 +321,9 @@ struct DrawStateSnapshot
     DWORD alphaBlendEnable = 0;
     DWORD fogEnable = 0;
     DWORD lighting = 0;
+    DWORD localViewer = 0;
+    bool localViewerReadable = false;
+    bool localViewerOverridden = false;
     bfvr::stereo::D3D8DrawPolicy drawPolicy =
         bfvr::stereo::D3D8DrawPolicy::MonoNonPerspective;
     bfvr::stereo::D3D8SemanticDrawClass semanticClass =
@@ -362,7 +371,7 @@ bool g_presentationFramePublished = false;
 bool g_offlinePresentation = false;
 bool g_runUntilStopped = false;
 bool g_keepOriginalFlatBackbuffer = false;
-bool g_headCenteredWaterReflection = true;
+bool g_legacyStereoWaterReflection = false;
 bfvr::D3D8RuntimeDiagnosticLevel g_runtimeDiagnostics =
     bfvr::D3D8RuntimeDiagnosticLevel::Deep;
 PresentationRunRecord g_presentationRun = {};
@@ -390,14 +399,6 @@ bool IsFullFrameMode()
 bool IsPresentationMode()
 {
     return g_mode == ProbeMode::FullFramePresentation;
-}
-
-bool IsHeadCenteredWaterReflectionPass(const DrawStateSnapshot& snapshot)
-{
-    return g_headCenteredWaterReflection &&
-        snapshot.semanticClass ==
-            bfvr::stereo::D3D8SemanticDrawClass::WaterSurface &&
-        snapshot.zWriteEnable != 0;
 }
 
 void AppendLog(const wchar_t* format, ...);
@@ -501,30 +502,6 @@ bool IsFiniteMatrix(const D3DMatrix& matrix)
         }
     }
     return true;
-}
-
-// The eye views differ only by the tracked eye offset.  Averaging them gives
-// the tracked head-centre view without falling back to BF1942's flat source
-// camera.  That keeps the fixed-function reflection vector responsive to HMD
-// motion while removing the IPD disagreement that caused alternating bands.
-bool BuildHeadCenteredWaterReflectionView(
-    const D3DMatrix& leftEyeView,
-    const D3DMatrix& rightEyeView,
-    D3DMatrix& headCenteredView)
-{
-    for (std::size_t row = 0; row < std::size(headCenteredView.values); ++row)
-    {
-        for (std::size_t column = 0;
-             column < std::size(headCenteredView.values[row]);
-             ++column)
-        {
-            headCenteredView.values[row][column] =
-                (leftEyeView.values[row][column] +
-                 rightEyeView.values[row][column]) *
-                0.5F;
-        }
-    }
-    return IsFiniteMatrix(headCenteredView);
 }
 
 bool EqualMatrix(const D3DMatrix& left, const D3DMatrix& right)
@@ -820,6 +797,8 @@ HRESULT InvokeOriginalFrameDraw(
     }
 }
 
+#include "client/internal/D3D8StereoPairWaterMask.inl"
+
 FrameMirrorResult MirrorDrawIntoFrame(
     void* device,
     const FrameDrawInvocation& invocation)
@@ -845,6 +824,7 @@ FrameMirrorResult MirrorDrawIntoFrame(
         return FrameMirrorResult::NotMirrored;
     }
     ApplyFrameSemanticPolicy(invocation, snapshot);
+    PrepareInfiniteViewerWaterReflection(device, snapshot);
     if (snapshot.semanticClass ==
         bfvr::stereo::D3D8SemanticDrawClass::WaterSurface)
     {
@@ -896,6 +876,8 @@ FrameMirrorResult MirrorDrawIntoFrame(
         ReleaseFrameSourceReferences(snapshot);
         return FrameMirrorResult::Failed;
     }
+    const bool infiniteViewerWaterReflection =
+        ApplyInfiniteViewerWaterReflection(device, snapshot);
     preparationTimer.Stop();
 
     bfvr::d3d8probe::ScopedPerformanceAccumulator drawTimer(
@@ -904,13 +886,6 @@ FrameMirrorResult MirrorDrawIntoFrame(
     const D3DMatrix* const eyeProjections[2] = {
         &snapshot.leftProjection,
         &snapshot.rightProjection};
-    D3DMatrix headCenteredWaterReflectionView = {};
-    const bool headCenteredWaterReflection =
-        IsHeadCenteredWaterReflectionPass(snapshot) &&
-        BuildHeadCenteredWaterReflectionView(
-            snapshot.leftView,
-            snapshot.rightView,
-            headCenteredWaterReflectionView);
     const auto compositionLayer =
         bfvr::stereo::SelectD3D8FrameCompositionLayer(snapshot.semanticClass);
     if (compositionLayer ==
@@ -957,9 +932,7 @@ FrameMirrorResult MirrorDrawIntoFrame(
     {
         for (std::size_t eye = 0; eye < 2; ++eye)
         {
-            const D3DMatrix* const replayView = headCenteredWaterReflection
-                ? &headCenteredWaterReflectionView
-                : eyeViews[eye];
+            const D3DMatrix* const replayView = eyeViews[eye];
             const D3DMatrix* const replayProjection = eyeProjections[eye];
             const HRESULT targetResult = g_methods.setRenderTarget(
                 device,
@@ -1058,6 +1031,11 @@ FrameMirrorResult MirrorDrawIntoFrame(
                 layerDrawn = false;
                 break;
             }
+            CaptureVisibleWaterMask(
+                device,
+                invocation,
+                snapshot,
+                eye);
         }
     }
 
@@ -1089,9 +1067,10 @@ FrameMirrorResult MirrorDrawIntoFrame(
     bfvr::d3d8probe::CountStereoFrameSemanticDraw(
         g_frame,
         snapshot.semanticClass);
-    if (headCenteredWaterReflection)
+    if (infiniteViewerWaterReflection)
     {
-        InterlockedIncrement(&g_frame.headCenteredWaterReflectionDraws);
+        InterlockedIncrement(
+            &g_frame.infiniteViewerWaterReflectionDraws);
     }
     if (bfvr::IsDeepD3D8RuntimeDiagnostics(g_runtimeDiagnostics))
     {
@@ -1924,6 +1903,8 @@ bool ResolveDeviceMethods()
         reinterpret_cast<SetViewportFn>(vtable[kDirect3DDevice8SetViewportSlot]);
     g_methods.getViewport =
         reinterpret_cast<GetViewportFn>(vtable[kDirect3DDevice8GetViewportSlot]);
+    g_methods.setRenderState =
+        reinterpret_cast<SetRenderStateFn>(vtable[kDirect3DDevice8SetRenderStateSlot]);
     g_methods.getRenderState =
         reinterpret_cast<GetRenderStateFn>(vtable[kDirect3DDevice8GetRenderStateSlot]);
     g_methods.getTextureStageState =
@@ -1962,6 +1943,7 @@ bool ResolveDeviceMethods()
         reinterpret_cast<void*>(g_methods.getTransform),
         reinterpret_cast<void*>(g_methods.setViewport),
         reinterpret_cast<void*>(g_methods.getViewport),
+        reinterpret_cast<void*>(g_methods.setRenderState),
         reinterpret_cast<void*>(g_methods.getRenderState),
         reinterpret_cast<void*>(g_methods.getTextureStageState),
         reinterpret_cast<void*>(g_methods.drawPrimitive),
@@ -2019,9 +2001,9 @@ bool InstallHooks()
     if (IsPresentationMode())
     {
         AppendLog(
-            g_headCenteredWaterReflection
-                ? L"Enabled the exact water additive-reflection fallback: its fixed-function reflection-vector pass uses the tracked head-centre View while retaining each eye's projection; base water remains stereo. Set BFVR_STEREO_WATER_REFLECTION=1 to restore the legacy fully stereo reflection path."
-                : L"BFVR_STEREO_WATER_REFLECTION=1 restored the legacy fully stereo water reflection path.");
+            !g_legacyStereoWaterReflection
+                ? L"Enabled the exact additive-water reflection repair: the pass keeps each eye's complete View/Projection geometry and temporarily uses D3DRS_LOCALVIEWER=FALSE so its fixed-function reflection coordinate is independent of eye translation. Set BFVR_STEREO_WATER_REFLECTION=1 to restore the legacy camera-relative reflection path."
+                : L"BFVR_STEREO_WATER_REFLECTION=1 restored the legacy camera-relative water reflection path.");
     }
     g_readbackApi = {
         g_methods.createImageSurface,
@@ -2467,12 +2449,12 @@ void StartD3D8StereoFramePresentationProbe(
         static_cast<DWORD>(std::size(runUntilStopped))) == 1 &&
         runUntilStopped[0] == L'1';
     wchar_t stereoWaterReflection[2] = {};
-    g_headCenteredWaterReflection = !(
+    g_legacyStereoWaterReflection =
         GetEnvironmentVariableW(
             kStereoWaterReflectionEnvironment,
             stereoWaterReflection,
             static_cast<DWORD>(std::size(stereoWaterReflection))) == 1 &&
-        stereoWaterReflection[0] == L'1');
+        stereoWaterReflection[0] == L'1';
     g_keepOriginalFlatBackbuffer = ReadKeepOriginalFlatBackbuffer();
     g_runtimeDiagnostics = g_runUntilStopped
         ? ReadD3D8RuntimeDiagnosticLevel()

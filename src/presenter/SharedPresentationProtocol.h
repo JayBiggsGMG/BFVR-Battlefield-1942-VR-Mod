@@ -11,12 +11,13 @@ namespace bfvr::shared
 using SharedTextureLogCallback = void (*)(void* context, const wchar_t* message);
 
 constexpr DWORD kProtocolMagic = 0x52564642; // "BFVR"
-constexpr DWORD kProtocolVersion = 12;
+constexpr DWORD kProtocolVersion = 13;
 constexpr std::size_t kTextureCount = 3;
 constexpr std::size_t kDepthTextureCount = 2;
 constexpr std::size_t kSharedNameCapacity = 128;
 constexpr DWORD kProducerFlagRuntimeTimedRender = 0x1;
 constexpr DWORD kProducerFlagAmbientOcclusionRequested = 0x2;
+constexpr DWORD kProducerFlagWaterReflectionsRequested = 0x4;
 constexpr LONG kFrameOverlayBackToGameVisible = 0x1;
 constexpr LONG kFrameOverlayBackToGameHovered = 0x2;
 constexpr LONG kFramePresentationEyeFillingScope = 0x1;
@@ -249,6 +250,10 @@ struct ControlBlock
     volatile LONG depthTextureCount = 0;
     volatile LONG depthEncoding = static_cast<LONG>(DepthEncoding::None);
     volatile LONG frameDepthValid = 0;
+    // The alpha channel of each packed-depth texture contains a fail-closed
+    // effective-opacity mask from the exact additive water pass. RGB remains
+    // the packed device depth consumed by AO and water SSR.
+    volatile LONG frameWaterMaskValid = 0;
     SharedDepthFrameParameters frameDepth = {};
     PresentationRequirements requirements = {};
     SharedRenderRequest renderRequest = {};

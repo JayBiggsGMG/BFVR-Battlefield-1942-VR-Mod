@@ -165,6 +165,7 @@ bool CreateAndClearFrameResources(void* device, const DrawStateSnapshot& snapsho
     }
 
     bool cleared = created;
+    bool waterMaskCleared = false;
     if (created)
     {
         const DWORD clearFlags = kD3DClearTarget |
@@ -219,6 +220,40 @@ bool CreateAndClearFrameResources(void* device, const DrawStateSnapshot& snapsho
                 : E_FAIL;
             cleared = SUCCEEDED(clearResult);
         }
+        if (cleared &&
+            IsPresentationMode() &&
+            g_presentationBridge.WaterReflectionsRequested() &&
+            g_frame.depthExport[0] != nullptr &&
+            g_frame.depthExport[1] != nullptr)
+        {
+            waterMaskCleared = true;
+            for (std::size_t eye = 0; eye < 2; ++eye)
+            {
+                const HRESULT targetResult = g_methods.setRenderTarget(
+                    device,
+                    g_frame.depthExport[eye],
+                    nullptr);
+                const HRESULT viewportResult = SUCCEEDED(targetResult)
+                    ? g_methods.setViewport(device, &g_runtimeWorldViewport)
+                    : E_FAIL;
+                const HRESULT clearResult = SUCCEEDED(viewportResult)
+                    ? g_methods.clear(
+                        device,
+                        0,
+                        nullptr,
+                        kD3DClearTarget,
+                        0x00000000,
+                        1.0F,
+                        0)
+                    : E_FAIL;
+                if (FAILED(clearResult))
+                {
+                    waterMaskCleared = false;
+                    InterlockedIncrement(&g_frame.waterMaskFailures);
+                    break;
+                }
+            }
+        }
     }
 
     const bool restored = RestoreFrameState(device, snapshot);
@@ -227,6 +262,7 @@ bool CreateAndClearFrameResources(void* device, const DrawStateSnapshot& snapsho
         ReleaseFrameOwnedResources();
         return false;
     }
+    g_frame.waterMaskValid = waterMaskCleared ? TRUE : FALSE;
     InterlockedExchange(&g_frame.resourcesReady, 1);
     return true;
 }

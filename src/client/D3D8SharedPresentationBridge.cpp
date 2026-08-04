@@ -117,6 +117,18 @@ bool ReadAmbientOcclusionRequested()
         !(length == 1 && value[0] == L'0');
 }
 
+bool ReadWaterReflectionsRequested()
+{
+    wchar_t value[2] = {};
+    const DWORD length = GetEnvironmentVariableW(
+        L"BFVR_OPENXR_WATER_SSR",
+        value,
+        static_cast<DWORD>(std::size(value)));
+    // Water SSR is an explicit visual experiment. Fail closed unless the
+    // owner selected exactly 1 for this launch.
+    return length == 1 && value[0] == L'1';
+}
+
 bfvr::shared::SharedTextureRequirements MakeProducerRequirements(
     const bfvr::shared::SharedTextureRequirements& destination,
     float worldRenderScale)
@@ -241,9 +253,13 @@ public:
         }
         block = channel.Get();
         ambientOcclusionRequested = ReadAmbientOcclusionRequested();
+        waterReflectionsRequested = ReadWaterReflectionsRequested();
         block->producerFlags = shared::kProducerFlagRuntimeTimedRender |
             (ambientOcclusionRequested
                 ? shared::kProducerFlagAmbientOcclusionRequested
+                : 0) |
+            (waterReflectionsRequested
+                ? shared::kProducerFlagWaterReflectionsRequested
                 : 0);
 
         const std::wstring presenterLog = moduleDirectory +
@@ -486,7 +502,7 @@ public:
         }
 
         depthTexturesPublished = false;
-        if (ambientOcclusionRequested)
+        if (ambientOcclusionRequested || waterReflectionsRequested)
         {
             std::array<
                 shared::SharedTextureDescription,
@@ -513,11 +529,13 @@ public:
                     &block->depthTextureCount,
                     static_cast<LONG>(shared::kDepthTextureCount));
                 WriteLog(
-                    L"Published optional packed INTZ depth exports: left=%ux%u right=%ux%u D3D9 A8R8G8B8/D3D11 B8G8R8A8_UNORM.",
+                    L"Published optional packed INTZ depth/water-mask exports: left=%ux%u right=%ux%u D3D9 A8R8G8B8/D3D11 B8G8R8A8_UNORM (AO=%d waterSSR=%d).",
                     requirements.leftWorldWidth,
                     requirements.leftWorldHeight,
                     requirements.rightWorldWidth,
-                    requirements.rightWorldHeight);
+                    requirements.rightWorldHeight,
+                    ambientOcclusionRequested ? 1 : 0,
+                    waterReflectionsRequested ? 1 : 0);
             }
             else
             {
@@ -526,7 +544,7 @@ public:
                     static_cast<LONG>(shared::DepthEncoding::None));
                 InterlockedExchange(&block->depthTextureCount, 0);
                 WriteLog(
-                    L"Optional INTZ depth targets are unavailable (HRESULT=0x%08lX); continuing with ordinary D24S8 and AO disabled.",
+                    L"Optional INTZ depth targets are unavailable (HRESULT=0x%08lX); continuing with ordinary D24S8 and depth-based AO/water SSR disabled.",
                     static_cast<unsigned long>(
                         gpuProducer.LastDepthCreateResult()));
             }
@@ -948,6 +966,9 @@ public:
         InterlockedExchange(
             &block->frameDepthValid,
             frameDepthValid ? 1 : 0);
+        InterlockedExchange(
+            &block->frameWaterMaskValid,
+            frameDepthValid && depthFrame.waterMaskValid ? 1 : 0);
         if (!gpuProducer.WaitForGpu(d3d8Device, timeoutMs))
         {
             WriteLog(
@@ -1131,6 +1152,7 @@ public:
         gpuSharedTargets = false;
         texturesPublished = false;
         ambientOcclusionRequested = false;
+        waterReflectionsRequested = false;
         depthTexturesPublished = false;
         depthResolveSuccessLogged = false;
         depthTimingReported = false;
@@ -1313,6 +1335,7 @@ public:
     bool gpuSharedTargets = false;
     bool texturesPublished = false;
     bool ambientOcclusionRequested = false;
+    bool waterReflectionsRequested = false;
     bool depthTexturesPublished = false;
     bool depthResolveSuccessLogged = false;
     bool depthTimingReported = false;
@@ -1440,6 +1463,11 @@ void D3D8SharedPresentationBridge::Shutdown()
 bool D3D8SharedPresentationBridge::UsesGpuSharedTargets() const noexcept
 {
     return impl_ != nullptr && impl_->gpuSharedTargets;
+}
+
+bool D3D8SharedPresentationBridge::WaterReflectionsRequested() const noexcept
+{
+    return impl_ != nullptr && impl_->waterReflectionsRequested;
 }
 
 UINT D3D8SharedPresentationBridge::LeftWorldWidth() const noexcept

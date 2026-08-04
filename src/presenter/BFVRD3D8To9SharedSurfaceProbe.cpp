@@ -358,6 +358,7 @@ int wmain(int argc, wchar_t** argv)
     const wchar_t* consumerPath = nullptr;
     const wchar_t* consumerLogPath = nullptr;
     bool enableAmbientOcclusion = false;
+    bool enableWaterReflections = false;
     for (int index = 1; index < argc; ++index)
     {
         if (wcscmp(argv[index], L"--consumer") == 0 && index + 1 < argc)
@@ -373,11 +374,15 @@ int wmain(int argc, wchar_t** argv)
         {
             enableAmbientOcclusion = true;
         }
+        else if (wcscmp(argv[index], L"--water-reflections") == 0)
+        {
+            enableWaterReflections = true;
+        }
         else
         {
             fwprintf(
                 stderr,
-                L"Usage: BFVRD3D8To9SharedSurfaceProbe [--consumer <x64-path> [--consumer-log <path>] [--ambient-occlusion]]\n");
+                L"Usage: BFVRD3D8To9SharedSurfaceProbe [--consumer <x64-path> [--consumer-log <path>] [--ambient-occlusion] [--water-reflections]]\n");
             return 2;
         }
     }
@@ -436,7 +441,7 @@ int wmain(int argc, wchar_t** argv)
         getRuntimeDiagnostics == nullptr ||
         getBridgeVersion == nullptr ||
         createSharedTarget == nullptr ||
-        (enableAmbientOcclusion &&
+        ((enableAmbientOcclusion || enableWaterReflections) &&
             (createDepthTarget == nullptr || resolveDepthTarget == nullptr)) ||
         waitForGpu == nullptr ||
         getBridgeVersion() != BFVR_D3D8TO9_SHARED_BRIDGE_VERSION)
@@ -742,7 +747,8 @@ int wmain(int argc, wchar_t** argv)
             waitForGpu,
             consumerPath,
             consumerLogPath,
-            enableAmbientOcclusion)
+            enableAmbientOcclusion,
+            enableWaterReflections)
         ? 0
         : 1;
 

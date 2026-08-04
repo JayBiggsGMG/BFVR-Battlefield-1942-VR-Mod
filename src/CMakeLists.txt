@@ -39,6 +39,7 @@ if(BFVR_PRESENTER_ONLY)
     presenter/D3D11AmbientOcclusion.cpp
     presenter/D3D11MainMenuOverlay.cpp
     presenter/D3D11TextureScaler.cpp
+    presenter/D3D11WaterReflection.cpp
     presenter/SharedControlChannel.cpp
     presenter/SharedTextureConsumer.cpp
     openxr/OpenXRQuickMenu.cpp
@@ -55,6 +56,7 @@ if(BFVR_PRESENTER_ONLY)
     presenter/D3D11AmbientOcclusion.cpp
     presenter/D3D11MainMenuOverlay.cpp
     presenter/D3D11TextureScaler.cpp
+    presenter/D3D11WaterReflection.cpp
     presenter/SharedControlChannel.cpp
     presenter/SharedTextureConsumer.cpp
   )
@@ -67,7 +69,11 @@ if(BFVR_PRESENTER_ONLY)
     presenter/BFVRBloomGpuProbe.cpp
     presenter/D3D11TextureScaler.cpp
   )
-  foreach(target BFVRPresenter BFVRSharedTextureConsumerProbe BFVRAmbientOcclusionGpuProbe BFVRBloomGpuProbe)
+  add_executable(BFVRWaterReflectionGpuProbe
+    presenter/BFVRWaterReflectionGpuProbe.cpp
+    presenter/D3D11WaterReflection.cpp
+  )
+  foreach(target BFVRPresenter BFVRSharedTextureConsumerProbe BFVRAmbientOcclusionGpuProbe BFVRBloomGpuProbe BFVRWaterReflectionGpuProbe)
     target_compile_definitions(${target} PRIVATE
       WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
     target_include_directories(${target} PRIVATE
@@ -224,6 +230,7 @@ add_library(BFVRClient SHARED
   client/internal/BFVRClientSurfaceDiagnostics.inl
   client/internal/BFVRClientEngineDiagnostics.inl
   client/internal/D3D8StereoPairWaterDiagnostics.inl
+  client/internal/D3D8StereoPairWaterMask.inl
   openxr/OpenXRBootstrap.cpp
   presenter/SharedControlChannel.cpp
   presenter/D3DSystemRuntime.cpp

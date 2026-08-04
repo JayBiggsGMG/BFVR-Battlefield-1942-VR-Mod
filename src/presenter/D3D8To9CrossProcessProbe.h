@@ -14,6 +14,7 @@ bool RunD3D8To9CrossProcessProbe(
     BFVRD3D8To9WaitForGpuFn waitForGpu,
     const wchar_t* consumerPath,
     const wchar_t* consumerLogPath,
-    bool enableAmbientOcclusion);
+    bool enableAmbientOcclusion,
+    bool enableWaterReflections);
 
 } // namespace bfvr::shared

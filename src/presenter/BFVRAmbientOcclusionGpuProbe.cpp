@@ -365,7 +365,8 @@ int wmain(int argc, wchar_t** argv)
     bfvr::shared::D3D11TextureScaler scaler;
     passed = passed && SUCCEEDED(result) && colorView != nullptr &&
         destinationTarget != nullptr &&
-        scaler.Initialize(device, context, WriteLog, nullptr, false, true);
+        scaler.Initialize(
+            device, context, WriteLog, nullptr, false, true, false);
     auto drawStereoComposite = [&](bool applyAo)
     {
         bool drawn = true;
@@ -385,6 +386,8 @@ int wmain(int argc, wchar_t** argv)
                 true,
                 eyeAo,
                 eyeAo != nullptr ? 1.0F : 0.0F,
+                nullptr,
+                0.0F,
                 false,
                 0.0F,
                 0.0F);

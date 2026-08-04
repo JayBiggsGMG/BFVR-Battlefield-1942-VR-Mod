@@ -190,6 +190,7 @@ int Run(UINT width, UINT height, UINT iterations)
         WriteLog,
         nullptr,
         true,
+        false,
         false);
     const auto scale = [&](ID3D11RenderTargetView* target, bool applyBloom)
     {
@@ -203,6 +204,8 @@ int Run(UINT width, UINT height, UINT iterations)
             false,
             true,
             false,
+            nullptr,
+            0.0F,
             nullptr,
             0.0F,
             applyBloom,

@@ -106,7 +106,8 @@ HRESULT ConfigureDepthExportState(
 	IDirect3DTexture9* depthTexture,
 	IDirect3DPixelShader9* pixelShader,
 	UINT width,
-	UINT height)
+	UINT height,
+	BFVRD3D8To9DepthExportEncoding encoding)
 {
 	if (device == nullptr || target == nullptr ||
 		depthTexture == nullptr || pixelShader == nullptr)
@@ -154,11 +155,16 @@ HRESULT ConfigureDepthExportState(
 		{D3DRS_CLIPPING, FALSE},
 		{D3DRS_SCISSORTESTENABLE, FALSE},
 		{D3DRS_SRGBWRITEENABLE, FALSE},
+		// Packed RGB depth shares its alpha channel with BFVR's water mask.
+		// Preserve that alpha exactly; the float diagnostic path retains its
+		// historical RGBA output.
 		{D3DRS_COLORWRITEENABLE,
 			D3DCOLORWRITEENABLE_RED |
 			D3DCOLORWRITEENABLE_GREEN |
 			D3DCOLORWRITEENABLE_BLUE |
-			D3DCOLORWRITEENABLE_ALPHA},
+			(encoding == BFVRD3D8To9DepthExportEncoding::PackedRgba8
+				? static_cast<DWORD>(0)
+				: static_cast<DWORD>(D3DCOLORWRITEENABLE_ALPHA))},
 	};
 	for (const auto& renderState : renderStates)
 	{
@@ -485,7 +491,8 @@ extern "C" HRESULT WINAPI BFVRD3D8To9ResolveDepthToSharedTarget(
 			depthTexture9,
 			pixelShader,
 			targetDescription.Width,
-			targetDescription.Height)
+			targetDescription.Height,
+			encoding)
 		: result;
 	bool sceneBegan = false;
 	if (SUCCEEDED(result))

@@ -24,7 +24,8 @@ public:
         SharedTextureLogCallback logCallback,
         void* logContext,
         bool enableBloom,
-        bool enableAmbientOcclusion);
+        bool enableAmbientOcclusion,
+        bool enableWaterReflections);
     bool ScaleAspectFit(
         ID3D11ShaderResourceView* sourceView,
         UINT sourceWidth,
@@ -37,6 +38,8 @@ public:
         bool applyAntialiasing,
         ID3D11ShaderResourceView* ambientOcclusionView,
         float ambientOcclusionIntensity,
+        ID3D11ShaderResourceView* waterReflectionView,
+        float waterReflectionIntensity,
         bool applyBloom,
         float bloomThreshold,
         float bloomIntensity);
@@ -59,7 +62,8 @@ private:
         float bloomThreshold,
         float bloomIntensity,
         float bloomTexelWidth,
-        float bloomTexelHeight);
+        float bloomTexelHeight,
+        float waterReflectionIntensity);
     void WriteLog(const wchar_t* format, ...) const;
 
     ID3D11Device* device_ = nullptr;

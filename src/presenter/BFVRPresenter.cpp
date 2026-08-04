@@ -467,6 +467,7 @@ int RunPresenter(
                 : 0,
             static_cast<bfvr::shared::DepthEncoding>(
                 publishedDepthEncoding),
+            block->producerFlags,
             block->requirements,
             WriteLog,
             nullptr))
@@ -539,6 +540,10 @@ int RunPresenter(
             &block->frameDepthValid,
             0,
             0) != 0;
+        const bool frameWaterMaskValid = InterlockedCompareExchange(
+            &block->frameWaterMaskValid,
+            0,
+            0) != 0;
         const bfvr::shared::SharedDepthFrameParameters frameDepth =
             frameDepthValid
             ? block->frameDepth
@@ -547,7 +552,8 @@ int RunPresenter(
         if (!consumer.ConsumeFrame(
                 frameOverlayFlags,
                 frameDepthValid,
-                frameDepthValid ? &frameDepth : nullptr))
+                frameDepthValid ? &frameDepth : nullptr,
+                frameWaterMaskValid))
         {
             return false;
         }

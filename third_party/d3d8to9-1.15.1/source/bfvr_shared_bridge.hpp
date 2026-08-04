@@ -8,7 +8,7 @@
 
 #include <windows.h>
 
-constexpr UINT BFVR_D3D8TO9_SHARED_BRIDGE_VERSION = 6;
+constexpr UINT BFVR_D3D8TO9_SHARED_BRIDGE_VERSION = 7;
 constexpr DWORD BFVR_D3D8TO9_DEPTH_EXPORT_TIMING_VERSION = 1;
 constexpr DWORD BFVR_D3DFMT_INTZ =
 	static_cast<DWORD>('I') |

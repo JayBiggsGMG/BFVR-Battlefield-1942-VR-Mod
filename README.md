@@ -420,6 +420,16 @@ Add `--ambient-occlusion` to `BFVRD3D8To9SharedSurfaceProbe` for the complete
 no-game INTZ -> packed D3D9 shared depth -> x64 AO -> world-composite control.
 The ordinary invocation above remains the exact no-AO regression.
 
+Add `--water-reflections` instead for the complete water-SSR transport control.
+It clears the packed target's alpha mask, resolves depth into RGB without
+changing alpha, initializes the x64 water pass, and verifies that an empty mask
+leaves all three transported images exact. The separate positive shader control
+uses a masked synthetic water plane reflecting a dry scene wall:
+
+```powershell
+.\build\bfvr-presenter-x64\Release\BFVRWaterReflectionGpuProbe.exe
+```
+
 Live AO is experimental and default-off. Set `BFVR_OPENXR_AO=1` in the launch
 environment to request it. Unsupported adapters, depth allocation/resolve
 failures, invalid frame projections, or x64 AO setup failures retain the
@@ -436,6 +446,38 @@ when its projected footprint becomes subpixel. Native resolution avoids
 stretching a half-resolution result through the ordinary color sampler. The AO
 pass explicitly installs its complete viewport/scissor/blend/depth/raster
 state, and packed-depth transport is unchanged.
+
+Water-only screen-space reflections are experimental and default-off in code.
+Set `BFVR_OPENXR_WATER_SSR=1` to request them; the comparison launcher currently
+does this explicitly. `BFVR_OPENXR_WATER_SSR_INTENSITY` defaults to `1.0` and
+accepts `0.0..2.0`. Set only `BFVR_OPENXR_WATER_SSR=0` for a matched native-water
+A/B.
+
+The x86 renderer derives a dedicated per-eye mask only from BF1942's exact
+depth-writing additive/specular `WaterSurface` replay. It writes that material's
+own alpha to the alpha channel of the packed-depth texture while the ordinary
+depth resolve writes RGB only. The x64 pass reconstructs view space from each
+eye's projection, estimates a water normal from nearby masked depths, rejects
+water self-hits, uses a conservative 24-step spatial ray march with six-step
+depth-crossing refinement, fixed roughness, and Schlick Fresnel, and blends the
+result only into the corresponding world eye.
+There is no temporal history or motion-vector dependency, and Ref2 UI is never
+sampled or modified. Missing masks/depth/projections, unsupported resources, or
+shader failures retain the native water image for that frame.
+
+This exact-pass mask also addresses Galactic Conquest's invisible space-map
+water without a mod-name special case. Local archive inspection found
+`water.specularEnable 0` in `GC_DeathStar`, `GC_Judicator`,
+`GC_Judicator_Push`, and `GC_Taskforce`; those maps do not submit the mask-authority
+specular pass, so their base water cannot receive SSR. Live validation is still
+required for other maps and mods. As with all screen-space reflection methods,
+off-screen or occluded source detail cannot be reflected and shallow-angle
+disocclusions can create misses.
+
+The focused GPU control also enforces intersection density. Its synthetic
+masked water plane must reflect a dry wall across at least 75% of the pixels in
+its active rows, with no empty row inside the reflection band. This prevents a
+coarse one-sample thickness test from regressing into horizontal stipple bands.
 
 Live bloom is a new default-off, world-only experiment. Set
 `BFVR_OPENXR_BLOOM=1` to request it; the comparison launcher currently does

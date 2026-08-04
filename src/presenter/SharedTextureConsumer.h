@@ -4,6 +4,7 @@
 #include "presenter/D3D11AmbientOcclusion.h"
 #include "presenter/D3D11MainMenuOverlay.h"
 #include "presenter/D3D11TextureScaler.h"
+#include "presenter/D3D11WaterReflection.h"
 #include "presenter/SharedPresentationProtocol.h"
 
 #include <d3d11_1.h>
@@ -29,13 +30,15 @@ public:
         const SharedTextureDescription* depthDescriptions,
         std::size_t depthCount,
         DepthEncoding depthEncoding,
+        DWORD producerFlags,
         const PresentationRequirements& destinationRequirements,
         SharedTextureLogCallback logCallback,
         void* logContext);
     bool ConsumeFrame(
         LONG frameOverlayFlags = 0,
         bool depthValid = false,
-        const SharedDepthFrameParameters* depthFrame = nullptr);
+        const SharedDepthFrameParameters* depthFrame = nullptr,
+        bool waterMaskValid = false);
     [[nodiscard]] OpenXRPresentationTextures GetLocalTextures() const noexcept;
     bool ReadCenterPixels(DWORD* pixels, std::size_t count);
     void Shutdown();
@@ -89,14 +92,18 @@ private:
     ID3D11Query* legacyCompletionQuery_ = nullptr;
     D3D11MainMenuOverlay mainMenuOverlay_;
     D3D11AmbientOcclusion ambientOcclusion_;
+    D3D11WaterReflection waterReflection_;
     D3D11TextureScaler scaler_;
     bool requiresLegacyCompletionWait_ = false;
     bool scalerRequired_ = false;
     bool worldFxaaEnabled_ = true;
     bool worldBloomEnabled_ = false;
     bool ambientOcclusionEnabled_ = false;
+    bool waterReflectionsEnabled_ = false;
     float ambientOcclusionIntensity_ = 1.0F;
     LONG ambientOcclusionFrameFailures_ = 0;
+    float waterReflectionIntensity_ = 1.0F;
+    LONG waterReflectionFrameFailures_ = 0;
     float worldBloomThreshold_ = 0.55F;
     float worldBloomIntensity_ = 0.35F;
     std::array<Texture, kTextureCount> textures_ = {};

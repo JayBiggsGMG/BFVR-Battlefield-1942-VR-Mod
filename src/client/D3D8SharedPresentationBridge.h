@@ -100,6 +100,7 @@ struct D3D8RuntimeUiPlacement
 struct D3D8RuntimeDepthFrame
 {
     bool valid = false;
+    bool waterMaskValid = false;
     float projections[2][16] = {};
 };
 
@@ -146,6 +147,7 @@ public:
     void Shutdown();
 
     [[nodiscard]] bool UsesGpuSharedTargets() const noexcept;
+    [[nodiscard]] bool WaterReflectionsRequested() const noexcept;
     [[nodiscard]] UINT LeftWorldWidth() const noexcept;
     [[nodiscard]] UINT LeftWorldHeight() const noexcept;
     [[nodiscard]] UINT RightWorldWidth() const noexcept;

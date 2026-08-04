@@ -188,7 +188,7 @@ void ReportStereoFrameResult(
         InterlockedCompareExchange(&frame.excludedByKind[2], 0, 0),
         InterlockedCompareExchange(&frame.excludedByKind[3], 0, 0));
     appendLog(
-        L"D3D8 full-draw-frame transform policy: stereoPerspective=%ld monoPretransformed=%ld monoNonPerspective=%ld skyboxCubeFaces=%ld billboardBatches=%ld treeMeshAlphaBlocks=%ld treeMeshProgrammableSprites=%ld animatedMeshSkinning=%ld waterSurfaces=%ld headCenteredWaterReflections=%ld translucentSprites=%ld ref2FontGlyphBatches=%ld ref2MenuQuads=%ld vertexShaderReadFailures=%ld skinningPrepareFailures=%ld skinningSourceMismatches=%ld skinningApplyFailures=%ld spritePrepareFailures=%ld spriteSourceMismatches=%ld spriteApplyFailures=%ld treeSpritePrepareFailures=%ld treeSpriteSourceMismatches=%ld treeSpriteApplyFailures=%ld renderStateReadFailures=%ld provenanceSites=%ld/%zu provenanceOverflow=%ld. Exact WinPC water uses its normal stereo replay except for the directly evidenced additive reflection pass: that pass uses the tracked head-centre View while retaining each eye's projection, preventing its fixed-function camera-space reflection vector from diverging per eye without pinning it to BF1942's flat source camera. Set BFVR_STEREO_WATER_REFLECTION=1 to restore the legacy fully stereo reflection path; exact SkinningShader2Bones draws receive per-eye c0-c3 world-view-projection constants, exact translated TranslucentBucketDB sprites receive per-eye c0-c7 plus c9 camera constants, and exact TreeMesh programmable sprites receive per-eye c0-c7 constants. All receive required restoration; deep diagnostics additionally reads the restored registers back for exact verification.",
+        L"D3D8 full-draw-frame transform policy: stereoPerspective=%ld monoPretransformed=%ld monoNonPerspective=%ld skyboxCubeFaces=%ld billboardBatches=%ld treeMeshAlphaBlocks=%ld treeMeshProgrammableSprites=%ld animatedMeshSkinning=%ld waterSurfaces=%ld infiniteViewerWaterReflections=%ld waterReflectionStateFailures=%ld translucentSprites=%ld ref2FontGlyphBatches=%ld ref2MenuQuads=%ld vertexShaderReadFailures=%ld skinningPrepareFailures=%ld skinningSourceMismatches=%ld skinningApplyFailures=%ld spritePrepareFailures=%ld spriteSourceMismatches=%ld spriteApplyFailures=%ld treeSpritePrepareFailures=%ld treeSpriteSourceMismatches=%ld treeSpriteApplyFailures=%ld renderStateReadFailures=%ld provenanceSites=%ld/%zu provenanceOverflow=%ld. Exact WinPC water keeps complete per-eye View/Projection geometry. Only the directly evidenced additive reflection pass temporarily uses D3DRS_LOCALVIEWER=FALSE, making its fixed-function camera-space reflection coordinate independent of eye translation while preserving head orientation and stereo geometry; the original render state is restored after replay. Set BFVR_STEREO_WATER_REFLECTION=1 to restore the legacy camera-relative reflection path; exact SkinningShader2Bones draws receive per-eye c0-c3 world-view-projection constants, exact translated TranslucentBucketDB sprites receive per-eye c0-c7 plus c9 camera constants, and exact TreeMesh programmable sprites receive per-eye c0-c7 constants. All receive required restoration; deep diagnostics additionally reads the restored registers back for exact verification.",
         InterlockedCompareExchange(&frame.stereoPerspectiveDraws, 0, 0),
         InterlockedCompareExchange(&frame.monoPretransformedDraws, 0, 0),
         InterlockedCompareExchange(&frame.monoNonPerspectiveDraws, 0, 0),
@@ -201,7 +201,8 @@ void ReportStereoFrameResult(
             0),
         InterlockedCompareExchange(&frame.animatedMeshSkinningDraws, 0, 0),
         InterlockedCompareExchange(&frame.waterSurfaceDraws, 0, 0),
-        InterlockedCompareExchange(&frame.headCenteredWaterReflectionDraws, 0, 0),
+        InterlockedCompareExchange(&frame.infiniteViewerWaterReflectionDraws, 0, 0),
+        InterlockedCompareExchange(&frame.waterReflectionStateFailures, 0, 0),
         InterlockedCompareExchange(&frame.translucentSpriteDraws, 0, 0),
         InterlockedCompareExchange(&frame.ref2FontGlyphBatchDraws, 0, 0),
         InterlockedCompareExchange(&frame.ref2MenuQuadDraws, 0, 0),
@@ -235,6 +236,11 @@ void ReportStereoFrameResult(
         InterlockedCompareExchange(&frame.mirroredDraws, 0, 0) ==
             InterlockedCompareExchange(&frame.worldEyeDraws, 0, 0) +
             InterlockedCompareExchange(&frame.menuLayerDraws, 0, 0));
+    appendLog(
+        L"D3D8 water-mask transport: alphaOnlyDraws=%ld failures=%ld frameMaskValid=%d. The mask admits only the exact additive WaterSurface pass, preserves its material alpha, and is carried in packed-depth alpha while RGB depth is resolved independently.",
+        InterlockedCompareExchange(&frame.waterMaskDraws, 0, 0),
+        InterlockedCompareExchange(&frame.waterMaskFailures, 0, 0),
+        frame.waterMaskValid);
     const LONG provenanceCount =
         InterlockedCompareExchange(&frame.provenanceCount, 0, 0);
     for (LONG index = 0; index < provenanceCount; ++index)

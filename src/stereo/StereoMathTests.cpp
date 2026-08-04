@@ -1919,6 +1919,25 @@ void TestBF1942SemanticDrawPolicy()
     {
         Fail(test, "observed water alpha pass was rejected");
     }
+    if (bfvr::stereo::ShouldUseBF1942InfiniteViewerWaterReflection(
+            D3D8SemanticDrawClass::WaterSurface,
+            0,
+            false) ||
+        !bfvr::stereo::ShouldUseBF1942InfiniteViewerWaterReflection(
+            D3D8SemanticDrawClass::WaterSurface,
+            1,
+            false) ||
+        bfvr::stereo::ShouldUseBF1942InfiniteViewerWaterReflection(
+            D3D8SemanticDrawClass::WaterSurface,
+            1,
+            true) ||
+        bfvr::stereo::ShouldUseBF1942InfiniteViewerWaterReflection(
+            D3D8SemanticDrawClass::Unclassified,
+            1,
+            false))
+    {
+        Fail(test, "infinite-viewer reflection escaped the exact additive water pass");
+    }
     signature.rendererReturnAddress = 0x00654572;
     if (bfvr::stereo::ClassifyBF1942Win32SemanticDraw(signature) !=
         D3D8SemanticDrawClass::Unclassified)

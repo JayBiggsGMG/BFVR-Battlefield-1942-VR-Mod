@@ -106,12 +106,15 @@ bool RunD3D8To9CrossProcessProbe(
     BFVRD3D8To9WaitForGpuFn waitForGpu,
     const wchar_t* consumerPath,
     const wchar_t* consumerLogPath,
-    bool enableAmbientOcclusion)
+    bool enableAmbientOcclusion,
+    bool enableWaterReflections)
 {
+    const bool enableDepthEffects =
+        enableAmbientOcclusion || enableWaterReflections;
     if (device == nullptr ||
         createSharedTarget == nullptr ||
         waitForGpu == nullptr ||
-        (enableAmbientOcclusion &&
+        (enableDepthEffects &&
             (createDepthTarget == nullptr || resolveDepthTarget == nullptr)) ||
         consumerPath == nullptr ||
         *consumerPath == L'\0')
@@ -170,7 +173,7 @@ bool RunD3D8To9CrossProcessProbe(
             goto cleanup;
         }
     }
-    if (enableAmbientOcclusion)
+    if (enableDepthEffects)
     {
         for (std::size_t eye = 0; eye < depthSurfaces.size(); ++eye)
         {
@@ -215,7 +218,7 @@ bool RunD3D8To9CrossProcessProbe(
     for (std::size_t index = 0; index < surfaces.size(); ++index)
     {
         IDirect3DSurface8* const depth =
-            enableAmbientOcclusion && index < depthSurfaces.size()
+            enableDepthEffects && index < depthSurfaces.size()
             ? depthSurfaces[index]
             : nullptr;
         HRESULT result = device->SetRenderTarget(surfaces[index], depth);
@@ -246,34 +249,54 @@ bool RunD3D8To9CrossProcessProbe(
         fwprintf(stderr, L"[FAIL] Cross-process probe target restoration failed.\n");
         goto cleanup;
     }
-    if (enableAmbientOcclusion)
+    if (enableDepthEffects)
     {
         for (std::size_t eye = 0; eye < depthSurfaces.size(); ++eye)
         {
+            HRESULT result = device->SetRenderTarget(depthExports[eye], nullptr);
+            if (SUCCEEDED(result))
+            {
+                result = device->Clear(
+                    0,
+                    nullptr,
+                    D3DCLEAR_TARGET,
+                    0x00000000u,
+                    1.0F,
+                    0);
+            }
             BFVRD3D8To9DepthExportTiming timing = {};
             timing.size = sizeof(timing);
-            const HRESULT result = resolveDepthTarget(
-                device,
-                depthSurfaces[eye],
-                depthExports[eye],
-                static_cast<DWORD>(
-                    BFVRD3D8To9DepthExportEncoding::PackedRgba8),
-                &timing);
+            if (SUCCEEDED(result))
+            {
+                result = resolveDepthTarget(
+                    device,
+                    depthSurfaces[eye],
+                    depthExports[eye],
+                    static_cast<DWORD>(
+                        BFVRD3D8To9DepthExportEncoding::PackedRgba8),
+                    &timing);
+            }
             if (FAILED(result))
             {
                 fwprintf(
                     stderr,
-                    L"[FAIL] Cross-process AO depth resolve for eye %zu returned 0x%08lX.\n",
+                    L"[FAIL] Cross-process packed-depth/mask preparation for eye %zu returned 0x%08lX.\n",
                     eye,
                     static_cast<unsigned long>(result));
                 goto cleanup;
             }
             wprintf(
-                L"[AO-DEPTH] eye=%zu gpu=%.4f ms valid=%d disjoint=%d.\n",
+                L"[PACKED-DEPTH] eye=%zu gpu=%.4f ms valid=%d disjoint=%d.\n",
                 eye,
                 timing.elapsedMilliseconds,
                 timing.gpuTimestampsValid ? 1 : 0,
                 timing.gpuTimestampDisjoint ? 1 : 0);
+        }
+        if (FAILED(device->SetRenderTarget(priorColor, priorDepth)) ||
+            FAILED(device->SetViewport(&priorViewport)))
+        {
+            fwprintf(stderr, L"[FAIL] Cross-process probe target restoration after depth export failed.\n");
+            goto cleanup;
         }
     }
     if (FAILED(waitForGpu(device, 5000)))
@@ -334,7 +357,7 @@ bool RunD3D8To9CrossProcessProbe(
             static_cast<DWORD>(SharedTextureTransport::D3D9LegacyHandle);
         StoreLegacySharedHandle(description, handles[index]);
     }
-    if (enableAmbientOcclusion)
+    if (enableDepthEffects)
     {
         constexpr float nearPlane = 0.1F;
         constexpr float farPlane = 100.0F;
@@ -367,7 +390,16 @@ bool RunD3D8To9CrossProcessProbe(
             &block->depthTextureCount,
             static_cast<LONG>(kDepthTextureCount));
         InterlockedExchange(&block->frameDepthValid, 1);
+        if (enableWaterReflections)
+            InterlockedExchange(&block->frameWaterMaskValid, 1);
     }
+    block->producerFlags =
+        (enableAmbientOcclusion
+            ? kProducerFlagAmbientOcclusionRequested
+            : 0u) |
+        (enableWaterReflections
+            ? kProducerFlagWaterReflectionsRequested
+            : 0u);
     PublishState(&block->producerState, ProcessState::TexturesReady);
     (void)channel.SignalProducerUpdate();
     InterlockedExchange(&block->producedFrameCount, 1);

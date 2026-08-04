@@ -718,6 +718,26 @@ bool VerifyDepthSamples(
     return true;
 }
 
+bool VerifyPackedAlphaPreserved(const std::array<Float4, 3>& samples)
+{
+    constexpr float expected = 90.0f / 255.0f;
+    constexpr float tolerance = 1.0f / 255.0f;
+    for (std::size_t index = 0; index < samples.size(); ++index)
+    {
+        if (!Approximately(samples[index].a, expected, tolerance))
+        {
+            fwprintf(
+                stderr,
+                L"[FAIL] Packed-depth water-mask alpha sample %zu was %.5f; expected %.5f.\n",
+                index,
+                samples[index].a,
+                expected);
+            return false;
+        }
+    }
+    return true;
+}
+
 bool ResolveRepeatedly(
     IDirect3DDevice8* device,
     BFVRD3D8To9ResolveDepthToSharedTargetFn resolveDepth,
@@ -1022,6 +1042,24 @@ int wmain(int argc, wchar_t** argv)
         goto cleanup;
     }
 
+    // Live water masking binds this A8R8G8B8 export beside the same INTZ
+    // surface used by the R10 world eye. Prove the adapter accepts that exact
+    // target/depth pairing before relying on depth-tested alpha-only replay.
+    result = device8->SetRenderTarget(packedSurface, depthSurface);
+    result = SUCCEEDED(result)
+        ? device8->SetRenderTarget(priorColor, priorDepth)
+        : result;
+    viewportRestoreResult = SUCCEEDED(result)
+        ? device8->SetViewport(&priorViewport)
+        : result;
+    if (FAILED(result) || FAILED(viewportRestoreResult))
+    {
+        Fail(
+            L"bind packed water-mask target with INTZ depth",
+            FAILED(result) ? result : viewportRestoreResult);
+        goto cleanup;
+    }
+
     result = RenderDepthPattern(
         device8,
         sceneSurface,
@@ -1040,6 +1078,25 @@ int wmain(int argc, wchar_t** argv)
     {
         Fail(
             L"restore original target after INTZ rendering",
+            FAILED(result) ? result : viewportRestoreResult);
+        goto cleanup;
+    }
+    // The packed export owns RGB depth only. Seed alpha with a visible mask
+    // sentinel and prove every repeated resolve preserves it byte-exactly.
+    result = device8->SetRenderTarget(packedSurface, nullptr);
+    result = SUCCEEDED(result)
+        ? device8->Clear(0, nullptr, D3DCLEAR_TARGET, 0x5A000000, 1.0F, 0)
+        : result;
+    result = SUCCEEDED(result)
+        ? device8->SetRenderTarget(priorColor, priorDepth)
+        : result;
+    viewportRestoreResult = SUCCEEDED(result)
+        ? device8->SetViewport(&priorViewport)
+        : result;
+    if (FAILED(result) || FAILED(viewportRestoreResult))
+    {
+        Fail(
+            L"seed and restore packed-depth alpha sentinel",
             FAILED(result) ? result : viewportRestoreResult);
         goto cleanup;
     }
@@ -1131,6 +1188,7 @@ int wmain(int argc, wchar_t** argv)
             floatSamples) ||
         !VerifySceneSamples(sceneSamples) ||
         !VerifyDepthSamples(L"RGBA8 packed", packedSamples, true) ||
+        !VerifyPackedAlphaPreserved(packedSamples) ||
         !VerifyDepthSamples(L"RGBA16F", floatSamples, false))
     {
         goto cleanup;
@@ -1144,7 +1202,8 @@ int wmain(int argc, wchar_t** argv)
     floatStorageMiB = packedStorageMiB * 2.0;
     wprintf(
         L"[PASS] INTZ depth/stencil, logical 24-bit bias, sampling, "
-        L"D3D8 state restoration, and D3D11 reconstruction verified.\n"
+        L"water-mask target compatibility/alpha preservation, D3D8 state "
+        L"restoration, and D3D11 reconstruction verified.\n"
         L"       adapter=%hs vendor=0x%04X device=0x%04X "
         L"featureLevel=0x%04X size=%ux%u iterations=%u\n"
         L"       RGBA8 packed: min=%.4f median=%.4f p95=%.4f max=%.4f ms/eye; "

@@ -62,6 +62,8 @@ bool FinalizeFrameTargets(void* device)
                 &g_worldCrosshairFrame.eyeProjections[1],
                 sizeof(D3DMatrix));
             depthFrame.valid = true;
+            depthFrame.waterMaskValid =
+                g_frame.waterMaskValid != FALSE;
         }
         g_frameUiPlacement.mountedCameraDecoupled =
             g_renderViewPoseHook.IsMountedCameraDecoupled();

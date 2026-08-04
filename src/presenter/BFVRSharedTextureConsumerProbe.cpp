@@ -191,6 +191,7 @@ int RunConsumer(const wchar_t* channelName, DWORD durationMs)
                 : 0,
             static_cast<bfvr::shared::DepthEncoding>(
                 publishedDepthEncoding),
+            block->producerFlags,
             block->requirements,
             WriteLog,
             nullptr))
@@ -322,10 +323,15 @@ int RunConsumer(const wchar_t* channelName, DWORD durationMs)
             frameDepthValid
             ? block->frameDepth
             : bfvr::shared::SharedDepthFrameParameters{};
+        const bool frameWaterMaskValid = InterlockedCompareExchange(
+            &block->frameWaterMaskValid,
+            0,
+            0) != 0;
         if (!consumer.ConsumeFrame(
                 frameOverlayFlags,
                 frameDepthValid,
-                frameDepthValid ? &frameDepth : nullptr))
+                frameDepthValid ? &frameDepth : nullptr,
+                frameWaterMaskValid))
         {
             healthy = false;
             break;

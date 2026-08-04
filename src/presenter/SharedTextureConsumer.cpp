@@ -129,6 +129,7 @@ bool SharedTextureConsumer::Initialize(
     const SharedTextureDescription* depthDescriptions,
     std::size_t depthCount,
     DepthEncoding depthEncoding,
+    DWORD producerFlags,
     const PresentationRequirements& destinationRequirements,
     SharedTextureLogCallback logCallback,
     void* logContext)
@@ -164,6 +165,15 @@ bool SharedTextureConsumer::Initialize(
     worldBloomEnabled_ = bloom.enabled;
     worldBloomThreshold_ = bloom.threshold;
     worldBloomIntensity_ = bloom.intensity;
+    waterReflectionIntensity_ = ReadEnvironmentFloat(
+        L"BFVR_OPENXR_WATER_SSR_INTENSITY",
+        1.0F,
+        0.0F,
+        2.0F);
+    const bool ambientOcclusionRequested =
+        (producerFlags & kProducerFlagAmbientOcclusionRequested) != 0;
+    const bool waterReflectionsRequested =
+        (producerFlags & kProducerFlagWaterReflectionsRequested) != 0;
     const std::array<UINT, kTextureCount> destinationWidths = {
         destinationRequirements.leftWorldWidth,
         destinationRequirements.rightWorldWidth,
@@ -217,13 +227,24 @@ bool SharedTextureConsumer::Initialize(
         Shutdown();
         return false;
     }
-    if (depthOpened && ambientOcclusion_.Initialize(
+    if (depthOpened && ambientOcclusionRequested && ambientOcclusion_.Initialize(
             device_,
             context_,
             logCallback_,
             logContext_))
     {
         ambientOcclusionEnabled_ = true;
+    }
+    if (depthOpened && waterReflectionsRequested && waterReflection_.Initialize(
+            device_,
+            context_,
+            logCallback_,
+            logContext_))
+    {
+        waterReflectionsEnabled_ = true;
+    }
+    if (ambientOcclusionEnabled_ || waterReflectionsEnabled_)
+    {
         scalerRequired_ = true;
         for (std::size_t index = 0; index < depthTextures_.size(); ++index)
         {
@@ -235,15 +256,12 @@ bool SharedTextureConsumer::Initialize(
                     SharedTextureTransport::D3D9LegacyHandle;
         }
     }
-    else
+    else if (depthOpened || depthCount != 0 || depthEncoding != DepthEncoding::None)
     {
         for (DepthTexture& texture : depthTextures_)
             ReleaseDepthTexture(texture);
-        if (depthCount != 0 || depthEncoding != DepthEncoding::None)
-        {
-            WriteLog(
-                L"Shared texture consumer could not enable the optional AO depth path; color/UI presentation remains active.");
-        }
+        WriteLog(
+            L"Shared texture consumer could not enable any requested packed-depth stage; color/UI presentation remains active.");
     }
     bool scalerReady = !scalerRequired_ || scaler_.Initialize(
         device_,
@@ -251,13 +269,17 @@ bool SharedTextureConsumer::Initialize(
         logCallback_,
         logContext_,
         worldBloomEnabled_,
-        ambientOcclusionEnabled_);
-    if (!scalerReady && ambientOcclusionEnabled_)
+        ambientOcclusionEnabled_,
+        waterReflectionsEnabled_);
+    if (!scalerReady &&
+        (ambientOcclusionEnabled_ || waterReflectionsEnabled_))
     {
         WriteLog(
-            L"Shared texture consumer could not initialize the AO composite variant; retrying the mandatory color/UI scaler with AO disabled.");
+            L"Shared texture consumer could not initialize the depth-effect composite variant; retrying the mandatory color/UI scaler with AO and water SSR disabled.");
         ambientOcclusion_.Shutdown();
+        waterReflection_.Shutdown();
         ambientOcclusionEnabled_ = false;
+        waterReflectionsEnabled_ = false;
         for (DepthTexture& texture : depthTextures_)
             ReleaseDepthTexture(texture);
         scalerReady = scaler_.Initialize(
@@ -266,12 +288,19 @@ bool SharedTextureConsumer::Initialize(
             logCallback_,
             logContext_,
             worldBloomEnabled_,
+            false,
             false);
     }
     if (!scalerReady)
     {
         Shutdown();
         return false;
+    }
+    if (waterReflectionsEnabled_)
+    {
+        WriteLog(
+            L"Water-only per-eye SSR is active (fixed roughness, Fresnel, intensity=%.3f); frames without a valid water mask fall back to native water.",
+            waterReflectionIntensity_);
     }
     if (requiresLegacyCompletionWait_)
     {
@@ -342,7 +371,8 @@ bool SharedTextureConsumer::Initialize(
 bool SharedTextureConsumer::ConsumeFrame(
     LONG frameOverlayFlags,
     bool depthValid,
-    const SharedDepthFrameParameters* depthFrame)
+    const SharedDepthFrameParameters* depthFrame,
+    bool waterMaskValid)
 {
     if (context_ == nullptr)
     {
@@ -352,7 +382,9 @@ bool SharedTextureConsumer::ConsumeFrame(
     std::array<bool, kTextureCount> acquired = {};
     std::array<bool, kDepthTextureCount> depthAcquired = {};
     const bool useDepth =
-        ambientOcclusionEnabled_ && depthValid && depthFrame != nullptr;
+        (ambientOcclusionEnabled_ ||
+         (waterReflectionsEnabled_ && waterMaskValid)) &&
+        depthValid && depthFrame != nullptr;
     for (std::size_t index = 0; index < textures_.size(); ++index)
     {
         if (textures_[index].keyedMutex == nullptr)
@@ -414,9 +446,24 @@ bool SharedTextureConsumer::ConsumeFrame(
         }
     }
 
+    bool applyWaterReflections =
+        useDepth && waterReflectionsEnabled_ && waterMaskValid;
+    for (std::size_t eye = 0;
+         eye < depthTextures_.size() && applyWaterReflections;
+         ++eye)
+    {
+        applyWaterReflections = waterReflection_.BuildEye(
+            eye,
+            textures_[eye].sharedView,
+            depthTextures_[eye].sharedView,
+            depthTextures_[eye].width,
+            depthTextures_[eye].height,
+            depthFrame->projections[eye]);
+    }
+
     bool aoFrameStarted = false;
     bool applyAmbientOcclusion = false;
-    if (useDepth)
+    if (useDepth && ambientOcclusionEnabled_)
     {
         aoFrameStarted = ambientOcclusion_.BeginFrame();
         applyAmbientOcclusion = aoFrameStarted;
@@ -447,6 +494,10 @@ bool SharedTextureConsumer::ConsumeFrame(
                 applyAmbientOcclusion && index < depthTextures_.size()
                 ? ambientOcclusion_.GetEyeView(index)
                 : nullptr;
+            ID3D11ShaderResourceView* const waterReflectionView =
+                applyWaterReflections && index < depthTextures_.size()
+                ? waterReflection_.GetEyeView(index)
+                : nullptr;
             copied = scaler_.ScaleAspectFit(
                 texture.sharedView,
                 texture.sourceWidth,
@@ -459,6 +510,10 @@ bool SharedTextureConsumer::ConsumeFrame(
                 texture.applyAntialiasing,
                 aoView,
                 aoView != nullptr ? ambientOcclusionIntensity_ : 0.0F,
+                waterReflectionView,
+                waterReflectionView != nullptr
+                    ? waterReflectionIntensity_
+                    : 0.0F,
                 texture.applyBloom,
                 worldBloomThreshold_,
                 worldBloomIntensity_) && copied;
@@ -477,7 +532,7 @@ bool SharedTextureConsumer::ConsumeFrame(
     }
     if (aoFrameStarted)
         ambientOcclusion_.EndFrame();
-    if (useDepth && !applyAmbientOcclusion)
+    if (useDepth && ambientOcclusionEnabled_ && !applyAmbientOcclusion)
     {
         ++ambientOcclusionFrameFailures_;
         if (ambientOcclusionFrameFailures_ <= 3)
@@ -485,6 +540,17 @@ bool SharedTextureConsumer::ConsumeFrame(
             WriteLog(
                 L"Shared texture consumer rejected AO inputs for frame failure %ld; presenting color/UI without AO.",
                 ambientOcclusionFrameFailures_);
+        }
+    }
+    if (useDepth && waterReflectionsEnabled_ && waterMaskValid &&
+        !applyWaterReflections)
+    {
+        ++waterReflectionFrameFailures_;
+        if (waterReflectionFrameFailures_ <= 3)
+        {
+            WriteLog(
+                L"Shared texture consumer rejected water SSR inputs for frame failure %ld; presenting color/UI without water reflections.",
+                waterReflectionFrameFailures_);
         }
     }
     const Texture& uiTexture =
@@ -595,14 +661,18 @@ void SharedTextureConsumer::Shutdown()
 {
     mainMenuOverlay_.Shutdown();
     ambientOcclusion_.Shutdown();
+    waterReflection_.Shutdown();
     scaler_.Shutdown();
     scalerRequired_ = false;
     requiresLegacyCompletionWait_ = false;
     worldFxaaEnabled_ = true;
     worldBloomEnabled_ = false;
     ambientOcclusionEnabled_ = false;
+    waterReflectionsEnabled_ = false;
     ambientOcclusionIntensity_ = 1.0F;
     ambientOcclusionFrameFailures_ = 0;
+    waterReflectionIntensity_ = 1.0F;
+    waterReflectionFrameFailures_ = 0;
     worldBloomThreshold_ = 0.55F;
     worldBloomIntensity_ = 0.35F;
     for (Texture& texture : textures_)

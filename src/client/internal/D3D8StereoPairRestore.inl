@@ -37,6 +37,12 @@ bool RestoreFrameState(void* device, const DrawStateSnapshot& snapshot)
             &snapshot.projection);
         const HRESULT worldResult =
             g_methods.setTransform(device, kD3DTransformWorld, &snapshot.world);
+        const HRESULT localViewerResult = snapshot.localViewerOverridden
+            ? g_methods.setRenderState(
+                device,
+                kD3DRenderStateLocalViewer,
+                snapshot.localViewer)
+            : S_OK;
         writesSucceeded =
             skinningRestored &&
             spriteRestored &&
@@ -45,7 +51,8 @@ bool RestoreFrameState(void* device, const DrawStateSnapshot& snapshot)
             SUCCEEDED(viewportResult) &&
             SUCCEEDED(viewResult) &&
             SUCCEEDED(projectionResult) &&
-            SUCCEEDED(worldResult);
+            SUCCEEDED(worldResult) &&
+            SUCCEEDED(localViewerResult);
     }
 
     bool exact = writesSucceeded;
@@ -73,6 +80,7 @@ bool RestoreFrameState(void* device, const DrawStateSnapshot& snapshot)
         D3DMatrix actualWorld = {};
         D3DMatrix actualView = {};
         D3DMatrix actualProjection = {};
+        DWORD actualLocalViewer = 0;
         const HRESULT getColorResult =
             g_methods.getRenderTarget(device, &actualColor);
         const HRESULT getDepthResult =
@@ -91,6 +99,12 @@ bool RestoreFrameState(void* device, const DrawStateSnapshot& snapshot)
             device,
             kD3DTransformProjection,
             &actualProjection);
+        const HRESULT getLocalViewerResult = snapshot.localViewerOverridden
+            ? g_methods.getRenderState(
+                device,
+                kD3DRenderStateLocalViewer,
+                &actualLocalViewer)
+            : S_OK;
         exact =
             writesSucceeded &&
             SUCCEEDED(getColorResult) &&
@@ -99,13 +113,16 @@ bool RestoreFrameState(void* device, const DrawStateSnapshot& snapshot)
             SUCCEEDED(getWorldResult) &&
             SUCCEEDED(getViewResult) &&
             SUCCEEDED(getProjectionResult) &&
+            SUCCEEDED(getLocalViewerResult) &&
             shaderConstantsExact &&
             actualColor == snapshot.sourceColor &&
             actualDepth == snapshot.sourceDepth &&
             EqualViewport(actualViewport, snapshot.viewport) &&
             EqualMatrix(actualWorld, snapshot.world) &&
             EqualMatrix(actualView, snapshot.view) &&
-            EqualMatrix(actualProjection, snapshot.projection);
+            EqualMatrix(actualProjection, snapshot.projection) &&
+            (!snapshot.localViewerOverridden ||
+             actualLocalViewer == snapshot.localViewer);
         ReleaseUnknown(actualColor);
         ReleaseUnknown(actualDepth);
     }

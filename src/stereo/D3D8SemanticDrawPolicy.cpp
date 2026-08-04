@@ -260,4 +260,14 @@ bool IsBF1942FirstPersonArmDraw(
         projectionM11 >= 3.5F;
 }
 
+bool ShouldUseBF1942InfiniteViewerWaterReflection(
+    D3D8SemanticDrawClass semanticClass,
+    std::uint32_t zWriteEnable,
+    bool legacyStereoReflectionRequested) noexcept
+{
+    return !legacyStereoReflectionRequested &&
+        semanticClass == D3D8SemanticDrawClass::WaterSurface &&
+        zWriteEnable != 0;
+}
+
 } // namespace bfvr::stereo
