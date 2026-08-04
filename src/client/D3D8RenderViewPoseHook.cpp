@@ -217,11 +217,13 @@ public:
         referenceHead = {};
         currentHead = {};
         lastSource = {};
+        appliedSourceCamera = {};
         lastSourceValid = false;
         ResetMountedCameraAnchor(false);
         MemoryBarrier();
         InterlockedExchange(&requestedSequence, 0);
         InterlockedExchange(&appliedSequence, 0);
+        InterlockedExchange(&appliedSourceSequence, 0);
         InterlockedExchange(&appliedFrustumSequence, 0);
     }
 
@@ -232,6 +234,32 @@ public:
                 const_cast<volatile LONG*>(&appliedSequence),
                 0,
                 0) == sequence;
+    }
+
+    bool TryGetAppliedSourceCamera(
+        LONG sequence,
+        stereo::Matrix4& sourceCamera) const noexcept
+    {
+        if (sequence <= 0 ||
+            InterlockedCompareExchange(
+                const_cast<volatile LONG*>(&appliedSourceSequence),
+                0,
+                0) != sequence)
+        {
+            return false;
+        }
+        MemoryBarrier();
+        const stereo::Matrix4 candidate = appliedSourceCamera;
+        MemoryBarrier();
+        if (InterlockedCompareExchange(
+                const_cast<volatile LONG*>(&appliedSourceSequence),
+                0,
+                0) != sequence)
+        {
+            return false;
+        }
+        sourceCamera = candidate;
+        return true;
     }
 
     bool IsMountedCameraDecoupled() const noexcept
@@ -272,8 +300,11 @@ public:
         target = nullptr;
         frustumTarget = nullptr;
         gameImage = nullptr;
+        appliedSourceCamera = {};
         lastSourceValid = false;
         ResetMountedCameraAnchor(false);
+        MemoryBarrier();
+        InterlockedExchange(&appliedSourceSequence, 0);
         mountedCameraControl = {};
         InterlockedExchange(&requestedMountedCameraToggleSequence, 0);
         InterlockedExchange(&mountedCameraDecoupled, 0);
@@ -510,6 +541,9 @@ private:
         }
 
         original(renderView, &finalCamera);
+        appliedSourceCamera = source;
+        MemoryBarrier();
+        InterlockedExchange(&appliedSourceSequence, sequence);
         InterlockedIncrement(&appliedCalls);
         InterlockedExchange(&appliedSequence, sequence);
     }
@@ -692,12 +726,14 @@ private:
     D3D8RuntimeView referenceHead = {};
     D3D8RuntimeView currentHead = {};
     stereo::Matrix4 lastSource = {};
+    stereo::Matrix4 appliedSourceCamera = {};
     stereo::Matrix4 mountedCameraInStation = {};
     const void* mountedControlObject = nullptr;
     bool lastSourceValid = false;
     bool mountedCameraAnchorValid = false;
     volatile LONG requestedSequence = 0;
     volatile LONG appliedSequence = 0;
+    volatile LONG appliedSourceSequence = 0;
     volatile LONG matchingCalls = 0;
     volatile LONG appliedCalls = 0;
     volatile LONG rejectedTransforms = 0;
@@ -767,6 +803,14 @@ void D3D8RenderViewPoseHook::ClearPose() noexcept
 bool D3D8RenderViewPoseHook::WasApplied(LONG sequence) const noexcept
 {
     return impl_ != nullptr && impl_->WasApplied(sequence);
+}
+
+bool D3D8RenderViewPoseHook::TryGetAppliedSourceCamera(
+    LONG sequence,
+    stereo::Matrix4& sourceCamera) const noexcept
+{
+    return impl_ != nullptr &&
+        impl_->TryGetAppliedSourceCamera(sequence, sourceCamera);
 }
 
 bool D3D8RenderViewPoseHook::IsMountedCameraDecoupled() const noexcept

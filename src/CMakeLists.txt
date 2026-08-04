@@ -255,6 +255,7 @@ add_library(BFVRStereoMath STATIC
   stereo/D3D8FrameCompositionPolicy.cpp
   stereo/D3D8SemanticDrawPolicy.cpp
   stereo/D3D8ShaderTransform.cpp
+  stereo/D3D8WaterReflectionTextureBasis.cpp
   stereo/D3D8WeaponDrawPolicy.cpp
   stereo/OffHandSupportPolicy.cpp
   stereo/OffHandWeaponSteeringMath.cpp
@@ -311,6 +312,10 @@ add_executable(BFVRStereoMathTests
   client/D3D8StereoShaderTransform.cpp
   client/D3D8StereoProbeRecords.cpp
   stereo/StereoMathTests.cpp
+)
+
+add_executable(BFVRWaterReflectionTextureBasisTests
+  stereo/D3D8WaterReflectionTextureBasisTests.cpp
 )
 
 add_executable(BFVRWeaponFireAimMathTests
@@ -400,7 +405,7 @@ add_executable(BFVRRfaInspect
   tools/RfaInspect.cpp
 )
 
-foreach(target BFVRClient BFVROpenALHrtfRouter BFVRD3D8To9FlatClient BFVRLoader BFVROpenXRProbe BFVRSharedTextureProducerProbe BFVRD3D8To9SharedSurfaceProbe BFVRAmbientOcclusionDepthProbe BFVRStereoMath BFVRStereoMathTests BFVRWeaponFireAimMathTests BFVROffHandSupportPolicyTests BFVRArmPoleVectorMathTests BFVRMainMenuOverlayTests BFVRQuickMenuTests BFVRVehicleMotionAimMathTests BFVRMountedCameraMathTests BFVRScopeViewMathTests BFVROpenXRScopeOverlayLayerTests BFVRWorldCrosshairMathTests BFVRRuntimeDiagnosticsTests BFVRHrtfListenerMathTests BFVRHrtfBufferPolicyTests BFVRHrtfMenuSoundPolicyTests BFVRHrtfBackendProbe BFVRDirectSoundImportRouteTests BFVRSharedControlChannelTests BFVRRfaInspect)
+foreach(target BFVRClient BFVROpenALHrtfRouter BFVRD3D8To9FlatClient BFVRLoader BFVROpenXRProbe BFVRSharedTextureProducerProbe BFVRD3D8To9SharedSurfaceProbe BFVRAmbientOcclusionDepthProbe BFVRStereoMath BFVRStereoMathTests BFVRWaterReflectionTextureBasisTests BFVRWeaponFireAimMathTests BFVROffHandSupportPolicyTests BFVRArmPoleVectorMathTests BFVRMainMenuOverlayTests BFVRQuickMenuTests BFVRVehicleMotionAimMathTests BFVRMountedCameraMathTests BFVRScopeViewMathTests BFVROpenXRScopeOverlayLayerTests BFVRWorldCrosshairMathTests BFVRRuntimeDiagnosticsTests BFVRHrtfListenerMathTests BFVRHrtfBufferPolicyTests BFVRHrtfMenuSoundPolicyTests BFVRHrtfBackendProbe BFVRDirectSoundImportRouteTests BFVRSharedControlChannelTests BFVRRfaInspect)
   target_compile_definitions(${target} PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
   set_property(TARGET ${target} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
   if(MSVC)
@@ -441,6 +446,7 @@ target_include_directories(BFVRD3D8To9FlatClient PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}")
 target_include_directories(BFVRStereoMath PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(BFVRStereoMathTests PRIVATE BFVRStereoMath)
+target_link_libraries(BFVRWaterReflectionTextureBasisTests PRIVATE BFVRStereoMath)
 target_link_libraries(BFVRWeaponFireAimMathTests PRIVATE BFVRStereoMath)
 target_link_libraries(BFVROffHandSupportPolicyTests PRIVATE BFVRStereoMath)
 target_link_libraries(BFVRArmPoleVectorMathTests PRIVATE BFVRStereoMath)
@@ -470,6 +476,9 @@ target_include_directories(BFVROpenXRScopeOverlayLayerTests PRIVATE
 include(CTest)
 if(BUILD_TESTING)
   add_test(NAME BFVRStereoMathTests COMMAND BFVRStereoMathTests)
+  add_test(
+    NAME BFVRWaterReflectionTextureBasisTests
+    COMMAND BFVRWaterReflectionTextureBasisTests)
   add_test(
     NAME BFVRWeaponFireAimMathTests
     COMMAND BFVRWeaponFireAimMathTests)

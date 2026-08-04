@@ -7,6 +7,11 @@
 namespace bfvr
 {
 
+namespace stereo
+{
+struct Matrix4;
+}
+
 using D3D8RenderViewPoseLogCallback = void (*)(const wchar_t* message);
 
 // Owns the verified RenderView frustum-query and transformation MinHook
@@ -30,6 +35,12 @@ public:
     // Reset so no pre-reset HMD pose can be replayed before the next request.
     void ClearPose() noexcept;
     [[nodiscard]] bool WasApplied(LONG sequence) const noexcept;
+    // Returns the unmodified BF1942 logical camera that was paired with the
+    // HMD-composed RenderView camera for this request. The sequence check
+    // prevents stale map/transition camera state from entering a replay.
+    [[nodiscard]] bool TryGetAppliedSourceCamera(
+        LONG sequence,
+        stereo::Matrix4& sourceCamera) const noexcept;
     [[nodiscard]] bool IsMountedCameraDecoupled() const noexcept;
     void DisableAndRemove();
     void LogSummary() const;

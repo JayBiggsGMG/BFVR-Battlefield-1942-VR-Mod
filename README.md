@@ -447,6 +447,16 @@ stretching a half-resolution result through the ordinary color sampler. The AO
 pass explicitly installs its complete viewport/scissor/blend/depth/raster
 state, and packed-depth transport is unchanged.
 
+The native additive-water repair keeps complete stereo View/Projection
+geometry and uses `D3DRS_LOCALVIEWER=FALSE` only for the exact reflection pass.
+Its current texture-basis experiment is default-on: the original stage-0
+texture matrix is rotation-only rebased from each replay eye into BF1942's
+logical camera basis, then restored after the draw. Set
+`BFVR_WATER_REFLECTION_TEXTURE_BASIS=0` for a matched comparison that keeps the
+accepted no-band repair but disables only the new basis correction. The older
+`BFVR_STEREO_WATER_REFLECTION=1` comparison disables the complete native-water
+repair and can therefore restore the rejected eye-relative bands.
+
 Water-only screen-space reflections are experimental and default-off in code.
 Set `BFVR_OPENXR_WATER_SSR=1` to request them; the comparison launcher currently
 does this explicitly. `BFVR_OPENXR_WATER_SSR_INTENSITY` defaults to `1.0` and

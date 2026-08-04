@@ -186,6 +186,8 @@ struct StereoFrameRecord
     volatile LONG waterSurfaceDraws = 0;
     volatile LONG infiniteViewerWaterReflectionDraws = 0;
     volatile LONG waterReflectionStateFailures = 0;
+    volatile LONG waterTextureBasisEyeApplications = 0;
+    volatile LONG waterTextureBasisFailures = 0;
     volatile LONG waterMaskDraws = 0;
     volatile LONG waterMaskFailures = 0;
     BOOL waterMaskValid = FALSE;
