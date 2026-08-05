@@ -129,7 +129,7 @@ bfvr::stereo::Matrix4 Multiply(
     return result;
 }
 
-std::optional<bfvr::stereo::Pose> MakeRelativePose(
+std::optional<bfvr::stereo::Pose> MakeRelativePoseInternal(
     const bfvr::stereo::Pose& reference,
     const bfvr::stereo::Pose& current,
     float positionScale) noexcept
@@ -194,6 +194,14 @@ std::optional<bfvr::stereo::Matrix4> MakeD3D8PoseFromOpenXRPose(
 
 namespace bfvr::stereo
 {
+std::optional<Pose> MakeRelativePose(
+    const Pose& reference,
+    const Pose& current,
+    float positionScale) noexcept
+{
+    return MakeRelativePoseInternal(reference, current, positionScale);
+}
+
 Vec3 OpenXRToD3D8Coordinates(Vec3 value) noexcept
 {
     return {value.x, value.y, -value.z};
@@ -512,9 +520,9 @@ std::optional<D3D8StereoTransformPair> MakeRuntimePoseD3D8StereoPair(
     }
 
     const auto relativeLeft =
-        MakeRelativePose(referenceHead, leftEye, worldUnitsPerMeter);
+        MakeRelativePoseInternal(referenceHead, leftEye, worldUnitsPerMeter);
     const auto relativeRight =
-        MakeRelativePose(referenceHead, rightEye, worldUnitsPerMeter);
+        MakeRelativePoseInternal(referenceHead, rightEye, worldUnitsPerMeter);
     if (!relativeLeft.has_value() || !relativeRight.has_value())
     {
         return std::nullopt;
@@ -569,7 +577,7 @@ std::optional<Matrix4> ComposeRuntimeHeadWithD3D8Camera(
         return std::nullopt;
     }
     const auto relativeHead =
-        MakeRelativePose(
+        MakeRelativePoseInternal(
             referenceHead,
             currentHead,
             worldUnitsPerMeter);

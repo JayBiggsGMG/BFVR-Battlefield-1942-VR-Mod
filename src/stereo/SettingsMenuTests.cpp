@@ -76,8 +76,16 @@ bool TestBounds()
             SettingsMenuSelection::Cancel &&
         SettingsMenuSelectionAt(0.84F, 0.97F, false, false) ==
             SettingsMenuSelection::ResetDefaults &&
-        SettingsMenuSelectionAt(0.64F, 0.225F, false, false) ==
+        SettingsMenuSelectionAt(0.64F, 0.454F, false, false) ==
             SettingsMenuSelection::InfantryTurnSpeed &&
+        SettingsMenuSelectionAt(
+            0.889F, 0.161F, false, true,
+            SettingsMenuTab::VrSettings, false, 0) ==
+            SettingsMenuSelection::PlayModeNext &&
+        SettingsMenuSelectionAt(
+            0.70F, 0.239F, true, false,
+            SettingsMenuTab::VrSettings, false, 1) ==
+            SettingsMenuSelection::VrHeightAdjustment &&
         SettingsMenuSelectionAt(
             0.889F,
             0.161F,
@@ -184,7 +192,7 @@ bool TestInteractionAndPlacement()
     auto state = interaction.Snapshot();
     if (!state.active || !state.visible ||
         state.tab != SettingsMenuTab::VrSettings || state.page != 0 ||
-        state.arrowLeftVisible || state.arrowRightVisible ||
+        state.arrowLeftVisible || !state.arrowRightVisible ||
         !NearlyEqual(state.widthMeters, settingsWidth) ||
         !NearlyEqual(
             settingsWidth / 1.60F,
@@ -214,7 +222,7 @@ bool TestInteractionAndPlacement()
 
     // The Controller Layout overlay is modal over the settings body.
     state = interaction.Snapshot();
-    AimAt(input, state.panelPose, state.widthMeters, 0.64F, 0.225F);
+    AimAt(input, state.panelPose, state.widthMeters, 0.64F, 0.454F);
     input.predictedDisplayTime += 11'111'111;
     interaction.Update(input);
     if (interaction.Snapshot().hovered != SettingsMenuSelection::None)
@@ -233,7 +241,7 @@ bool TestInteractionAndPlacement()
 
     // Clicking the bar sets a snapped value; holding and moving drags it.
     state = interaction.Snapshot();
-    AimAt(input, state.panelPose, state.widthMeters, 0.64F, 0.225F);
+    AimAt(input, state.panelPose, state.widthMeters, 0.64F, 0.454F);
     input.predictedDisplayTime += 11'111'111;
     interaction.Update(input);
     Click(interaction, input);
@@ -247,11 +255,11 @@ bool TestInteractionAndPlacement()
     {
         return false;
     }
-    AimAt(input, state.panelPose, state.widthMeters, 0.56F, 0.225F);
+    AimAt(input, state.panelPose, state.widthMeters, 0.56F, 0.454F);
     input.predictedDisplayTime += 11'111'111;
     input.rightPrimaryHeld = true;
     interaction.Update(input);
-    AimAt(input, state.panelPose, state.widthMeters, 0.79F, 0.225F);
+    AimAt(input, state.panelPose, state.widthMeters, 0.79F, 0.454F);
     input.predictedDisplayTime += 11'111'111;
     interaction.Update(input);
     input.predictedDisplayTime += 11'111'111;
@@ -260,6 +268,84 @@ bool TestInteractionAndPlacement()
     if (interaction.Snapshot().values.infantryTurnSpeedPercent <=
             clickedTurnSpeed ||
         !interaction.TakeValuesChanged())
+    {
+        return false;
+    }
+
+    // Page 1 selectors stage play mode, conditional snap angle, and the
+    // infantry-only movement basis. Smooth's slider is replaced by angle
+    // arrows as soon as Snap is selected.
+    state = interaction.Snapshot();
+    AimAt(input, state.panelPose, state.widthMeters, 0.889F, 0.161F);
+    Click(interaction, input);
+    if (interaction.Snapshot().values.playMode !=
+            bfvr::settings::PlayMode::Standing ||
+        !interaction.TakeValuesChanged())
+    {
+        return false;
+    }
+    state = interaction.Snapshot();
+    AimAt(input, state.panelPose, state.widthMeters, 0.571F, 0.308F);
+    Click(interaction, input);
+    if (interaction.Snapshot().values.artificialTurnMode !=
+            bfvr::settings::ArtificialTurnMode::Snap ||
+        !interaction.TakeValuesChanged())
+    {
+        return false;
+    }
+    state = interaction.Snapshot();
+    AimAt(input, state.panelPose, state.widthMeters, 0.889F, 0.454F);
+    Click(interaction, input);
+    if (interaction.Snapshot().values.snapTurnAngleDegrees != 60 ||
+        !interaction.TakeValuesChanged())
+    {
+        return false;
+    }
+    state = interaction.Snapshot();
+    AimAt(input, state.panelPose, state.widthMeters, 0.889F, 0.635F);
+    Click(interaction, input);
+    if (interaction.Snapshot().values.movementDirection !=
+            bfvr::settings::MovementDirection::Head ||
+        !interaction.TakeValuesChanged())
+    {
+        return false;
+    }
+
+    // Page 2 keeps manual trim separate from the measured physical floor-to-
+    // eye height, while Recenter Forward remains an immediate action.
+    state = interaction.Snapshot();
+    AimAt(input, state.panelPose, state.widthMeters, 0.66F, 0.87F);
+    Click(interaction, input);
+    state = interaction.Snapshot();
+    if (state.page != 1 || !state.arrowLeftVisible || state.arrowRightVisible)
+    {
+        return false;
+    }
+    input.standingHeightValid = true;
+    input.standingHeightMeters = 1.82F;
+    AimAt(input, state.panelPose, state.widthMeters, 0.60F, 0.454F);
+    Click(interaction, input);
+    if (interaction.Snapshot().values.standingEyeHeightCentimeters != 182 ||
+        interaction.Snapshot().values.vrHeightAdjustmentCentimeters != 0 ||
+        !interaction.TakeValuesChanged() ||
+        interaction.Snapshot().status !=
+            bfvr::stereo::SettingsMenuStatus::StandingHeightCalibrated)
+    {
+        return false;
+    }
+    state = interaction.Snapshot();
+    AimAt(input, state.panelPose, state.widthMeters, 0.60F, 0.645F);
+    Click(interaction, input);
+    if (interaction.TakeCommand() != SettingsMenuCommand::RecenterForward ||
+        interaction.Snapshot().status !=
+            bfvr::stereo::SettingsMenuStatus::ForwardRecentered)
+    {
+        return false;
+    }
+    state = interaction.Snapshot();
+    AimAt(input, state.panelPose, state.widthMeters, 0.59F, 0.87F);
+    Click(interaction, input);
+    if (interaction.Snapshot().page != 0)
     {
         return false;
     }
@@ -551,11 +637,16 @@ bool CaptureArt(const wchar_t* assetDirectory, const wchar_t* outputDirectory)
     auto capture = [&](SettingsMenuTab tab,
                        const wchar_t* name,
                        bool overlay,
-                       bool checked) {
+                       bool checked,
+                       std::uint32_t page = 0) {
         bfvr::stereo::SettingsMenuSnapshot state = {};
         state.active = true;
         state.visible = true;
         state.tab = tab;
+        state.page = page;
+        state.arrowLeftVisible = page > 0;
+        state.arrowRightVisible =
+            tab == SettingsMenuTab::VrSettings && page == 0;
         state.controllerLayoutVisible = overlay;
         state.values.invertFlightPitch = checked;
         state.values.invertTurretPitch = checked;
@@ -586,6 +677,12 @@ bool CaptureArt(const wchar_t* assetDirectory, const wchar_t* outputDirectory)
                L"Settings-VR.bmp",
                false,
                false) &&
+        capture(
+            SettingsMenuTab::VrSettings,
+            L"Settings-VR-Page2.bmp",
+            false,
+            false,
+            1) &&
         capture(
             SettingsMenuTab::Controls,
             L"Settings-Controls.bmp",

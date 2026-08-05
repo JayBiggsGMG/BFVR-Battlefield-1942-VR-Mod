@@ -63,6 +63,8 @@ struct QuickMenuFrameInput
     Pose headPose = {};
     Pose rightGripPose = {};
     Pose rightAimPose = {};
+    bool standingHeightValid = false;
+    float standingHeightMeters = 0.0F;
 };
 
 struct QuickMenuInteractionSnapshot

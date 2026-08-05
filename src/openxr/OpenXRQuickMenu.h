@@ -26,6 +26,12 @@
 namespace bfvr
 {
 
+enum class OpenXRTrackingAction : std::uint32_t
+{
+    None = 0,
+    RecenterForward
+};
+
 struct OpenXRQuickMenuApi
 {
     PFN_xrCreateSwapchain createSwapchain = nullptr;
@@ -61,6 +67,8 @@ public:
     void Update(const OpenXRPresentationFrameState& frame) noexcept;
     void SetMountedCameraDecoupled(bool decoupled) noexcept;
     void OpenSettingsMenu() noexcept;
+    void OnTrackingSpaceChanged() noexcept;
+    void SetForwardRecenterResult(bool succeeded) noexcept;
 
     std::size_t AppendLayers(
         XrSpace localSpace,
@@ -68,6 +76,7 @@ public:
         std::size_t capacity);
     [[nodiscard]] stereo::QuickMenuSelection
     TakeReleasedSelection() noexcept;
+    [[nodiscard]] OpenXRTrackingAction TakeTrackingAction() noexcept;
     [[nodiscard]] bool GetMirrorState(
         OpenXRQuickMenuMirrorState& state) const noexcept;
     [[nodiscard]] bool IsReady() const noexcept;
@@ -135,6 +144,7 @@ private:
     bool settingsAvailable_ = false;
     bool settingsVisualValid_ = false;
     bool mountedCameraDecoupled_ = false;
+    OpenXRTrackingAction trackingAction_ = OpenXRTrackingAction::None;
 };
 
 } // namespace bfvr

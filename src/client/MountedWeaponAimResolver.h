@@ -11,6 +11,13 @@ struct MountedWeaponStationPose
     stereo::Matrix4 stationWorld = {};
 };
 
+struct LocalPlayerControlContext
+{
+    const void* currentControlObject = nullptr;
+    const void* defaultControlObject = nullptr;
+    bool alive = false;
+};
+
 // Resolves the occupied PlayerControlObject's first native weapon and samples
 // the same nominal FireArms transformation selected by the firing path.
 [[nodiscard]] bool InitializeMountedWeaponAimResolver(
@@ -27,5 +34,11 @@ void ShutdownMountedWeaponAimResolver() noexcept;
 // stable PlayerControlObject transform above any child turret bundles.
 [[nodiscard]] bool ReadOccupiedMountedWeaponStationPose(
     MountedWeaponStationPose& stationPose) noexcept;
+
+// Read-only local ownership query shared by the camera anchor. Comparing the
+// current and default control objects is the established infantry/occupied
+// boundary in both offline and multiplayer play; no object state is changed.
+[[nodiscard]] bool ReadLocalPlayerControlContext(
+    LocalPlayerControlContext& context) noexcept;
 
 } // namespace bfvr

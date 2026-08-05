@@ -8,6 +8,7 @@
 
 namespace bfvr
 {
+
 namespace d3d8probe
 {
 struct D3DMatrix;
@@ -74,6 +75,9 @@ struct D3D8RuntimeRenderRequest
     std::int64_t predictedDisplayTime = 0;
     bool headPoseValid = false;
     bool headPoseTracked = false;
+    bool standingHeightValid = false;
+    float standingHeightMeters = 0.0F;
+    LONG recenterForwardSequence = 0;
     D3D8RuntimeView headPose = {};
     std::array<D3D8RuntimeView, 2> views = {};
     D3D8RuntimeControllerSample controllerInput = {};

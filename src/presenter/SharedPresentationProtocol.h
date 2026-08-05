@@ -11,7 +11,7 @@ namespace bfvr::shared
 using SharedTextureLogCallback = void (*)(void* context, const wchar_t* message);
 
 constexpr DWORD kProtocolMagic = 0x52564642; // "BFVR"
-constexpr DWORD kProtocolVersion = 14;
+constexpr DWORD kProtocolVersion = 17;
 constexpr std::size_t kTextureCount = 3;
 constexpr std::size_t kDepthTextureCount = 2;
 constexpr std::size_t kSharedNameCapacity = 128;
@@ -162,6 +162,16 @@ struct SharedRenderRequest
     LONG viewsValid = 0;
     LONG headPoseValid = 0;
     LONG headPoseTracked = 0;
+    // Current headset height above the OpenXR STAGE floor, located at the
+    // same predicted display time as headPose. This lets x86 derive the floor
+    // in immutable LOCAL coordinates without adding the user's entire height
+    // on top of BF1942's already-authored eye camera.
+    LONG standingHeightValid = 0;
+    float standingHeightMeters = 0.0F;
+    // Presenter-owned command edge. The x86 camera owner captures the
+    // headset as the neutral pose for the currently verified infantry body or
+    // occupied seat; OpenXR's runtime reference space is never rewritten.
+    LONG recenterForwardSequence = 0;
     SharedPresentationPose headPose = {};
     SharedPresentationView views[2] = {};
 };

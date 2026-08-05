@@ -11,6 +11,7 @@
 #include "stereo/WeaponMotionPolicy.h"
 #include "stereo/WeaponPoseMath.h"
 #include "client/D3D8RuntimePosePolicy.h"
+#include "client/D3D8TrackingAnchor.h"
 #include "client/D3D8StereoProbeRecords.h"
 #include "client/D3D8SpriteShaderTransform.h"
 #include "client/D3D8StereoShaderTransform.h"
@@ -2910,6 +2911,192 @@ void TestMainMenuOverlayLayout()
         Fail(test, "a press begun outside activated after moving inside");
     }
 }
+
+void TestContextTrackingAnchors()
+{
+    constexpr std::string_view test = "context tracking anchors";
+    bfvr::D3D8TrackingAnchor anchor = {};
+    bfvr::D3D8RuntimeView head = {};
+    head.positionX = 2.0F;
+    head.positionY = 0.35F;
+    head.positionZ = 3.0F;
+    anchor.Update(
+        head,
+        true,
+        {bfvr::D3D8TrackingContextKind::Infantry, 0x1000},
+        1'000'000'000,
+        0,
+        false,
+        true,
+        1.10F,
+        1.70F,
+        0.10F);
+    const auto infantryReference = anchor.ReferenceHead({});
+    ExpectNear(test, infantryReference.positionX, 2.0F);
+    ExpectNear(test, infantryReference.positionY, 0.25F);
+    ExpectNear(test, infantryReference.positionZ, 3.0F);
+    const auto rebasedInfantryHead = anchor.RebaseView(head);
+    ExpectNear(test, rebasedInfantryHead.positionX, 0.0F);
+    ExpectNear(test, rebasedInfantryHead.positionY, 0.10F);
+    ExpectNear(test, rebasedInfantryHead.positionZ, 0.0F);
+
+    // Switching to Standing while still physically seated must map the live
+    // STAGE height to the existing BF1942 eye camera, not add 1.10 m on top.
+    anchor.Update(
+        head,
+        true,
+        {bfvr::D3D8TrackingContextKind::Infantry, 0x1000},
+        2'000'000'000,
+        0,
+        true,
+        true,
+        1.10F,
+        1.70F,
+        0.0F);
+    ExpectNear(test, anchor.ReferenceHead({}).positionY, 0.95F);
+    ExpectNear(test, anchor.RebaseView(head).positionY, -0.60F);
+
+    // Standing up changes LOCAL and STAGE head Y by the same amount, leaving
+    // the derived LOCAL floor/reference fixed and producing zero extra height
+    // at BF1942's nominal 1.70-m standing eye camera.
+    head.positionY = 0.95F;
+    anchor.Update(
+        head,
+        true,
+        {bfvr::D3D8TrackingContextKind::Infantry, 0x1000},
+        3'000'000'000,
+        0,
+        true,
+        true,
+        1.70F,
+        1.70F,
+        0.0F);
+    ExpectNear(test, anchor.ReferenceHead({}).positionY, 0.95F);
+    ExpectNear(test, anchor.RebaseView(head).positionY, 0.0F);
+
+    anchor.Update(
+        head,
+        true,
+        {bfvr::D3D8TrackingContextKind::Infantry, 0x1000},
+        4'000'000'000,
+        0,
+        true,
+        true,
+        1.70F,
+        1.70F,
+        -0.30F);
+    ExpectNear(test, anchor.RebaseView(head).positionY, -0.30F);
+
+    // A user may select Seated while still standing and only then sit down.
+    // The transition follows that one deliberate posture change and settles
+    // without requiring another Standing/Seated toggle.
+    anchor.Update(
+        head,
+        true,
+        {bfvr::D3D8TrackingContextKind::Infantry, 0x1000},
+        5'000'000'000,
+        0,
+        false,
+        true,
+        1.70F,
+        1.70F,
+        0.0F);
+    ExpectNear(test, anchor.RebaseView(head).positionY, 0.0F);
+    head.positionY = 0.45F;
+    anchor.Update(
+        head,
+        true,
+        {bfvr::D3D8TrackingContextKind::Infantry, 0x1000},
+        6'000'000'000,
+        0,
+        false,
+        true,
+        1.20F,
+        1.70F,
+        0.0F);
+    ExpectNear(test, anchor.RebaseView(head).positionY, 0.0F);
+    anchor.Update(
+        head,
+        true,
+        {bfvr::D3D8TrackingContextKind::Infantry, 0x1000},
+        6'800'000'000,
+        0,
+        false,
+        true,
+        1.20F,
+        1.70F,
+        0.0F);
+    head.positionY = 0.40F;
+    anchor.Update(
+        head,
+        true,
+        {bfvr::D3D8TrackingContextKind::Infantry, 0x1000},
+        7'000'000'000,
+        0,
+        false,
+        true,
+        1.15F,
+        1.70F,
+        0.0F);
+    ExpectNear(test, anchor.RebaseView(head).positionY, -0.05F);
+
+    head.positionX = 8.0F;
+    head.positionY = 1.20F;
+    head.positionZ = -4.0F;
+    anchor.Update(
+        head,
+        true,
+        {bfvr::D3D8TrackingContextKind::Seat, 0x2000},
+        8'000'000'000,
+        0,
+        false,
+        true,
+        1.20F,
+        1.70F,
+        0.30F);
+    const auto seatReference = anchor.ReferenceHead({});
+    ExpectNear(test, seatReference.positionX, 8.0F);
+    ExpectNear(test, seatReference.positionY, 1.20F);
+    ExpectNear(test, seatReference.positionZ, -4.0F);
+    const auto rebasedSeatHead = anchor.RebaseView(head);
+    ExpectNear(test, rebasedSeatHead.positionY, 0.0F);
+
+    head.positionX = 8.25F;
+    head.positionY = 1.30F;
+    head.positionZ = -3.80F;
+    anchor.Update(
+        head,
+        true,
+        {bfvr::D3D8TrackingContextKind::Seat, 0x2000},
+        9'000'000'000,
+        7,
+        false,
+        true,
+        1.30F,
+        1.70F,
+        -0.30F);
+    const auto recenteredSeat = anchor.ReferenceHead({});
+    ExpectNear(test, recenteredSeat.positionX, 8.25F);
+    ExpectNear(test, recenteredSeat.positionY, 1.30F);
+    ExpectNear(test, recenteredSeat.positionZ, -3.80F);
+
+    // Returning to Infantry in Seated mode captures the current posture as
+    // neutral even if the prior session/context was Standing.
+    head = {};
+    head.positionY = 0.40F;
+    anchor.Update(
+        head,
+        true,
+        {bfvr::D3D8TrackingContextKind::Infantry, 0x3000},
+        10'000'000'000,
+        7,
+        false,
+        true,
+        1.15F,
+        1.70F,
+        0.0F);
+    ExpectNear(test, anchor.RebaseView(head).positionY, 0.0F);
+}
 }
 
 int main()
@@ -2927,6 +3114,7 @@ int main()
     TestRuntimeHeadCameraComposition();
     TestCurrentBodyFrameAndAbsoluteGripWeaponDelta();
     TestD3D8RuntimeLocalOriginPosePolicy();
+    TestContextTrackingAnchors();
     TestViewSpaceWeaponPose();
     TestViewModelPerspectiveCorrection();
     TestD3D8WeaponDrawPolicy();

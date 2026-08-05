@@ -70,6 +70,14 @@ struct D3D8StereoTransformPair
     Matrix4 rightProjection = {};
 };
 
+// Expresses current in reference-local coordinates. Translation is measured
+// from the reference position and rotated by the inverse reference
+// orientation, keeping headset and controller rebasing on one transform.
+[[nodiscard]] std::optional<Pose> MakeRelativePose(
+    const Pose& reference,
+    const Pose& current,
+    float positionScale = 1.0F) noexcept;
+
 // Converts a position or direction from OpenXR's right-handed convention to
 // D3D8's conventional left-handed world convention by preserving X/Y and
 // negating Z. It does not normalize directions.

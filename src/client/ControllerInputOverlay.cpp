@@ -4,6 +4,7 @@
 #include "client/ScopeViewOverlay.h"
 #include "presenter/SharedPresentationProtocol.h"
 #include "settings/UserSettings.h"
+#include "stereo/DirectionalLocomotion.h"
 #include "stereo/VehicleMotionAimMath.h"
 
 #include <MinHook.h>
@@ -822,6 +823,50 @@ private:
         EnableInput(destination, kLogicalInputMouseLookX);
     }
 
+    static void AddInfantrySnapTurnInput(
+        float* destination,
+        float degrees) noexcept
+    {
+        if (!std::isfinite(degrees) || degrees == 0.0F)
+        {
+            return;
+        }
+        // The semantic Mac infantry handler applies native mouse-look yaw
+        // through a factor-three scale after simulation-time normalization;
+        // retail WinPC has already accepted these same logical look slots in
+        // headset play. A snap must use that character-owned route: rotating
+        // only OpenXR leaves the soldier, arms, and weapon on their old yaw.
+        constexpr float kNativeDegreesPerMouseLookUnit = 3.0F;
+        constexpr float kMaximumSnapTurnDegrees = 90.0F;
+        const float current = std::isfinite(
+            destination[kLogicalInputMouseLookX])
+            ? destination[kLogicalInputMouseLookX]
+            : 0.0F;
+        const float boundedDegrees = std::clamp(
+            degrees, -kMaximumSnapTurnDegrees, kMaximumSnapTurnDegrees);
+        destination[kLogicalInputMouseLookX] = current +
+            boundedDegrees / kNativeDegreesPerMouseLookUnit;
+        EnableInput(destination, kLogicalInputMouseLookX);
+    }
+
+    static bool ExtractOpenXRYaw(
+        float x,
+        float y,
+        float z,
+        float w,
+        float& yaw) noexcept
+    {
+        const float norm = x * x + y * y + z * z + w * w;
+        if (!std::isfinite(norm) || norm < 0.5F || norm > 1.5F)
+        {
+            return false;
+        }
+        yaw = std::atan2(
+            2.0F * (w * y + x * z),
+            1.0F - 2.0F * (y * y + z * z));
+        return std::isfinite(yaw);
+    }
+
     static void SetHeldInput(
         float* destination,
         DWORD input,
@@ -853,6 +898,7 @@ private:
         rightStickVerticalDirection = 0;
         crouchToggled = false;
         nativeAltFireWasDown = false;
+        bfvr::stereo::ResetDigitalLocomotion(infantryMovementDirection);
         bfvr::stereo::ResetVehicleMotionAim(surfaceVehicleMotionAim);
         activeControlMode = controlMode;
 
@@ -875,6 +921,8 @@ private:
         float* destination,
         const bfvr::D3D8RuntimeControllerHand& left,
         const bfvr::D3D8RuntimeControllerHand& right,
+        const bfvr::D3D8RuntimeView& matchingHead,
+        bool matchingHeadTracked,
         ControllerControlMode controlMode,
         std::int64_t predictedDisplayTime,
         bool multiplayerRoute) noexcept
@@ -936,46 +984,137 @@ private:
                 // forward. BF1942 does not consume them as analogue walking
                 // speed, so the light band uses c_PIWalk and directional
                 // motion remains the game's ordinary full-strength input.
-                const float movementX =
+                float movementX =
                     ApplyThumbstickDeadzone(left.thumbstickX);
-                const float movementY =
+                float movementY =
                     ApplyThumbstickDeadzone(left.thumbstickY);
                 const float movementMagnitude = std::min(
                     std::hypot(movementX, movementY),
                     1.0F);
+                float movementYaw = 0.0F;
+                bool quantizeRotatedMovement = false;
+                if (userSettings.movementDirection ==
+                        bfvr::settings::MovementDirection::Head &&
+                    matchingHeadTracked)
+                {
+                    float openXrYaw = 0.0F;
+                    if (ExtractOpenXRYaw(
+                            matchingHead.orientationX,
+                            matchingHead.orientationY,
+                            matchingHead.orientationZ,
+                            matchingHead.orientationW,
+                            openXrYaw))
+                    {
+                        movementYaw = -openXrYaw;
+                        quantizeRotatedMovement = true;
+                    }
+                }
+                else if (userSettings.movementDirection ==
+                         bfvr::settings::MovementDirection::OffHandController)
+                {
+                    constexpr DWORD requiredAimFlags =
+                        bfvr::shared::kControllerHandFlagAimActive |
+                        bfvr::shared::kControllerHandFlagAimOrientationValid |
+                        bfvr::shared::kControllerHandFlagAimOrientationTracked;
+                    float openXrYaw = 0.0F;
+                    if ((left.flags & requiredAimFlags) == requiredAimFlags &&
+                        ExtractOpenXRYaw(
+                            left.aimPose.orientationX,
+                            left.aimPose.orientationY,
+                            left.aimPose.orientationZ,
+                            left.aimPose.orientationW,
+                            openXrYaw))
+                    {
+                        movementYaw = -openXrYaw;
+                        quantizeRotatedMovement = true;
+                    }
+                }
+                bfvr::stereo::DigitalLocomotionDirection direction = {};
+                if (quantizeRotatedMovement)
+                {
+                    direction = bfvr::stereo::QuantizeDigitalLocomotion(
+                        movementX,
+                        movementY,
+                        movementYaw,
+                        infantryMovementDirection);
+                }
+                else
+                {
+                    bfvr::stereo::ResetDigitalLocomotion(
+                        infantryMovementDirection);
+                    direction.horizontal = movementX == 0.0F
+                        ? 0
+                        : (movementX > 0.0F ? 1 : -1);
+                    direction.forward = movementY == 0.0F
+                        ? 0
+                        : (movementY > 0.0F ? 1 : -1);
+                }
                 const bool moving = movementMagnitude != 0.0F;
                 SetHeldInput(
                     destination,
                     kLogicalInputWalk,
                     moving &&
                         movementMagnitude < kWalkStickMagnitudeThreshold);
-                if (movementX != 0.0F)
+                if (direction.horizontal != 0)
                 {
                     AddAxisInput(
                         destination,
                         kLogicalInputYaw,
-                        std::copysign(1.0F, movementX));
+                        static_cast<float>(direction.horizontal));
                 }
-                if (movementY != 0.0F)
+                if (direction.forward != 0)
                 {
                     AddAxisInput(
                         destination,
                         kLogicalInputThrottle,
-                        std::copysign(1.0F, movementY));
+                        static_cast<float>(direction.forward));
                 }
+            }
+            else
+            {
+                bfvr::stereo::ResetDigitalLocomotion(
+                    infantryMovementDirection);
             }
 
             if ((right.flags &
                     bfvr::shared::kControllerHandFlagThumbstickActive) != 0)
             {
+                if (userSettings.artificialTurnMode ==
+                    bfvr::settings::ArtificialTurnMode::Snap)
+                {
+                    const float snapAxis = right.thumbstickX;
+                    if (std::fabs(snapAxis) < 0.35F)
+                    {
+                        snapTurnArmed = true;
+                    }
+                    else if (snapTurnArmed && std::fabs(snapAxis) >= 0.72F &&
+                        !quickMenuHeld)
+                    {
+                        const float degrees = std::copysign(
+                            static_cast<float>(
+                                userSettings.snapTurnAngleDegrees),
+                            snapAxis);
+                        AddInfantrySnapTurnInput(destination, degrees);
+                        mouseLookEnabled = true;
+                        snapTurnArmed = false;
+                    }
+                }
+                else
+                {
+                    snapTurnArmed = true;
+                }
                 const float turnInput =
+                    userSettings.artificialTurnMode ==
+                        bfvr::settings::ArtificialTurnMode::Smooth
+                    ?
                     ApplyThumbstickResponse(
                         right.thumbstickX,
                         kTurnStickResponseExponent) *
                     kStickTurnInputPerFrame *
                     (static_cast<float>(
                          userSettings.infantryTurnSpeedPercent) /
-                     100.0F);
+                     100.0F)
+                    : 0.0F;
                 if (turnInput != 0.0F)
                 {
                     AddInfantryTurnInput(destination, turnInput);
@@ -996,6 +1135,7 @@ private:
             else
             {
                 rightStickVerticalDirection = 0;
+                snapTurnArmed = true;
             }
         }
         else
@@ -1273,6 +1413,7 @@ private:
             return;
         }
         bfvr::D3D8RuntimeControllerSample sample = {};
+        bfvr::D3D8RuntimeView matchingHead = {};
         LONG generation = 0;
         if (!bfvr::ReadFreshAcceptedControllerInput(
                 sample,
@@ -1284,6 +1425,15 @@ private:
             ReportGateDiagnostics();
             return;
         }
+        bfvr::D3D8RuntimeControllerSample trackingSample = {};
+        LONG trackingGeneration = 0;
+        const bool matchingHeadTracked =
+            bfvr::ReadFreshAcceptedWeaponTracking(
+                trackingSample,
+                matchingHead,
+                trackingGeneration,
+                kControllerSampleMaximumAgeMs) &&
+            trackingGeneration == generation;
         InterlockedIncrement(&freshControllerFrames);
         const bfvr::D3D8RuntimeControllerHand& left =
             sample.hands[kControllerHandLeft];
@@ -1298,6 +1448,8 @@ private:
                 destination,
                 left,
                 right,
+                matchingHead,
+                matchingHeadTracked,
                 controlMode,
                 sample.predictedDisplayTime,
                 multiplayerRoute);
@@ -1386,7 +1538,9 @@ private:
         rightStickVerticalDirection = 0;
         crouchToggled = false;
         bfvr::stereo::ResetVehicleMotionAim(surfaceVehicleMotionAim);
+        bfvr::stereo::ResetDigitalLocomotion(infantryMovementDirection);
         activeControlMode = ControllerControlMode::Unknown;
+        snapTurnArmed = true;
     }
 
     void RemoveHooks()
@@ -1468,11 +1622,21 @@ private:
         {
             return;
         }
+        if (updated.movementDirection != userSettings.movementDirection)
+        {
+            bfvr::stereo::ResetDigitalLocomotion(
+                infantryMovementDirection);
+        }
         userSettings = updated;
         WriteLog(
-            L"Controller input applied updated UserConfig values: infantryTurnSpeed=%lu%% invertFlightPitch=%d invertTurretPitch=%d invertTurretYaw=%d.",
+            L"Controller input applied updated UserConfig values: turnMode=%ls infantryTurnSpeed=%lu%% movementDirection=%lu invertFlightPitch=%d invertTurretPitch=%d invertTurretYaw=%d.",
+            userSettings.artificialTurnMode ==
+                    bfvr::settings::ArtificialTurnMode::Snap
+                ? L"snap"
+                : L"smooth",
             static_cast<unsigned long>(
                 userSettings.infantryTurnSpeedPercent),
+            static_cast<unsigned long>(userSettings.movementDirection),
             userSettings.invertFlightPitch ? 1 : 0,
             userSettings.invertTurretPitch ? 1 : 0,
             userSettings.invertTurretYaw ? 1 : 0);
@@ -1551,8 +1715,10 @@ private:
     int rightStickVerticalDirection = 0;
     bool crouchToggled = false;
     bfvr::stereo::VehicleMotionAimTracker surfaceVehicleMotionAim = {};
+    bfvr::stereo::DigitalLocomotionState infantryMovementDirection = {};
     ControllerControlMode activeControlMode = ControllerControlMode::Unknown;
     bool controllerScoreboardWasHeld = false;
+    bool snapTurnArmed = true;
     bfvr::settings::UserSettingsValues userSettings = {};
     ULONGLONG nextUserSettingsPollAt = 0;
     bool ownsMinHook = false;

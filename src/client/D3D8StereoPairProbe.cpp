@@ -5,8 +5,10 @@
 #include "client/D3D8RenderViewPoseHook.h"
 #include "client/BFSoldierVrMotionFilter.h"
 #include "client/D3D8RuntimePosePolicy.h"
+#include "client/D3D8TrackingAnchor.h"
 #include "client/D3D8RuntimeDiagnostics.h"
 #include "client/ControllerInputOverlay.h"
+#include "client/ControllerInputCache.h"
 #include "client/CrosshairOverlay.h"
 #include "client/D3D8WorldCrosshairRenderer.h"
 #include "client/MainMenuOverlay.h"
@@ -24,6 +26,7 @@
 #include "client/D3D8StereoProbeReporting.h"
 #include "client/D3D8TreeSpriteShaderTransform.h"
 #include "client/D3D8To9VertexShaderIdentity.h"
+#include "settings/UserSettings.h"
 
 #include "stereo/D3D8DrawPolicy.h"
 #include "stereo/D3D8FirstPersonArmPolicy.h"
@@ -366,6 +369,10 @@ bfvr::BFSoldierVrMotionFilter g_playerVrMotionFilter;
 bfvr::d3d8probe::D3D8StereoReadbackApi g_readbackApi = {};
 bfvr::D3D8RuntimeRenderRequest g_runtimeRenderRequest = {};
 bfvr::D3D8RuntimeFramePosePolicy g_runtimeFramePosePolicy = {};
+bfvr::D3D8TrackingAnchor g_trackingAnchor = {};
+bfvr::settings::UserSettingsValues g_trackingUserSettings = {};
+ULONGLONG g_nextTrackingSettingsPollAt = 0;
+bool g_trackingSettingsInitialized = false;
 bool g_loggedImmutableLocalTrackingOrigin = false;
 volatile LONG g_loggedWaterPassStateMask = 0;
 volatile LONG g_processLifetimeShaderDrawSkips = 0;

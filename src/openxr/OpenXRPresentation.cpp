@@ -9,7 +9,9 @@
 #include <openxr/openxr_platform.h>
 
 #include "openxr/OpenXRQuickMenu.h"
+#include "openxr/OpenXRPresentationSupport.h"
 #include "openxr/OpenXRScopeOverlayLayer.h"
+#include "openxr/OpenXRTrackingBasis.h"
 
 #include <algorithm>
 #include <array>
@@ -27,78 +29,6 @@ constexpr float kMinimumUiDistanceMeters = 0.1F;
 constexpr float kMinimumUiWidthMeters = 0.1F;
 constexpr float kMinimumCylinderAngleRadians = 0.1F;
 constexpr float kMaximumCylinderAngleRadians = 6.20F;
-
-const wchar_t* DescribeOpenXRResult(XrResult result)
-{
-    switch (result)
-    {
-    case XR_SUCCESS:
-        return L"XR_SUCCESS";
-    case XR_EVENT_UNAVAILABLE:
-        return L"XR_EVENT_UNAVAILABLE";
-    case XR_ERROR_FORM_FACTOR_UNAVAILABLE:
-        return L"XR_ERROR_FORM_FACTOR_UNAVAILABLE";
-    case XR_ERROR_RUNTIME_UNAVAILABLE:
-        return L"XR_ERROR_RUNTIME_UNAVAILABLE";
-    case XR_ERROR_INITIALIZATION_FAILED:
-        return L"XR_ERROR_INITIALIZATION_FAILED";
-    case XR_ERROR_SESSION_NOT_RUNNING:
-        return L"XR_ERROR_SESSION_NOT_RUNNING";
-    case XR_ERROR_SESSION_NOT_STOPPING:
-        return L"XR_ERROR_SESSION_NOT_STOPPING";
-    case XR_ERROR_GRAPHICS_DEVICE_INVALID:
-        return L"XR_ERROR_GRAPHICS_DEVICE_INVALID";
-    case XR_ERROR_GRAPHICS_REQUIREMENTS_CALL_MISSING:
-        return L"XR_ERROR_GRAPHICS_REQUIREMENTS_CALL_MISSING";
-    case XR_SESSION_LOSS_PENDING:
-        return L"XR_SESSION_LOSS_PENDING";
-    default:
-        return L"unclassified OpenXR result";
-    }
-}
-
-std::wstring BuildLoaderPath(const wchar_t* payloadDirectory)
-{
-    if (payloadDirectory == nullptr || *payloadDirectory == L'\0')
-    {
-        return {};
-    }
-#if defined(_WIN64)
-    return std::wstring(payloadDirectory) + L"\\runtime\\openxr\\win64\\openxr_loader.dll";
-#else
-    return std::wstring(payloadDirectory) + L"\\runtime\\openxr\\win32\\openxr_loader.dll";
-#endif
-}
-
-bool EqualLuid(const LUID& left, const LUID& right)
-{
-    return left.HighPart == right.HighPart && left.LowPart == right.LowPart;
-}
-
-bool IsFiniteInRange(float value, float minimum, float maximum)
-{
-    return std::isfinite(value) && value >= minimum && value <= maximum;
-}
-
-bool IsFiniteUnitPose(const bfvr::OpenXRPresentationPose& pose)
-{
-    const float quaternionLengthSquared =
-        pose.orientationX * pose.orientationX +
-        pose.orientationY * pose.orientationY +
-        pose.orientationZ * pose.orientationZ +
-        pose.orientationW * pose.orientationW;
-    return
-        std::isfinite(pose.orientationX) &&
-        std::isfinite(pose.orientationY) &&
-        std::isfinite(pose.orientationZ) &&
-        std::isfinite(pose.orientationW) &&
-        std::isfinite(pose.positionX) &&
-        std::isfinite(pose.positionY) &&
-        std::isfinite(pose.positionZ) &&
-        quaternionLengthSquared >= 0.25F &&
-        quaternionLengthSquared <= 2.25F;
-}
-
 } // namespace
 
 namespace bfvr
@@ -225,7 +155,7 @@ public:
 
     bool LoadLoader(const wchar_t* payloadDirectory)
     {
-        const std::wstring loaderPath = BuildLoaderPath(payloadDirectory);
+        const std::wstring loaderPath = BuildOpenXRLoaderPath(payloadDirectory);
         if (loaderPath.empty())
         {
             WriteLog(L"OpenXR presentation skipped because the BFVR payload directory is unavailable.");
@@ -253,10 +183,14 @@ public:
         return true;
     }
 
-    bool EnumerateExtensions(bool& d3d11Available, bool& cylinderAvailable)
+    bool EnumerateExtensions(
+        bool& d3d11Available,
+        bool& cylinderAvailable,
+        bool& localFloorExtensionAvailable)
     {
         d3d11Available = false;
         cylinderAvailable = false;
+        localFloorExtensionAvailable = false;
         PFN_xrEnumerateInstanceExtensionProperties enumerateExtensions = nullptr;
         if (!ResolveGlobal("xrEnumerateInstanceExtensionProperties", enumerateExtensions))
         {
@@ -298,12 +232,17 @@ public:
                 std::strcmp(
                     extension.extensionName,
                     XR_KHR_COMPOSITION_LAYER_CYLINDER_EXTENSION_NAME) == 0;
+            localFloorExtensionAvailable = localFloorExtensionAvailable ||
+                std::strcmp(
+                    extension.extensionName,
+                    XR_EXT_LOCAL_FLOOR_EXTENSION_NAME) == 0;
         }
         WriteLog(
-            L"OpenXR presentation runtime exposes %u extensions; D3D11=%s cylinderLayer=%s.",
+            L"OpenXR presentation runtime exposes %u extensions; D3D11=%s cylinderLayer=%s localFloor=%s.",
             extensionCount,
             d3d11Available ? L"available" : L"unavailable",
-            cylinderAvailable ? L"available" : L"unavailable");
+            cylinderAvailable ? L"available" : L"unavailable",
+            localFloorExtensionAvailable ? L"available" : L"unavailable");
         return true;
     }
 
@@ -889,7 +828,7 @@ public:
     {
         DestroyControllerInput();
         if (instance == XR_NULL_HANDLE || session == XR_NULL_HANDLE ||
-            localSpace == XR_NULL_HANDLE)
+            trackingBasis.ApplicationSpace() == XR_NULL_HANDLE)
         {
             return false;
         }
@@ -1092,7 +1031,7 @@ public:
         XrSpaceLocation location{XR_TYPE_SPACE_LOCATION};
         const XrResult locationResult = api.locateSpace(
             actionSpace,
-            localSpace,
+            trackingBasis.ApplicationSpace(),
             displayTime,
             &location);
         if (XR_FAILED(locationResult))
@@ -1360,19 +1299,19 @@ public:
             return false;
         }
 
-        XrReferenceSpaceCreateInfo referenceSpaceInfo{XR_TYPE_REFERENCE_SPACE_CREATE_INFO};
-        referenceSpaceInfo.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_LOCAL;
-        referenceSpaceInfo.poseInReferenceSpace.orientation.w = 1.0F;
-        result = api.createReferenceSpace(session, &referenceSpaceInfo, &localSpace);
-        if (XR_FAILED(result) || localSpace == XR_NULL_HANDLE)
+        if (!trackingBasis.Initialize(
+                session,
+                {api.createReferenceSpace, api.destroySpace, api.locateSpace},
+                localFloorAvailable,
+                logCallback,
+                logContext))
         {
-            WriteLog(
-                L"OpenXR presentation could not create a LOCAL reference space (%s, %ld).",
-                DescribeOpenXRResult(result),
-                static_cast<long>(result));
             return false;
         }
+        XrReferenceSpaceCreateInfo referenceSpaceInfo{
+            XR_TYPE_REFERENCE_SPACE_CREATE_INFO};
         referenceSpaceInfo.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_VIEW;
+        referenceSpaceInfo.poseInReferenceSpace.orientation.w = 1.0F;
         result = api.createReferenceSpace(session, &referenceSpaceInfo, &viewSpace);
         if (XR_FAILED(result) || viewSpace == XR_NULL_HANDLE)
         {
@@ -1621,6 +1560,8 @@ public:
     bool BeginFrame(OpenXRPresentationFrameState& publicFrameState)
     {
         publicFrameState = {};
+        publicFrameState.recenterForwardSequence =
+            recenterForwardSequence;
         if (!initialized ||
             !sessionRunning ||
             terminalRuntimeState ||
@@ -1678,7 +1619,7 @@ public:
         XrSpaceLocation headLocation{XR_TYPE_SPACE_LOCATION};
         const XrResult headResult = api.locateSpace(
             viewSpace,
-            localSpace,
+            trackingBasis.ApplicationSpace(),
             pendingFrameState.predictedDisplayTime,
             &headLocation);
         constexpr XrSpaceLocationFlags kHeadValidFlags =
@@ -1709,14 +1650,36 @@ public:
             publicFrameState.headPose.positionY = headLocation.pose.position.y;
             publicFrameState.headPose.positionZ = headLocation.pose.position.z;
         }
+        publicFrameState.standingHeightValid =
+            trackingBasis.LocateStandingHeight(
+                viewSpace,
+                pendingFrameState.predictedDisplayTime,
+                publicFrameState.standingHeightMeters);
         quickMenu.Update(publicFrameState);
+        if (quickMenu.TakeTrackingAction() ==
+            OpenXRTrackingAction::RecenterForward)
+        {
+            const bool recentered = publicFrameState.headPoseValid &&
+                publicFrameState.headPoseTracked;
+            quickMenu.SetForwardRecenterResult(recentered);
+            if (recentered)
+            {
+                recenterForwardSequence = recenterForwardSequence == LONG_MAX
+                    ? 1
+                    : recenterForwardSequence + 1;
+                publicFrameState.recenterForwardSequence =
+                    recenterForwardSequence;
+                quickMenu.OnTrackingSpaceChanged();
+                quickMenu.Update(publicFrameState);
+            }
+        }
 
         XrViewState viewState{XR_TYPE_VIEW_STATE};
         uint32_t viewCount = 0;
         XrViewLocateInfo locateInfo{XR_TYPE_VIEW_LOCATE_INFO};
         locateInfo.viewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
         locateInfo.displayTime = pendingFrameState.predictedDisplayTime;
-        locateInfo.space = localSpace;
+        locateInfo.space = trackingBasis.ApplicationSpace();
         result = api.locateViews(
             session,
             &locateInfo,
@@ -1790,7 +1753,7 @@ public:
                 CopyToSwapchain(uiSwapchain, textures.ref2Ui, L"Ref2-UI");
             if (copiedImages)
             {
-                projectionLayer.space = localSpace;
+                projectionLayer.space = trackingBasis.ApplicationSpace();
                 projectionLayer.viewCount = static_cast<uint32_t>(projectionViews.size());
                 projectionLayer.views = projectionViews.data();
                 for (std::size_t eye = 0; eye < projectionViews.size(); ++eye)
@@ -1890,7 +1853,7 @@ public:
                     }
                     if (worldLockedUiPoseValid)
                     {
-                        uiSpace = localSpace;
+                        uiSpace = trackingBasis.ApplicationSpace();
                         uiPose = worldLockedUiPose;
                     }
                     }
@@ -1941,7 +1904,7 @@ public:
                 }
                 layerCount += static_cast<uint32_t>(
                     quickMenu.AppendLayers(
-                        localSpace,
+                        trackingBasis.ApplicationSpace(),
                         layers.data() + layerCount,
                         layers.size() - layerCount));
                 haveLayers = true;
@@ -2088,11 +2051,7 @@ public:
             api.destroySpace(viewSpace);
         }
         viewSpace = XR_NULL_HANDLE;
-        if (localSpace != XR_NULL_HANDLE && api.destroySpace != nullptr)
-        {
-            api.destroySpace(localSpace);
-        }
-        localSpace = XR_NULL_HANDLE;
+        trackingBasis.Shutdown();
         DestroySwapchain(uiSwapchain);
         for (Swapchain& swapchain : eyeSwapchains)
         {
@@ -2134,6 +2093,7 @@ public:
         pendingViewsValid = false;
         pendingHeadPose = {};
         pendingHeadPoseValid = false;
+        recenterForwardSequence = 0;
         worldLockedUiPose = {};
         worldLockedUiPoseValid = false;
         uiReferenceModeInitialized = false;
@@ -2145,7 +2105,6 @@ public:
     XrInstance instance = XR_NULL_HANDLE;
     XrSystemId systemId = XR_NULL_SYSTEM_ID;
     XrSession session = XR_NULL_HANDLE;
-    XrSpace localSpace = XR_NULL_HANDLE;
     XrSpace viewSpace = XR_NULL_HANDLE;
     XrActionSet controllerActionSet = XR_NULL_HANDLE;
     XrAction controllerAimAction = XR_NULL_HANDLE;
@@ -2170,6 +2129,7 @@ public:
     std::array<Swapchain, 2> eyeSwapchains = {};
     Swapchain uiSwapchain = {};
     OpenXRQuickMenu quickMenu = {};
+    OpenXRTrackingBasis trackingBasis = {};
     OpenXRPresentationConfiguration configuration = {};
     OpenXRUiLayerMode activeUiLayerMode = OpenXRUiLayerMode::Quad;
     OpenXRPresentationTextureRequirements textureRequirements = {};
@@ -2178,10 +2138,12 @@ public:
     bool initialized = false;
     bool sessionRunning = false;
     bool controllerInputAttached = false;
+    bool localFloorAvailable = false;
     bool terminalRuntimeState = false;
     bool frameInProgress = false;
     bool pendingViewsValid = false;
     bool pendingHeadPoseValid = false;
+    LONG recenterForwardSequence = 0;
     bool worldLockedUiPoseValid = false;
     bool uiReferenceModeInitialized = false;
     XrFrameState pendingFrameState = {};
@@ -2237,7 +2199,11 @@ bool OpenXRPresentation::Initialize(
 
     bool d3d11Available = false;
     bool cylinderAvailable = false;
-    if (!impl_->EnumerateExtensions(d3d11Available, cylinderAvailable) || !d3d11Available)
+    if (!impl_->EnumerateExtensions(
+            d3d11Available,
+            cylinderAvailable,
+            impl_->localFloorAvailable) ||
+        !d3d11Available)
     {
         impl_->WriteLog(L"OpenXR presentation requires XR_KHR_D3D11_enable; flat fallback remains active.");
         Shutdown();
@@ -2262,6 +2228,10 @@ bool OpenXRPresentation::Initialize(
     if (impl_->activeUiLayerMode == OpenXRUiLayerMode::Cylinder)
     {
         enabledExtensions.push_back(XR_KHR_COMPOSITION_LAYER_CYLINDER_EXTENSION_NAME);
+    }
+    if (impl_->localFloorAvailable)
+    {
+        enabledExtensions.push_back(XR_EXT_LOCAL_FLOOR_EXTENSION_NAME);
     }
     const XrInstanceCreateInfo createInfo = impl_->BuildInstanceCreateInfo(enabledExtensions);
     if (configuration.diagnosticDirectD3D11Instance)
@@ -2392,7 +2362,6 @@ bool OpenXRPresentation::Initialize(
         impl_->WriteLog(
             L"Quick Menu resources are unavailable; OpenXR world/HUD presentation remains active and right A still submits no native jump/action input.");
     }
-
     impl_->initialized = true;
     impl_->WriteLog(L"OpenXR presentation initialized; awaiting session READY before it submits frames.");
     return true;

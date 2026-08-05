@@ -15,6 +15,14 @@ constexpr wchar_t kUserConfigEnvironmentName[] = L"BFVR_USER_CONFIG_PATH";
 constexpr wchar_t kUserConfigFileName[] = L"UserConfig.txt";
 constexpr std::string_view kInfantryTurnSpeedKey =
     "infantry_turn_speed_percent";
+constexpr std::string_view kPlayModeKey = "play_mode";
+constexpr std::string_view kArtificialTurnModeKey = "artificial_turning";
+constexpr std::string_view kSnapTurnAngleKey = "snap_turn_angle_degrees";
+constexpr std::string_view kMovementDirectionKey = "movement_direction";
+constexpr std::string_view kVrHeightAdjustmentKey =
+    "manual_height_adjustment_centimeters";
+constexpr std::string_view kStandingEyeHeightKey =
+    "standing_eye_height_centimeters";
 constexpr std::string_view kInvertFlightPitchKey = "invert_flight_pitch";
 constexpr std::string_view kInvertTurretPitchKey = "invert_turret_pitch";
 constexpr std::string_view kInvertTurretYawKey = "invert_turret_yaw";
@@ -84,6 +92,24 @@ bool IsWorldCrosshairMode(std::string_view value) noexcept
         value == "hit_marker_only";
 }
 
+bool IsPlayMode(std::string_view value) noexcept
+{
+    return value == "seated" || value == "standing";
+}
+
+bool IsArtificialTurnMode(std::string_view value) noexcept
+{
+    // Accept the retired "off" spelling only for migration. Decode maps it
+    // to snap, and the next Save rewrites the supported value.
+    return value == "off" || value == "snap" || value == "smooth";
+}
+
+bool IsMovementDirection(std::string_view value) noexcept
+{
+    return value == "character" || value == "head" ||
+        value == "off_hand_controller";
+}
+
 bool IsInfantryTurnSpeed(std::string_view value) noexcept
 {
     std::uint32_t percent = 0;
@@ -96,6 +122,48 @@ bool IsInfantryTurnSpeed(std::string_view value) noexcept
         percent >= bfvr::settings::kMinimumInfantryTurnSpeedPercent &&
         percent <= bfvr::settings::kMaximumInfantryTurnSpeedPercent &&
         percent % bfvr::settings::kInfantryTurnSpeedStepPercent == 0;
+}
+
+bool IsSnapTurnAngle(std::string_view value) noexcept
+{
+    std::uint32_t degrees = 0;
+    const auto parsed = std::from_chars(
+        value.data(), value.data() + value.size(), degrees);
+    return parsed.ec == std::errc{} &&
+        parsed.ptr == value.data() + value.size() &&
+        degrees >= bfvr::settings::kMinimumSnapTurnAngleDegrees &&
+        degrees <= bfvr::settings::kMaximumSnapTurnAngleDegrees &&
+        (degrees - bfvr::settings::kMinimumSnapTurnAngleDegrees) %
+                bfvr::settings::kSnapTurnAngleStepDegrees ==
+            0;
+}
+
+bool IsVrHeightAdjustment(std::string_view value) noexcept
+{
+    std::int32_t centimeters = 0;
+    const auto parsed = std::from_chars(
+        value.data(), value.data() + value.size(), centimeters);
+    return parsed.ec == std::errc{} &&
+        parsed.ptr == value.data() + value.size() &&
+        centimeters >=
+            bfvr::settings::kMinimumVrHeightAdjustmentCentimeters &&
+        centimeters <=
+            bfvr::settings::kMaximumVrHeightAdjustmentCentimeters &&
+        (centimeters -
+         bfvr::settings::kMinimumVrHeightAdjustmentCentimeters) %
+                bfvr::settings::kVrHeightAdjustmentStepCentimeters ==
+            0;
+}
+
+bool IsStandingEyeHeight(std::string_view value) noexcept
+{
+    std::uint32_t centimeters = 0;
+    const auto parsed = std::from_chars(
+        value.data(), value.data() + value.size(), centimeters);
+    return parsed.ec == std::errc{} &&
+        parsed.ptr == value.data() + value.size() &&
+        centimeters >= bfvr::settings::kMinimumStandingEyeHeightCentimeters &&
+        centimeters <= bfvr::settings::kMaximumStandingEyeHeightCentimeters;
 }
 
 bool IsUnsignedInRangeStep(
@@ -296,6 +364,34 @@ UserSettingsSchema SeededUserSettingsSchema()
 {
     return {
         {
+            std::string(kPlayModeKey),
+            "seated",
+            {
+                "Describes the player's current VR posture. seated captures the seated headset height as neutral; if selected while still standing, BFVR follows the ensuing sit-down and locks after the headset settles. standing continuously maps the OpenXR floor-to-head height onto Battlefield's existing 1.70-m infantry eye camera, so switching posture during a session does not stack two eye heights.",
+                "Play Mode never rotates the character automatically. Infantry turning remains an explicit Snap or Smooth right-thumbstick action.",
+                "Accepted values: seated or standing. This setting is applied only after VR Settings > Save. It does not add body trackers, change the BF1942 collision capsule, or change world scale."
+            },
+            IsPlayMode
+        },
+        {
+            std::string(kArtificialTurnModeKey),
+            "smooth",
+            {
+                "Controls infantry right-thumbstick turning. snap rotates by the configured angle once per stick deflection; smooth uses the configured Turn Speed.",
+                "Accepted values: snap or smooth. The retired off value is read as snap for compatibility. This does not affect vehicles, aircraft, turrets, or mounted weapons and is applied only after VR Settings > Save."
+            },
+            IsArtificialTurnMode
+        },
+        {
+            std::string(kSnapTurnAngleKey),
+            std::to_string(kDefaultSnapTurnAngleDegrees),
+            {
+                "Sets the angle of one infantry snap-turn step. It is used only when artificial_turning is snap.",
+                "Units are degrees. Accepted values: 15 through 90 in steps of 15. This setting is applied only after VR Settings > Save."
+            },
+            IsSnapTurnAngle
+        },
+        {
             std::string(kInfantryTurnSpeedKey),
             std::to_string(kDefaultInfantryTurnSpeedPercent),
             {
@@ -303,6 +399,33 @@ UserSettingsSchema SeededUserSettingsSchema()
                 "Accepted values: 50 through 300 in steps of 10. 100 is the original speed, 50 is half speed, and 300 is three times that speed."
             },
             IsInfantryTurnSpeed
+        },
+        {
+            std::string(kMovementDirectionKey),
+            "character",
+            {
+                "Chooses the forward basis for infantry left-thumbstick movement. character follows BF1942's character-facing basis; head follows the headset yaw; off_hand_controller follows the left controller's pointing yaw.",
+                "Accepted values: character, head, or off_hand_controller. Head and controller pitch/roll are ignored. This setting is applied only after VR Settings > Save."
+            },
+            IsMovementDirection
+        },
+        {
+            std::string(kVrHeightAdjustmentKey),
+            std::to_string(kDefaultVrHeightAdjustmentCentimeters),
+            {
+                "Adds a manual vertical trim after Seated or Standing placement. It moves the infantry headset, both controllers, and weapon presentation together and is excluded from every vehicle or mounted-seat anchor.",
+                "It does not resize the world or alter BF1942 collision, stance, or networked player position. Units are centimeters; accepted values are -30 through 30 in steps of 1. Positive values raise the infantry view. Applied only after VR Settings > Save."
+            },
+            IsVrHeightAdjustment
+        },
+        {
+            std::string(kStandingEyeHeightKey),
+            std::to_string(kDefaultStandingEyeHeightCentimeters),
+            {
+                "Records the latest Auto-Calibrate Standing measurement from the OpenXR STAGE floor to the headset. Standing placement itself remains tied to that live floor, so sitting, standing, or switching Play Mode cannot add the full measurement on top of Battlefield's camera.",
+                "Units are centimeters; accepted values are 50 through 250. Seated mode ignores the floor measurement and captures the current posture as neutral. Auto-Calibrate stages the current value and Save applies the selected Play Mode."
+            },
+            IsStandingEyeHeight
         },
         {
             std::string(kInvertFlightPitchKey),
@@ -427,6 +550,29 @@ UserSettingsSchema SeededUserSettingsSchema()
 UserSettingsValues DecodeUserSettings(const UserSettings& settings) noexcept
 {
     UserSettingsValues result;
+    const auto readEnumText = [&settings](
+                                  std::string_view key,
+                                  std::string_view fallback) {
+        const auto found = settings.values.find(std::string(key));
+        return found == settings.values.end()
+            ? fallback
+            : std::string_view(found->second);
+    };
+    result.playMode = readEnumText(kPlayModeKey, "seated") == "standing"
+        ? PlayMode::Standing
+        : PlayMode::Seated;
+    const std::string_view turnMode = readEnumText(
+        kArtificialTurnModeKey, "smooth");
+    result.artificialTurnMode = turnMode == "smooth"
+        ? ArtificialTurnMode::Smooth
+        : ArtificialTurnMode::Snap;
+    const std::string_view movementDirection = readEnumText(
+        kMovementDirectionKey, "character");
+    result.movementDirection = movementDirection == "head"
+        ? MovementDirection::Head
+        : movementDirection == "off_hand_controller"
+        ? MovementDirection::OffHandController
+        : MovementDirection::Character;
     const auto turnSpeed = settings.values.find(
         std::string(kInfantryTurnSpeedKey));
     if (turnSpeed != settings.values.end())
@@ -511,6 +657,29 @@ UserSettingsValues DecodeUserSettings(const UserSettings& settings) noexcept
         kBloomIntensityKey,
         kDefaultBloomIntensityPercent,
         IsBloomIntensity);
+    result.snapTurnAngleDegrees = readUnsigned(
+        kSnapTurnAngleKey,
+        kDefaultSnapTurnAngleDegrees,
+        IsSnapTurnAngle);
+    result.standingEyeHeightCentimeters = readUnsigned(
+        kStandingEyeHeightKey,
+        kDefaultStandingEyeHeightCentimeters,
+        IsStandingEyeHeight);
+    const auto height = settings.values.find(
+        std::string(kVrHeightAdjustmentKey));
+    if (height != settings.values.end() &&
+        IsVrHeightAdjustment(height->second))
+    {
+        std::int32_t centimeters = kDefaultVrHeightAdjustmentCentimeters;
+        const auto parsed = std::from_chars(
+            height->second.data(),
+            height->second.data() + height->second.size(),
+            centimeters);
+        if (parsed.ec == std::errc{})
+        {
+            result.vrHeightAdjustmentCentimeters = centimeters;
+        }
+    }
     return result;
 }
 
@@ -518,6 +687,23 @@ void EncodeUserSettings(
     const UserSettingsValues& values,
     UserSettings& settings)
 {
+    settings.values[std::string(kPlayModeKey)] =
+        values.playMode == PlayMode::Standing ? "standing" : "seated";
+    const char* turnMode = values.artificialTurnMode == ArtificialTurnMode::Snap
+        ? "snap"
+        : "smooth";
+    settings.values[std::string(kArtificialTurnModeKey)] = turnMode;
+    const char* movementDirection = "character";
+    if (values.movementDirection == MovementDirection::Head)
+    {
+        movementDirection = "head";
+    }
+    else if (values.movementDirection ==
+             MovementDirection::OffHandController)
+    {
+        movementDirection = "off_hand_controller";
+    }
+    settings.values[std::string(kMovementDirectionKey)] = movementDirection;
     const std::uint32_t clampedTurnSpeed = std::clamp(
         values.infantryTurnSpeedPercent,
         kMinimumInfantryTurnSpeedPercent,
@@ -565,6 +751,22 @@ void EncodeUserSettings(
         return minimum +
             ((clamped - minimum + step / 2U) / step) * step;
     };
+    settings.values[std::string(kSnapTurnAngleKey)] =
+        std::to_string(snap(
+            values.snapTurnAngleDegrees,
+            kMinimumSnapTurnAngleDegrees,
+            kMaximumSnapTurnAngleDegrees,
+            kSnapTurnAngleStepDegrees));
+    settings.values[std::string(kVrHeightAdjustmentKey)] =
+        std::to_string(std::clamp(
+            values.vrHeightAdjustmentCentimeters,
+            kMinimumVrHeightAdjustmentCentimeters,
+            kMaximumVrHeightAdjustmentCentimeters));
+    settings.values[std::string(kStandingEyeHeightKey)] =
+        std::to_string(std::clamp(
+            values.standingEyeHeightCentimeters,
+            kMinimumStandingEyeHeightCentimeters,
+            kMaximumStandingEyeHeightCentimeters));
     settings.values[std::string(kAmbientOcclusionRadiusKey)] =
         std::to_string(snap(
             values.ambientOcclusionRadiusCentimeters,
@@ -589,6 +791,15 @@ void EncodeUserSettings(
             kMinimumBloomIntensityPercent,
             kMaximumBloomIntensityPercent,
             kBloomIntensityStepPercent));
+}
+
+float ComputeManualHeightAdjustmentMeters(
+    const UserSettingsValues& values) noexcept
+{
+    return static_cast<float>(std::clamp(
+        values.vrHeightAdjustmentCentimeters,
+        kMinimumVrHeightAdjustmentCentimeters,
+        kMaximumVrHeightAdjustmentCentimeters)) / 100.0F;
 }
 
 bool UserSettingsStore::Initialize(

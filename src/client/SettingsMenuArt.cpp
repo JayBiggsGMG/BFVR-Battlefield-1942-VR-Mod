@@ -643,6 +643,21 @@ bool SettingsMenuArt::DrawStatusField(
     case stereo::SettingsMenuStatus::SaveFailed:
         message = L"Save failed - changes not saved";
         break;
+    case stereo::SettingsMenuStatus::StandingHeightCalibrated:
+        message = L"Calibration staged - press Save";
+        break;
+    case stereo::SettingsMenuStatus::StandingHeightUnavailable:
+        message = L"Standing floor height unavailable";
+        break;
+    case stereo::SettingsMenuStatus::StandingModeRequired:
+        message = L"Select Standing Play Mode first";
+        break;
+    case stereo::SettingsMenuStatus::ForwardRecentered:
+        message = L"Forward direction recentered";
+        break;
+    case stereo::SettingsMenuStatus::ForwardRecenterFailed:
+        message = L"Recenter unavailable - tracking not ready";
+        break;
     case stereo::SettingsMenuStatus::SettingsLoaded:
     default:
         break;
@@ -666,52 +681,140 @@ bool SettingsMenuArt::ComposeSettingsBody(
         static_cast<int>(stereo::kSettingsMenuControlColumnPixels);
     if (state.tab == stereo::SettingsMenuTab::VrSettings)
     {
-        constexpr int centerY =
-            static_cast<int>(stereo::kSettingsMenuVrRowCenterPixels);
-        const float normalized = static_cast<float>(
-            state.values.infantryTurnSpeedPercent -
-            settings::kMinimumInfantryTurnSpeedPercent) /
-            static_cast<float>(
-                settings::kMaximumInfantryTurnSpeedPercent -
-                settings::kMinimumInfantryTurnSpeedPercent);
-        const int markerCenter = controlLeft + 12 + static_cast<int>(std::lround(
-            std::clamp(normalized, 0.0F, 1.0F) * 232.0F));
-        const std::wstring number =
-            std::to_wstring(state.values.infantryTurnSpeedPercent) + L"%";
-        return DrawWhiteText(
-                   destination,
-                   L"Turn Speed",
-                   96,
-                   centerY - 34,
-                   420,
-                   68,
-                   31,
-                   DT_LEFT | DT_SINGLELINE | DT_VCENTER) &&
-            CompositeLayerAt(
-                sliderBar_, destination, controlLeft, centerY - 32, 256, 64) &&
-            CompositeLayerAt(
-                numberBox_,
-                destination,
-                static_cast<int>(stereo::kSettingsMenuNumberBoxLeftPixels),
-                centerY - 32,
-                128,
-                64) &&
-            CompositeLayerAt(
-                whiteButton_,
-                destination,
-                markerCenter - 24,
-                centerY - 24,
-                48,
-                48) &&
-            DrawWhiteText(
-                destination,
-                number.c_str(),
-                static_cast<int>(stereo::kSettingsMenuNumberBoxLeftPixels),
-                centerY - 32,
-                128,
-                64,
-                27,
-                DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+        const auto drawSelectorAt = [&](int centerY,
+                                        const wchar_t* label,
+                                        const wchar_t* value,
+                                        stereo::SettingsMenuSelection previous,
+                                        stereo::SettingsMenuSelection next) {
+            const int leftCenter = static_cast<int>(
+                stereo::kSettingsMenuSelectorLeftArrowCenterPixels);
+            const int rightCenter = static_cast<int>(
+                stereo::kSettingsMenuSelectorRightArrowCenterPixels);
+            return DrawWhiteText(destination, label, 82, centerY - 32, 445, 64,
+                       27, DT_LEFT | DT_SINGLELINE | DT_VCENTER) &&
+                DrawWhiteText(destination, L"<", leftCenter - 38, centerY - 38,
+                    76, 76, state.hovered == previous ? 38 : 30,
+                    DT_CENTER | DT_SINGLELINE | DT_VCENTER) &&
+                DrawWhiteText(destination, value, leftCenter + 38, centerY - 32,
+                    rightCenter - leftCenter - 76, 64, 23,
+                    DT_CENTER | DT_SINGLELINE | DT_VCENTER) &&
+                DrawWhiteText(destination, L">", rightCenter - 38,
+                    centerY - 38, 76, 76,
+                    state.hovered == next ? 38 : 30,
+                    DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+        };
+        const auto drawSliderAt = [&](int centerY,
+                                      const wchar_t* label,
+                                      float normalized,
+                                      const std::wstring& display) {
+            const int markerCenter = controlLeft + 12 +
+                static_cast<int>(std::lround(
+                    std::clamp(normalized, 0.0F, 1.0F) * 232.0F));
+            return DrawWhiteText(destination, label, 82, centerY - 32, 445, 64,
+                       27, DT_LEFT | DT_SINGLELINE | DT_VCENTER) &&
+                CompositeLayerAt(sliderBar_, destination, controlLeft,
+                    centerY - 32, 256, 64) &&
+                CompositeLayerAt(numberBox_, destination,
+                    static_cast<int>(stereo::kSettingsMenuNumberBoxLeftPixels),
+                    centerY - 32, 128, 64) &&
+                CompositeLayerAt(whiteButton_, destination, markerCenter - 24,
+                    centerY - 24, 48, 48) &&
+                DrawWhiteText(destination, display.c_str(),
+                    static_cast<int>(stereo::kSettingsMenuNumberBoxLeftPixels),
+                    centerY - 32, 128, 64, 25,
+                    DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+        };
+        if (state.page == 0)
+        {
+            const wchar_t* playMode =
+                state.values.playMode == settings::PlayMode::Standing
+                ? L"STANDING" : L"SEATED";
+            const wchar_t* turnMode =
+                state.values.artificialTurnMode ==
+                    settings::ArtificialTurnMode::Snap
+                ? L"SNAP"
+                : L"SMOOTH";
+            const wchar_t* movement = L"CHARACTER";
+            if (state.values.movementDirection == settings::MovementDirection::Head)
+                movement = L"HEAD";
+            else if (state.values.movementDirection ==
+                     settings::MovementDirection::OffHandController)
+                movement = L"OFF-HAND CONTROLLER";
+            bool drawn = drawSelectorAt(
+                    static_cast<int>(stereo::kSettingsMenuVrPageOneRowCentersPixels[0]),
+                    L"Play Mode", playMode,
+                    stereo::SettingsMenuSelection::PlayModePrevious,
+                    stereo::SettingsMenuSelection::PlayModeNext) &&
+                drawSelectorAt(
+                    static_cast<int>(stereo::kSettingsMenuVrPageOneRowCentersPixels[1]),
+                    L"Artificial Turning", turnMode,
+                    stereo::SettingsMenuSelection::ArtificialTurnPrevious,
+                    stereo::SettingsMenuSelection::ArtificialTurnNext);
+            const int conditionalY = static_cast<int>(
+                stereo::kSettingsMenuVrPageOneRowCentersPixels[2]);
+            if (drawn && state.values.artificialTurnMode ==
+                settings::ArtificialTurnMode::Snap)
+            {
+                const std::wstring angle =
+                    std::to_wstring(state.values.snapTurnAngleDegrees) + L" degrees";
+                drawn = drawSelectorAt(conditionalY, L"Snap Angle", angle.c_str(),
+                    stereo::SettingsMenuSelection::SnapAnglePrevious,
+                    stereo::SettingsMenuSelection::SnapAngleNext);
+            }
+            else if (drawn && state.values.artificialTurnMode ==
+                     settings::ArtificialTurnMode::Smooth)
+            {
+                const float normalized = static_cast<float>(
+                    state.values.infantryTurnSpeedPercent -
+                    settings::kMinimumInfantryTurnSpeedPercent) /
+                    static_cast<float>(settings::kMaximumInfantryTurnSpeedPercent -
+                        settings::kMinimumInfantryTurnSpeedPercent);
+                drawn = drawSliderAt(conditionalY, L"Turn Speed", normalized,
+                    std::to_wstring(state.values.infantryTurnSpeedPercent) + L"%");
+            }
+            return drawn && drawSelectorAt(
+                static_cast<int>(stereo::kSettingsMenuVrPageOneRowCentersPixels[3]),
+                L"Movement Direction", movement,
+                stereo::SettingsMenuSelection::MovementDirectionPrevious,
+                stereo::SettingsMenuSelection::MovementDirectionNext);
+        }
+        const int heightY = static_cast<int>(
+            stereo::kSettingsMenuVrPageTwoRowCentersPixels[0]);
+        const float normalizedHeight = static_cast<float>(
+            state.values.vrHeightAdjustmentCentimeters -
+            settings::kMinimumVrHeightAdjustmentCentimeters) /
+            static_cast<float>(settings::kMaximumVrHeightAdjustmentCentimeters -
+                settings::kMinimumVrHeightAdjustmentCentimeters);
+        const std::wstring height =
+            (state.values.vrHeightAdjustmentCentimeters > 0 ? L"+" : L"") +
+            std::to_wstring(state.values.vrHeightAdjustmentCentimeters) + L" cm";
+        const auto drawAction = [&](int centerY,
+                                    const wchar_t* label,
+                                    stereo::SettingsMenuSelection selection) {
+            // NumberBox.png intentionally carries transparent padding on its
+            // right edge. Centre its visible 91/128-wide frame on the panel,
+            // then centre text inside that visible frame rather than inside
+            // the padded source rectangle.
+            return CompositeLayerAt(numberBox_, destination, 306, centerY - 42,
+                       580, 84) &&
+                DrawWhiteText(destination, label, 316, centerY - 42, 392, 84,
+                    state.hovered == selection ? 27 : 24,
+                    DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+        };
+        return drawSliderAt(heightY, L"Manual Height Adjustment",
+                   normalizedHeight, height) &&
+            DrawWhiteText(destination,
+                L"Infantry only; vehicles and mounted seats use independent neutral poses.",
+                82, heightY + 42, 860, 46, 18,
+                DT_LEFT | DT_SINGLELINE | DT_VCENTER) &&
+            drawAction(static_cast<int>(
+                    stereo::kSettingsMenuVrPageTwoRowCentersPixels[1]),
+                L"CALIBRATE STANDING",
+                stereo::SettingsMenuSelection::AutoCalibrateStandingHeight) &&
+            drawAction(static_cast<int>(
+                    stereo::kSettingsMenuVrPageTwoRowCentersPixels[2]),
+                L"RECENTER FORWARD",
+                stereo::SettingsMenuSelection::RecenterForward);
     }
     if (state.tab == stereo::SettingsMenuTab::GraphicsAudio)
     {

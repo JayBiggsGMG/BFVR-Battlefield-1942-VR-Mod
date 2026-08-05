@@ -112,7 +112,10 @@ struct OpenXRPresentationFrameState
     bool viewsValid = false;
     bool headPoseValid = false;
     bool headPoseTracked = false;
+    LONG recenterForwardSequence = 0;
     OpenXRPresentationPose headPose = {};
+    bool standingHeightValid = false;
+    float standingHeightMeters = 0.0F;
     std::array<OpenXRPresentationView, 2> views = {};
     OpenXRControllerInputState controllerInput = {};
 };

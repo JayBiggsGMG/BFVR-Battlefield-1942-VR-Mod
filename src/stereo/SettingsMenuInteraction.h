@@ -31,7 +31,18 @@ enum class SettingsMenuSelection : std::uint32_t
     Save,
     Cancel,
     ResetDefaults,
+    PlayModePrevious,
+    PlayModeNext,
+    ArtificialTurnPrevious,
+    ArtificialTurnNext,
+    SnapAnglePrevious,
+    SnapAngleNext,
+    MovementDirectionPrevious,
+    MovementDirectionNext,
     InfantryTurnSpeed,
+    VrHeightAdjustment,
+    AutoCalibrateStandingHeight,
+    RecenterForward,
     OffHandGripPrevious,
     OffHandGripNext,
     HandCrosshairPrevious,
@@ -55,7 +66,8 @@ enum class SettingsMenuCommand : std::uint32_t
     None = 0,
     Save,
     Cancel,
-    ResetDefaults
+    ResetDefaults,
+    RecenterForward
 };
 
 enum class SettingsMenuStatus : std::uint32_t
@@ -68,7 +80,12 @@ enum class SettingsMenuStatus : std::uint32_t
     DefaultsLoaded,
     InvalidConfigDefaultsLoaded,
     ConfigReadFailed,
-    SaveFailed
+    SaveFailed,
+    StandingHeightCalibrated,
+    StandingHeightUnavailable,
+    StandingModeRequired,
+    ForwardRecentered,
+    ForwardRecenterFailed
 };
 
 constexpr std::uint32_t kSettingsMenuTextureSize = 1024;
@@ -86,7 +103,10 @@ constexpr float kSettingsMenuFollowRadiansPerSecond = 1.570796327F;
 constexpr float kSettingsMenuControlColumnPixels = 560.0F;
 constexpr float kSettingsMenuSliderRightPixels = 816.0F;
 constexpr float kSettingsMenuNumberBoxLeftPixels = 832.0F;
-constexpr float kSettingsMenuVrRowCenterPixels = 230.0F;
+constexpr std::array<float, 4> kSettingsMenuVrPageOneRowCentersPixels = {
+    165.0F, 315.0F, 465.0F, 650.0F};
+constexpr std::array<float, 3> kSettingsMenuVrPageTwoRowCentersPixels = {
+    245.0F, 465.0F, 660.0F};
 constexpr std::array<float, 3> kSettingsMenuControlsSelectorRowCentersPixels = {
     165.0F, 330.0F, 420.0F};
 constexpr std::array<float, 3> kSettingsMenuControlsToggleRowCentersPixels = {
@@ -97,7 +117,7 @@ constexpr std::array<float, 7> kSettingsMenuGraphicsRowCentersPixels = {
     145.0F, 245.0F, 345.0F, 445.0F, 545.0F, 645.0F, 745.0F};
 constexpr std::array<std::uint32_t,
     static_cast<std::size_t>(SettingsMenuTab::Count)>
-    kSettingsMenuPageCounts = {1, 1, 1};
+    kSettingsMenuPageCounts = {2, 1, 1};
 
 struct SettingsMenuSnapshot
 {
@@ -131,6 +151,7 @@ public:
     void SetStatus(SettingsMenuStatus status) noexcept;
     void Update(const QuickMenuFrameInput& input) noexcept;
     void Reset() noexcept;
+    void ResetTrackingAnchor() noexcept;
 
     [[nodiscard]] SettingsMenuSnapshot Snapshot() const noexcept;
     [[nodiscard]] bool IsActive() const noexcept;
@@ -141,6 +162,7 @@ private:
     void Activate(SettingsMenuSelection selection) noexcept;
     [[nodiscard]] std::uint32_t PageCount() const noexcept;
     void SetTurnSpeedFromPointer(float pointerU) noexcept;
+    void SetHeightAdjustmentFromPointer(float pointerU) noexcept;
     void SetGraphicsSliderFromPointer(
         SettingsMenuSelection selection,
         float pointerU) noexcept;
@@ -165,6 +187,8 @@ private:
     bool primaryWasHeld_ = false;
     bool sliderDragging_ = false;
     bool valuesChanged_ = false;
+    bool standingHeightValid_ = false;
+    float standingHeightMeters_ = 0.0F;
 };
 
 [[nodiscard]] SettingsMenuSelection SettingsMenuSelectionAt(
@@ -173,7 +197,10 @@ private:
     bool arrowLeftVisible,
     bool arrowRightVisible,
     SettingsMenuTab tab = SettingsMenuTab::VrSettings,
-    bool controllerLayoutVisible = false) noexcept;
+    bool controllerLayoutVisible = false,
+    std::uint32_t page = 0,
+    settings::ArtificialTurnMode turnMode =
+        settings::ArtificialTurnMode::Smooth) noexcept;
 
 [[nodiscard]] const wchar_t* SettingsMenuSelectionName(
     SettingsMenuSelection selection) noexcept;

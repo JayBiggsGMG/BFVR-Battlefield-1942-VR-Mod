@@ -73,6 +73,24 @@ int main()
         L"presenter-to-producer mounted-camera toggle payload failed") &&
         passed;
 
+    presenterBlock->renderRequest.recenterForwardSequence = 19;
+    presenterBlock->renderRequest.standingHeightValid = 1;
+    presenterBlock->renderRequest.standingHeightMeters = 1.73F;
+    MemoryBarrier();
+    InterlockedExchange(&presenterBlock->renderRequestSequence, 23);
+    passed = Check(
+        presenter.SignalPresenterUpdate() &&
+            producer.WaitForPresenterUpdate(1000) == WAIT_OBJECT_0 &&
+            InterlockedCompareExchange(
+                &producerBlock->renderRequestSequence,
+                0,
+                0) == 23 &&
+            producerBlock->renderRequest.recenterForwardSequence == 19 &&
+            producerBlock->renderRequest.standingHeightValid == 1 &&
+            producerBlock->renderRequest.standingHeightMeters == 1.73F,
+        L"presenter-to-producer context recenter/STAGE-height payload failed") &&
+        passed;
+
     InterlockedExchange(&producerBlock->mountedCameraDecoupled, 1);
     passed = Check(
         producer.SignalProducerUpdate() &&
@@ -86,7 +104,7 @@ int main()
 
     if (passed)
     {
-        wprintf(L"[PASS] Shared control channel events and mounted-camera control/state payloads are bidirectional.\n");
+        wprintf(L"[PASS] Shared control events, context recenter/STAGE-height commands, and mounted-camera feedback are bidirectional.\n");
     }
     return passed ? 0 : 1;
 }

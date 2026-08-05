@@ -88,6 +88,43 @@ bool IsFinite(const bfvr::stereo::Matrix4& matrix) noexcept
 namespace bfvr
 {
 
+bool ReadLocalPlayerControlContext(
+    LocalPlayerControlContext& context) noexcept
+{
+    context = {};
+    if (g_gameImage == nullptr)
+    {
+        return false;
+    }
+    __try
+    {
+        void* const manager = *reinterpret_cast<void* const*>(
+            g_gameImage + kPlayerManagerGlobalRva);
+        const auto* const player = manager == nullptr
+            ? nullptr
+            : *reinterpret_cast<const std::byte* const*>(
+                static_cast<const std::byte*>(manager) +
+                kPlayerManagerLocalPlayerOffset);
+        if (player == nullptr)
+        {
+            return false;
+        }
+        context.alive =
+            std::to_integer<BYTE>(player[kBFPlayerIsAliveOffset]) != 0;
+        context.currentControlObject = *reinterpret_cast<void* const*>(
+            player + kBFPlayerCurrentControlObjectOffset);
+        context.defaultControlObject = *reinterpret_cast<void* const*>(
+            player + kBFPlayerDefaultControlObjectOffset);
+        return context.alive && context.currentControlObject != nullptr &&
+            context.defaultControlObject != nullptr;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        context = {};
+        return false;
+    }
+}
+
 bool InitializeMountedWeaponAimResolver(
     void* gameImage,
     void (*appendLog)(const wchar_t* message)) noexcept

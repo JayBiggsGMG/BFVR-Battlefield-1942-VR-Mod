@@ -340,6 +340,8 @@ void OpenXRQuickMenu::Update(
         right.aimPositionTracked && right.aimOrientationTracked;
     input.rightGripPose = ToPose(right.gripPose);
     input.rightAimPose = ToPose(right.aimPose);
+    input.standingHeightValid = frame.standingHeightValid;
+    input.standingHeightMeters = frame.standingHeightMeters;
     if (settingsInteraction_.IsActive())
     {
         settingsInteraction_.Update(input);
@@ -389,6 +391,12 @@ void OpenXRQuickMenu::Update(
             userSettingsSession_.Cancel();
             WriteLog(
                 L"VR Settings cancelled and discarded its unsaved working copy; UserConfig.txt was not changed.");
+        }
+        else if (command == stereo::SettingsMenuCommand::RecenterForward)
+        {
+            trackingAction_ = OpenXRTrackingAction::RecenterForward;
+            WriteLog(
+                L"VR Settings requested an immediate forward recenter; no saved setting was changed.");
         }
         (void)RefreshSettingsSource(settingsInteraction_.Snapshot());
         // The persistent panel owns right A until Cancel closes it. Resetting
@@ -445,6 +453,29 @@ void OpenXRQuickMenu::OpenSettingsMenu() noexcept
     WriteLog(
         L"VR Settings menu opened on its persistent Deploy-style yaw anchor using %s; Cancel is its only close action.",
         settings::UserSettingsLoadStatusName(loadStatus));
+}
+
+void OpenXRQuickMenu::OnTrackingSpaceChanged() noexcept
+{
+    if (settingsInteraction_.IsActive())
+    {
+        settingsInteraction_.ResetTrackingAnchor();
+    }
+    else
+    {
+        interaction_.Reset();
+    }
+}
+
+void OpenXRQuickMenu::SetForwardRecenterResult(bool succeeded) noexcept
+{
+    if (settingsInteraction_.IsActive())
+    {
+        settingsInteraction_.SetStatus(
+            succeeded
+                ? stereo::SettingsMenuStatus::ForwardRecentered
+                : stereo::SettingsMenuStatus::ForwardRecenterFailed);
+    }
 }
 
 std::size_t OpenXRQuickMenu::AppendLayers(
@@ -650,6 +681,13 @@ OpenXRQuickMenu::TakeReleasedSelection() noexcept
     return interaction_.TakeReleasedSelection();
 }
 
+OpenXRTrackingAction OpenXRQuickMenu::TakeTrackingAction() noexcept
+{
+    const OpenXRTrackingAction result = trackingAction_;
+    trackingAction_ = OpenXRTrackingAction::None;
+    return result;
+}
+
 bool OpenXRQuickMenu::GetMirrorState(
     OpenXRQuickMenuMirrorState& state) const noexcept
 {
@@ -804,6 +842,7 @@ void OpenXRQuickMenu::Shutdown()
     settingsVisualValid_ = false;
     renderedSettingsState_ = {};
     mountedCameraDecoupled_ = false;
+    trackingAction_ = OpenXRTrackingAction::None;
     logCallback_ = nullptr;
     logContext_ = nullptr;
 }

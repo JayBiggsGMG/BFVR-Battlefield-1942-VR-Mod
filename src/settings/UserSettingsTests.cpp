@@ -3,6 +3,7 @@
 #include <windows.h>
 
 #include <array>
+#include <cmath>
 #include <iostream>
 #include <string>
 #include <string_view>
@@ -232,7 +233,15 @@ bool TestProductionSeedAndTypedValues(const std::wstring& directory)
     }
     const auto defaults = store.Defaults();
     const auto decodedDefaults = bfvr::settings::DecodeUserSettings(defaults);
-    if (defaults.values.size() != 14 ||
+    if (defaults.values.size() != 20 ||
+        decodedDefaults.playMode != bfvr::settings::PlayMode::Seated ||
+        decodedDefaults.artificialTurnMode !=
+            bfvr::settings::ArtificialTurnMode::Smooth ||
+        decodedDefaults.snapTurnAngleDegrees != 45 ||
+        decodedDefaults.movementDirection !=
+            bfvr::settings::MovementDirection::Character ||
+        decodedDefaults.vrHeightAdjustmentCentimeters != 0 ||
+        decodedDefaults.standingEyeHeightCentimeters != 170 ||
         decodedDefaults.infantryTurnSpeedPercent != 100 ||
         decodedDefaults.invertFlightPitch ||
         decodedDefaults.invertTurretPitch ||
@@ -253,7 +262,10 @@ bool TestProductionSeedAndTypedValues(const std::wstring& directory)
     {
         return false;
     }
-    if (!WriteText(store.Path(), "schema_version = 1\r\n"))
+    if (!WriteText(
+            store.Path(),
+            "schema_version = 1\r\n"
+            "vr_height_adjustment_centimeters = 5\r\n"))
     {
         return false;
     }
@@ -261,12 +273,22 @@ bool TestProductionSeedAndTypedValues(const std::wstring& directory)
     if (upgraded.status != UserSettingsLoadStatus::LoadedCompletedSeed ||
         upgraded.settings != defaults ||
         ReadText(store.Path()).find("infantry_turn_speed_percent = 100") ==
+            std::string::npos ||
+        ReadText(store.Path()).find("vr_height_adjustment_centimeters") !=
             std::string::npos)
     {
         return false;
     }
     auto changed = decodedDefaults;
     changed.infantryTurnSpeedPercent = 270;
+    changed.playMode = bfvr::settings::PlayMode::Standing;
+    changed.artificialTurnMode =
+        bfvr::settings::ArtificialTurnMode::Snap;
+    changed.snapTurnAngleDegrees = 60;
+    changed.movementDirection =
+        bfvr::settings::MovementDirection::OffHandController;
+    changed.vrHeightAdjustmentCentimeters = 12;
+    changed.standingEyeHeightCentimeters = 182;
     changed.invertFlightPitch = true;
     changed.invertTurretPitch = true;
     changed.invertTurretYaw = true;
@@ -290,7 +312,23 @@ bool TestProductionSeedAndTypedValues(const std::wstring& directory)
         return false;
     }
     const std::string contents = ReadText(store.Path());
+    auto manualPlacement = changed;
+    manualPlacement.vrHeightAdjustmentCentimeters = 2;
+    if (std::fabs(bfvr::settings::ComputeManualHeightAdjustmentMeters(
+            manualPlacement) - 0.02F) > 0.0001F)
+    {
+        return false;
+    }
     return contents.find("infantry_turn_speed_percent = 270") !=
+            std::string::npos &&
+        contents.find("play_mode = standing") != std::string::npos &&
+        contents.find("artificial_turning = snap") != std::string::npos &&
+        contents.find("snap_turn_angle_degrees = 60") != std::string::npos &&
+        contents.find("movement_direction = off_hand_controller") !=
+            std::string::npos &&
+        contents.find("manual_height_adjustment_centimeters = 12") !=
+            std::string::npos &&
+        contents.find("standing_eye_height_centimeters = 182") !=
             std::string::npos &&
         contents.find("does not affect vehicles, aircraft, turrets") !=
             std::string::npos &&
@@ -312,7 +350,14 @@ bool TestProductionSeedAndTypedValues(const std::wstring& directory)
         contents.find("bloom_threshold_percent = 55") !=
             std::string::npos &&
         contents.find("bloom_intensity_percent = 70") !=
-            std::string::npos;
+            std::string::npos &&
+        [&]() {
+            auto legacy = defaults;
+            legacy.values["artificial_turning"] = "off";
+            return bfvr::settings::DecodeUserSettings(legacy).
+                artificialTurnMode ==
+                bfvr::settings::ArtificialTurnMode::Snap;
+        }();
 }
 } // namespace
 

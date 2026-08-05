@@ -89,31 +89,114 @@ void PrepareRuntimeRenderRequestPose()
     const bool hasTrackedHead =
         g_runtimeRenderRequest.headPoseValid &&
         g_runtimeRenderRequest.headPoseTracked;
+    const ULONGLONG now = GetTickCount64();
+    bool trackingSettingsChanged = false;
+    bool playModeChanged = false;
+    if (!g_trackingSettingsInitialized ||
+        now >= g_nextTrackingSettingsPollAt)
+    {
+        g_nextTrackingSettingsPollAt = now + 250;
+        auto& runtime = bfvr::settings::ProcessUserSettingsRuntime();
+        const bool settingsReloaded = runtime.ReloadIfChanged();
+        const auto updatedSettings = bfvr::settings::DecodeUserSettings(
+            runtime.Current());
+        playModeChanged = !g_trackingSettingsInitialized ||
+            updatedSettings.playMode != g_trackingUserSettings.playMode;
+        trackingSettingsChanged = settingsReloaded || playModeChanged;
+        g_trackingUserSettings = updatedSettings;
+        g_trackingSettingsInitialized = true;
+    }
+    bfvr::D3D8TrackingContext trackingContext = {};
+    bfvr::LocalPlayerControlContext playerContext = {};
+    if (bfvr::ReadLocalPlayerControlContext(playerContext))
+    {
+        trackingContext.kind =
+            playerContext.currentControlObject ==
+                playerContext.defaultControlObject
+            ? bfvr::D3D8TrackingContextKind::Infantry
+            : bfvr::D3D8TrackingContextKind::Seat;
+        trackingContext.token = reinterpret_cast<std::uintptr_t>(
+            playerContext.currentControlObject);
+    }
+    const bool standingMode = g_trackingUserSettings.playMode ==
+        bfvr::settings::PlayMode::Standing;
+    const float manualHeightAdjustmentMeters =
+        bfvr::settings::ComputeManualHeightAdjustmentMeters(
+            g_trackingUserSettings);
+    const bool seatedPostureTransitionWasActive =
+        g_trackingAnchor.IsSeatedPostureTransitionActive();
+    g_trackingAnchor.Update(
+        currentHead,
+        hasTrackedHead,
+        trackingContext,
+        g_runtimeRenderRequest.predictedDisplayTime,
+        g_runtimeRenderRequest.recenterForwardSequence,
+        standingMode,
+        g_runtimeRenderRequest.standingHeightValid,
+        g_runtimeRenderRequest.standingHeightMeters,
+        static_cast<float>(
+            g_trackingUserSettings.standingEyeHeightCentimeters) / 100.0F,
+        manualHeightAdjustmentMeters);
+    const bool seatedPostureTransitionIsActive =
+        g_trackingAnchor.IsSeatedPostureTransitionActive();
+    if (seatedPostureTransitionWasActive !=
+        seatedPostureTransitionIsActive)
+    {
+        AppendLog(
+            seatedPostureTransitionIsActive
+                ? L"Seated mode was selected while the headset was still near calibrated standing height; its neutral Y will follow the ensuing sit-down and lock after 0.75 seconds of vertical stability. No additional mode toggle is required."
+                : L"Seated posture transition settled; the final seated neutral Y is now locked and ordinary tracked vertical head motion is restored.");
+    }
+    const bfvr::D3D8RuntimeView trackingReference =
+        g_trackingAnchor.ReferenceHead(currentHead);
+    if (trackingSettingsChanged && hasTrackedHead &&
+        trackingContext.kind == bfvr::D3D8TrackingContextKind::Infantry)
+    {
+        AppendLog(
+            L"Infantry vertical placement updated: mode=%ls localHeadY=%.4f stageFloorToHead=%.4f stageValid=%d referenceY=%.4f resultingHeadDeltaY=%.4f manualTrim=%.4f. Standing derives the LOCAL floor and subtracts BF1942's existing 1.70-m eye camera; Seated captures the current posture as neutral.",
+            standingMode ? L"standing" : L"seated",
+            currentHead.positionY,
+            g_runtimeRenderRequest.standingHeightMeters,
+            g_runtimeRenderRequest.standingHeightValid ? 1 : 0,
+            trackingReference.positionY,
+            currentHead.positionY - trackingReference.positionY,
+            manualHeightAdjustmentMeters);
+    }
+    const bfvr::D3D8RuntimeView rebasedHead =
+        g_trackingAnchor.RebaseView(currentHead);
+    if (g_runtimeRenderRequest.controllerInput.valid)
+    {
+        bfvr::PublishAcceptedControllerInput(
+            g_trackingAnchor.RebaseControllerSample(
+                g_runtimeRenderRequest.controllerInput),
+            rebasedHead,
+            hasTrackedHead);
+    }
+    else
+    {
+        bfvr::ClearAcceptedControllerInput();
+    }
     const bfvr::stereo::Pose hrtfHeadPose = {
-        {currentHead.positionX, currentHead.positionY, currentHead.positionZ},
+        {rebasedHead.positionX, rebasedHead.positionY, rebasedHead.positionZ},
         {
-            currentHead.orientationX,
-            currentHead.orientationY,
-            currentHead.orientationZ,
-            currentHead.orientationW}};
+            rebasedHead.orientationX,
+            rebasedHead.orientationY,
+            rebasedHead.orientationZ,
+            rebasedHead.orientationW}};
     bfvr::audio::PublishHrtfHeadPose(
         hrtfHeadPose,
         hasTrackedHead);
     g_runtimeFramePosePolicy = bfvr::MakeD3D8RuntimeFramePosePolicy(
         currentHead,
         hasTrackedHead);
+    g_runtimeFramePosePolicy.renderViewReference = trackingReference;
     if (hasTrackedHead && !g_loggedImmutableLocalTrackingOrigin)
     {
-        // Do not sample the user's current pose here. A sampled pose creates
-        // inverse(sampledHead) * currentHead and turns whichever way the HMD
-        // happened to be held into the game's persistent coordinate basis.
-        // The constant OpenXR LOCAL origin is independent of every BF1942
-        // lifecycle event and of controller availability.
         g_loggedImmutableLocalTrackingOrigin = true;
         AppendLog(
-            L"Using the OpenXR LOCAL tracking origin; BF1942 spawn, death, respawn, Ready/menu, controller state, and D3D8 Reset cannot sample or redefine the 6DOF camera basis. Runtime-level OpenXR reference-space changes are a separate lifecycle event.");
+            L"Using immutable OpenXR LOCAL tracking with x86 context anchors: Seated captures the current posture as neutral; Standing derives the live STAGE floor in LOCAL coordinates so only floor-to-head height minus BF1942's existing 1.70-m eye camera is added. Manual trim is independent, every occupied vehicle/station owns a separate neutral pose, and recentering pivots at the headset. No automatic body rotation or networked position transform is added.");
     }
     g_renderViewPoseHook.UpdatePose(
-        g_runtimeFramePosePolicy.renderViewReference,
+        trackingReference,
         g_runtimeRenderRequest);
 }

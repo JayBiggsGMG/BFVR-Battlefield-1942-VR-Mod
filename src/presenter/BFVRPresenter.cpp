@@ -308,6 +308,12 @@ void PublishRenderRequest(
     block.renderRequest.viewsValid = frame.viewsValid ? 1 : 0;
     block.renderRequest.headPoseValid = frame.headPoseValid ? 1 : 0;
     block.renderRequest.headPoseTracked = frame.headPoseTracked ? 1 : 0;
+    block.renderRequest.standingHeightValid =
+        frame.standingHeightValid ? 1 : 0;
+    block.renderRequest.standingHeightMeters =
+        frame.standingHeightMeters;
+    block.renderRequest.recenterForwardSequence =
+        frame.recenterForwardSequence;
     CopyControllerPose(frame.headPose, block.renderRequest.headPose);
     for (std::size_t eye = 0; eye < frame.views.size(); ++eye)
     {

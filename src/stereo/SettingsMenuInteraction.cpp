@@ -62,6 +62,7 @@ bool IsSliderSelection(
 {
     using bfvr::stereo::SettingsMenuSelection;
     return selection == SettingsMenuSelection::InfantryTurnSpeed ||
+        selection == SettingsMenuSelection::VrHeightAdjustment ||
         selection == SettingsMenuSelection::AmbientOcclusionRadius ||
         selection == SettingsMenuSelection::AmbientOcclusionStrength ||
         selection == SettingsMenuSelection::BloomThreshold ||
@@ -78,7 +79,9 @@ SettingsMenuSelection SettingsMenuSelectionAt(
     bool arrowLeftVisible,
     bool arrowRightVisible,
     SettingsMenuTab tab,
-    bool controllerLayoutVisible) noexcept
+    bool controllerLayoutVisible,
+    std::uint32_t page,
+    settings::ArtificialTurnMode turnMode) noexcept
 {
     if (!IsFinite(normalizedX) || !IsFinite(normalizedY) ||
         normalizedX < 0.0F || normalizedX > 1.0F ||
@@ -131,13 +134,77 @@ SettingsMenuSelection SettingsMenuSelectionAt(
     {
         return SettingsMenuSelection::None;
     }
-    if (tab == SettingsMenuTab::VrSettings &&
-        pixelX >= kSettingsMenuControlColumnPixels &&
-        pixelX <= kSettingsMenuSliderRightPixels &&
-        pixelY >= kSettingsMenuVrRowCenterPixels - 38.0F &&
-        pixelY <= kSettingsMenuVrRowCenterPixels + 38.0F)
+    if (tab == SettingsMenuTab::VrSettings && page == 0)
     {
-        return SettingsMenuSelection::InfantryTurnSpeed;
+        const auto selectorAt = [&](float centerY,
+                                    SettingsMenuSelection previous) {
+            if (pixelY < centerY - 38.0F || pixelY > centerY + 38.0F)
+            {
+                return SettingsMenuSelection::None;
+            }
+            if (pixelX >= kSettingsMenuSelectorLeftArrowCenterPixels - 40.0F &&
+                pixelX <= kSettingsMenuSelectorLeftArrowCenterPixels + 40.0F)
+            {
+                return previous;
+            }
+            if (pixelX >= kSettingsMenuSelectorRightArrowCenterPixels - 40.0F &&
+                pixelX <= kSettingsMenuSelectorRightArrowCenterPixels + 40.0F)
+            {
+                return static_cast<SettingsMenuSelection>(
+                    static_cast<std::uint32_t>(previous) + 1U);
+            }
+            return SettingsMenuSelection::None;
+        };
+        SettingsMenuSelection selection = selectorAt(
+            kSettingsMenuVrPageOneRowCentersPixels[0],
+            SettingsMenuSelection::PlayModePrevious);
+        if (selection != SettingsMenuSelection::None) return selection;
+        selection = selectorAt(
+            kSettingsMenuVrPageOneRowCentersPixels[1],
+            SettingsMenuSelection::ArtificialTurnPrevious);
+        if (selection != SettingsMenuSelection::None) return selection;
+        selection = selectorAt(
+            kSettingsMenuVrPageOneRowCentersPixels[3],
+            SettingsMenuSelection::MovementDirectionPrevious);
+        if (selection != SettingsMenuSelection::None) return selection;
+        if (pixelY >= kSettingsMenuVrPageOneRowCentersPixels[2] - 38.0F &&
+            pixelY <= kSettingsMenuVrPageOneRowCentersPixels[2] + 38.0F)
+        {
+            if (turnMode == settings::ArtificialTurnMode::Snap)
+            {
+                return selectorAt(
+                    kSettingsMenuVrPageOneRowCentersPixels[2],
+                    SettingsMenuSelection::SnapAnglePrevious);
+            }
+            if (turnMode == settings::ArtificialTurnMode::Smooth &&
+                pixelX >= kSettingsMenuControlColumnPixels &&
+                pixelX <= kSettingsMenuSliderRightPixels)
+            {
+                return SettingsMenuSelection::InfantryTurnSpeed;
+            }
+        }
+    }
+    if (tab == SettingsMenuTab::VrSettings && page == 1)
+    {
+        if (pixelX >= kSettingsMenuControlColumnPixels &&
+            pixelX <= kSettingsMenuSliderRightPixels &&
+            pixelY >= kSettingsMenuVrPageTwoRowCentersPixels[0] - 38.0F &&
+            pixelY <= kSettingsMenuVrPageTwoRowCentersPixels[0] + 38.0F)
+        {
+            return SettingsMenuSelection::VrHeightAdjustment;
+        }
+        if (pixelX >= 350.0F && pixelX <= 930.0F &&
+            pixelY >= kSettingsMenuVrPageTwoRowCentersPixels[1] - 42.0F &&
+            pixelY <= kSettingsMenuVrPageTwoRowCentersPixels[1] + 42.0F)
+        {
+            return SettingsMenuSelection::AutoCalibrateStandingHeight;
+        }
+        if (pixelX >= 350.0F && pixelX <= 930.0F &&
+            pixelY >= kSettingsMenuVrPageTwoRowCentersPixels[2] - 42.0F &&
+            pixelY <= kSettingsMenuVrPageTwoRowCentersPixels[2] + 42.0F)
+        {
+            return SettingsMenuSelection::RecenterForward;
+        }
     }
     if (tab == SettingsMenuTab::Controls)
     {
@@ -230,6 +297,24 @@ const wchar_t* SettingsMenuSelectionName(
         return L"Reset to Defaults";
     case SettingsMenuSelection::InfantryTurnSpeed:
         return L"Turn Speed slider";
+    case SettingsMenuSelection::PlayModePrevious: return L"previous Play Mode";
+    case SettingsMenuSelection::PlayModeNext: return L"next Play Mode";
+    case SettingsMenuSelection::ArtificialTurnPrevious:
+        return L"previous Artificial Turning mode";
+    case SettingsMenuSelection::ArtificialTurnNext:
+        return L"next Artificial Turning mode";
+    case SettingsMenuSelection::SnapAnglePrevious:
+        return L"previous Snap Angle";
+    case SettingsMenuSelection::SnapAngleNext: return L"next Snap Angle";
+    case SettingsMenuSelection::MovementDirectionPrevious:
+        return L"previous Movement Direction";
+    case SettingsMenuSelection::MovementDirectionNext:
+        return L"next Movement Direction";
+    case SettingsMenuSelection::VrHeightAdjustment:
+        return L"Manual Height Adjustment slider";
+    case SettingsMenuSelection::AutoCalibrateStandingHeight:
+        return L"Auto-Calibrate Standing Height";
+    case SettingsMenuSelection::RecenterForward: return L"Recenter Forward";
     case SettingsMenuSelection::OffHandGripPrevious:
         return L"previous Off-hand Grip Style";
     case SettingsMenuSelection::OffHandGripNext:
@@ -327,6 +412,15 @@ void SettingsMenuInteraction::SetValues(
         return minimum +
             ((clamped - minimum + step / 2U) / step) * step;
     };
+    values_.snapTurnAngleDegrees = snap(
+        values_.snapTurnAngleDegrees,
+        settings::kMinimumSnapTurnAngleDegrees,
+        settings::kMaximumSnapTurnAngleDegrees,
+        settings::kSnapTurnAngleStepDegrees);
+    values_.vrHeightAdjustmentCentimeters = std::clamp(
+        values_.vrHeightAdjustmentCentimeters,
+        settings::kMinimumVrHeightAdjustmentCentimeters,
+        settings::kMaximumVrHeightAdjustmentCentimeters);
     values_.ambientOcclusionRadiusCentimeters = snap(
         values_.ambientOcclusionRadiusCentimeters,
         settings::kMinimumAmbientOcclusionRadiusCentimeters,
@@ -361,6 +455,13 @@ void SettingsMenuInteraction::Update(
     {
         return;
     }
+    standingHeightValid_ = input.standingHeightValid &&
+        IsFinite(input.standingHeightMeters) &&
+        input.standingHeightMeters > 0.5F &&
+        input.standingHeightMeters < 2.5F;
+    standingHeightMeters_ = standingHeightValid_
+        ? input.standingHeightMeters
+        : 0.0F;
     if (IsHeadTrackingValid(input) &&
         UpdateUiMenuAnchor(
             anchor_,
@@ -404,7 +505,9 @@ void SettingsMenuInteraction::Update(
                 page_ > 0,
                 page_ + 1 < PageCount(),
                 tab_,
-                controllerLayoutVisible_);
+                controllerLayoutVisible_,
+                page_,
+                values_.artificialTurnMode);
         }
     }
 
@@ -418,6 +521,10 @@ void SettingsMenuInteraction::Update(
             {
                 SetTurnSpeedFromPointer(pointerU_);
             }
+            else if (pressed_ == SettingsMenuSelection::VrHeightAdjustment)
+            {
+                SetHeightAdjustmentFromPointer(pointerU_);
+            }
             else
             {
                 SetGraphicsSliderFromPointer(pressed_, pointerU_);
@@ -429,6 +536,10 @@ void SettingsMenuInteraction::Update(
         if (pressed_ == SettingsMenuSelection::InfantryTurnSpeed)
         {
             SetTurnSpeedFromPointer(pointerU_);
+        }
+        else if (pressed_ == SettingsMenuSelection::VrHeightAdjustment)
+        {
+            SetHeightAdjustmentFromPointer(pointerU_);
         }
         else
         {
@@ -468,6 +579,20 @@ void SettingsMenuInteraction::Reset() noexcept
     primaryWasHeld_ = false;
     sliderDragging_ = false;
     valuesChanged_ = false;
+    standingHeightValid_ = false;
+    standingHeightMeters_ = 0.0F;
+}
+
+void SettingsMenuInteraction::ResetTrackingAnchor() noexcept
+{
+    ResetUiMenuAnchor(anchor_);
+    panelPose_ = {};
+    poseValid_ = false;
+    pointerVisible_ = false;
+    hovered_ = SettingsMenuSelection::None;
+    pressed_ = SettingsMenuSelection::None;
+    primaryWasHeld_ = false;
+    sliderDragging_ = false;
 }
 
 SettingsMenuSnapshot SettingsMenuInteraction::Snapshot() const noexcept
@@ -558,6 +683,83 @@ void SettingsMenuInteraction::Activate(
     case SettingsMenuSelection::ResetDefaults:
         command_ = SettingsMenuCommand::ResetDefaults;
         break;
+    case SettingsMenuSelection::PlayModePrevious:
+    case SettingsMenuSelection::PlayModeNext:
+        values_.playMode = values_.playMode == settings::PlayMode::Seated
+            ? settings::PlayMode::Standing
+            : settings::PlayMode::Seated;
+        valuesChanged_ = true;
+        status_ = SettingsMenuStatus::SettingsNotSaved;
+        break;
+    case SettingsMenuSelection::ArtificialTurnPrevious:
+    case SettingsMenuSelection::ArtificialTurnNext:
+    {
+        constexpr int modeCount = 2;
+        const int direction =
+            selection == SettingsMenuSelection::ArtificialTurnPrevious
+            ? -1
+            : 1;
+        const int current = static_cast<int>(values_.artificialTurnMode);
+        values_.artificialTurnMode =
+            static_cast<settings::ArtificialTurnMode>(
+                (current + direction + modeCount) % modeCount);
+        valuesChanged_ = true;
+        status_ = SettingsMenuStatus::SettingsNotSaved;
+        break;
+    }
+    case SettingsMenuSelection::SnapAnglePrevious:
+    case SettingsMenuSelection::SnapAngleNext:
+    {
+        const int direction =
+            selection == SettingsMenuSelection::SnapAnglePrevious ? -1 : 1;
+        const int next = static_cast<int>(values_.snapTurnAngleDegrees) +
+            direction * static_cast<int>(settings::kSnapTurnAngleStepDegrees);
+        values_.snapTurnAngleDegrees = static_cast<std::uint32_t>(std::clamp(
+            next,
+            static_cast<int>(settings::kMinimumSnapTurnAngleDegrees),
+            static_cast<int>(settings::kMaximumSnapTurnAngleDegrees)));
+        valuesChanged_ = true;
+        status_ = SettingsMenuStatus::SettingsNotSaved;
+        break;
+    }
+    case SettingsMenuSelection::MovementDirectionPrevious:
+    case SettingsMenuSelection::MovementDirectionNext:
+    {
+        constexpr int modeCount = 3;
+        const int direction =
+            selection == SettingsMenuSelection::MovementDirectionPrevious
+            ? -1
+            : 1;
+        const int current = static_cast<int>(values_.movementDirection);
+        values_.movementDirection = static_cast<settings::MovementDirection>(
+            (current + direction + modeCount) % modeCount);
+        valuesChanged_ = true;
+        status_ = SettingsMenuStatus::SettingsNotSaved;
+        break;
+    }
+    case SettingsMenuSelection::AutoCalibrateStandingHeight:
+        if (values_.playMode != settings::PlayMode::Standing)
+        {
+            status_ = SettingsMenuStatus::StandingModeRequired;
+            break;
+        }
+        if (!standingHeightValid_)
+        {
+            status_ = SettingsMenuStatus::StandingHeightUnavailable;
+            break;
+        }
+        values_.standingEyeHeightCentimeters = std::clamp(
+            static_cast<std::uint32_t>(std::lround(
+                standingHeightMeters_ * 100.0F)),
+            settings::kMinimumStandingEyeHeightCentimeters,
+            settings::kMaximumStandingEyeHeightCentimeters);
+        valuesChanged_ = true;
+        status_ = SettingsMenuStatus::StandingHeightCalibrated;
+        break;
+    case SettingsMenuSelection::RecenterForward:
+        command_ = SettingsMenuCommand::RecenterForward;
+        status_ = SettingsMenuStatus::ForwardRecentered;
+        break;
     case SettingsMenuSelection::OffHandGripPrevious:
     case SettingsMenuSelection::OffHandGripNext:
         values_.offHandGripStyle =
@@ -622,6 +824,7 @@ void SettingsMenuInteraction::Activate(
         status_ = SettingsMenuStatus::SettingsNotSaved;
         break;
     case SettingsMenuSelection::InfantryTurnSpeed:
+    case SettingsMenuSelection::VrHeightAdjustment:
     case SettingsMenuSelection::AmbientOcclusionRadius:
     case SettingsMenuSelection::AmbientOcclusionStrength:
     case SettingsMenuSelection::BloomThreshold:
@@ -630,6 +833,34 @@ void SettingsMenuInteraction::Activate(
     case SettingsMenuSelection::None:
     default:
         break;
+    }
+}
+
+void SettingsMenuInteraction::SetHeightAdjustmentFromPointer(
+    float pointerU) noexcept
+{
+    const float pixelX = std::clamp(pointerU, 0.0F, 1.0F) *
+        kSettingsMenuTextureSize;
+    const float normalized = std::clamp(
+        (pixelX - kSettingsMenuControlColumnPixels) /
+            (kSettingsMenuSliderRightPixels -
+             kSettingsMenuControlColumnPixels),
+        0.0F,
+        1.0F);
+    const float unsnapped = static_cast<float>(
+        settings::kMinimumVrHeightAdjustmentCentimeters) +
+        normalized * static_cast<float>(
+            settings::kMaximumVrHeightAdjustmentCentimeters -
+            settings::kMinimumVrHeightAdjustmentCentimeters);
+    const std::int32_t selected = std::clamp(
+        static_cast<std::int32_t>(std::lround(unsnapped)),
+        settings::kMinimumVrHeightAdjustmentCentimeters,
+        settings::kMaximumVrHeightAdjustmentCentimeters);
+    if (selected != values_.vrHeightAdjustmentCentimeters)
+    {
+        values_.vrHeightAdjustmentCentimeters = selected;
+        valuesChanged_ = true;
+        status_ = SettingsMenuStatus::SettingsNotSaved;
     }
 }
 

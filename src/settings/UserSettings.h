@@ -14,6 +14,17 @@ constexpr std::uint32_t kMinimumInfantryTurnSpeedPercent = 50;
 constexpr std::uint32_t kMaximumInfantryTurnSpeedPercent = 300;
 constexpr std::uint32_t kInfantryTurnSpeedStepPercent = 10;
 constexpr std::uint32_t kDefaultInfantryTurnSpeedPercent = 100;
+constexpr std::uint32_t kMinimumSnapTurnAngleDegrees = 15;
+constexpr std::uint32_t kMaximumSnapTurnAngleDegrees = 90;
+constexpr std::uint32_t kSnapTurnAngleStepDegrees = 15;
+constexpr std::uint32_t kDefaultSnapTurnAngleDegrees = 45;
+constexpr std::int32_t kMinimumVrHeightAdjustmentCentimeters = -30;
+constexpr std::int32_t kMaximumVrHeightAdjustmentCentimeters = 30;
+constexpr std::int32_t kVrHeightAdjustmentStepCentimeters = 1;
+constexpr std::int32_t kDefaultVrHeightAdjustmentCentimeters = 0;
+constexpr std::uint32_t kMinimumStandingEyeHeightCentimeters = 50;
+constexpr std::uint32_t kMaximumStandingEyeHeightCentimeters = 250;
+constexpr std::uint32_t kDefaultStandingEyeHeightCentimeters = 170;
 constexpr std::uint32_t kMinimumAmbientOcclusionRadiusCentimeters = 10;
 constexpr std::uint32_t kMaximumAmbientOcclusionRadiusCentimeters = 150;
 constexpr std::uint32_t kAmbientOcclusionRadiusStepCentimeters = 5;
@@ -44,10 +55,37 @@ enum class WorldCrosshairMode : std::uint32_t
     HitMarkerOnly
 };
 
+enum class PlayMode : std::uint32_t
+{
+    Seated = 0,
+    Standing
+};
+
+enum class ArtificialTurnMode : std::uint32_t
+{
+    Snap = 0,
+    Smooth
+};
+
+enum class MovementDirection : std::uint32_t
+{
+    Character = 0,
+    Head,
+    OffHandController
+};
+
 struct UserSettingsValues
 {
     std::uint32_t infantryTurnSpeedPercent =
         kDefaultInfantryTurnSpeedPercent;
+    PlayMode playMode = PlayMode::Seated;
+    ArtificialTurnMode artificialTurnMode = ArtificialTurnMode::Smooth;
+    std::uint32_t snapTurnAngleDegrees = kDefaultSnapTurnAngleDegrees;
+    MovementDirection movementDirection = MovementDirection::Character;
+    std::int32_t vrHeightAdjustmentCentimeters =
+        kDefaultVrHeightAdjustmentCentimeters;
+    std::uint32_t standingEyeHeightCentimeters =
+        kDefaultStandingEyeHeightCentimeters;
     bool invertFlightPitch = false;
     bool invertTurretPitch = false;
     bool invertTurretYaw = false;
@@ -99,6 +137,12 @@ struct UserSettings
 void EncodeUserSettings(
     const UserSettingsValues& values,
     UserSettings& settings);
+
+// Manual trim is deliberately independent of Seated/Standing placement.
+// Standing floor mapping is performed from simultaneous LOCAL and STAGE poses
+// by the x86 context anchor, not folded into this persisted adjustment.
+[[nodiscard]] float ComputeManualHeightAdjustmentMeters(
+    const UserSettingsValues& values) noexcept;
 
 enum class UserSettingsLoadStatus : std::uint32_t
 {

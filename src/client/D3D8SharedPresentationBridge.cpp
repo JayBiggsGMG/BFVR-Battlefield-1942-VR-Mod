@@ -763,6 +763,17 @@ public:
                     IsFiniteUnitQuaternion(source.headPose);
                 request.headPoseTracked =
                     request.headPoseValid && source.headPoseTracked != 0;
+                request.standingHeightValid =
+                    source.standingHeightValid != 0 &&
+                    std::isfinite(source.standingHeightMeters) &&
+                    source.standingHeightMeters >= 0.20F &&
+                    source.standingHeightMeters <= 3.0F;
+                request.standingHeightMeters =
+                    request.standingHeightValid
+                    ? source.standingHeightMeters
+                    : 0.0F;
+                request.recenterForwardSequence =
+                    source.recenterForwardSequence;
                 if (request.headPoseValid)
                 {
                     request.headPose.orientationX =
@@ -797,17 +808,10 @@ public:
                 // A rejected controller sample still does not reject the
                 // visual frame. It clears the input cache so native input
                 // remains unchanged until a fresh focused sample arrives.
-                if (ReadControllerSample(
+                if (!ReadControllerSample(
                         sequence,
                         request.predictedDisplayTime,
                         request.controllerInput))
-                {
-                    PublishAcceptedControllerInput(
-                        request.controllerInput,
-                        MakeD3D8RuntimeHeadReference(request),
-                        request.headPoseTracked);
-                }
-                else
                 {
                     ClearAcceptedControllerInput();
                 }
