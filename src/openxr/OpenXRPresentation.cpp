@@ -2384,6 +2384,8 @@ bool OpenXRPresentation::Initialize(
             impl_->device,
             impl_->context,
             quickMenuApi,
+            configuration.uiWidthMeters,
+            configuration.uiDistanceMeters,
             logCallback,
             logContext))
     {
@@ -2440,6 +2442,14 @@ OpenXRPresentation::TakeQuickMenuSelection() noexcept
     return impl_ == nullptr
         ? stereo::QuickMenuSelection::None
         : impl_->quickMenu.TakeReleasedSelection();
+}
+
+void OpenXRPresentation::OpenSettingsMenu() noexcept
+{
+    if (impl_ != nullptr)
+    {
+        impl_->quickMenu.OpenSettingsMenu();
+    }
 }
 
 void OpenXRPresentation::SetMountedCameraDecoupled(

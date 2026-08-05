@@ -742,7 +742,7 @@ bool D3D11AmbientOcclusion::UpdateConfiguration(
         projection[10], projection[14],
         1.0F / static_cast<float>(depthWidth),
         1.0F / static_cast<float>(depthHeight),
-        0.60F, 48.0F, 2.0F, 0.04F,
+        viewRadiusMeters_, 48.0F, 2.0F, 0.04F,
         1.65F, 1.15F, 32.0F, 0.0F};
     context_->UpdateSubresource(
         configurationBuffer_,
@@ -752,6 +752,15 @@ bool D3D11AmbientOcclusion::UpdateConfiguration(
         0,
         0);
     return true;
+}
+
+void D3D11AmbientOcclusion::SetViewRadiusMeters(
+    float radiusMeters) noexcept
+{
+    if (std::isfinite(radiusMeters))
+    {
+        viewRadiusMeters_ = std::clamp(radiusMeters, 0.10F, 1.50F);
+    }
 }
 
 void D3D11AmbientOcclusion::ReleaseEyeResources(EyeResources& resources)
@@ -836,6 +845,7 @@ void D3D11AmbientOcclusion::Shutdown()
     completeGpuMilliseconds_.clear();
     frameEyesBuilt_ = {};
     timingsReported_ = false;
+    viewRadiusMeters_ = 0.60F;
     logCallback_ = nullptr;
     logContext_ = nullptr;
 }

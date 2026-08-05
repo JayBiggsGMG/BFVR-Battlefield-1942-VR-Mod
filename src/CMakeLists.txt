@@ -34,6 +34,7 @@ if(BFVR_PRESENTER_ONLY)
   add_executable(BFVRPresenter
     client/MainMenuOverlay.cpp
     client/QuickMenuArt.cpp
+    client/SettingsMenuArt.cpp
     presenter/BFVRPresenter.cpp
     presenter/DesktopMirror.cpp
     presenter/D3D11AmbientOcclusion.cpp
@@ -43,11 +44,13 @@ if(BFVR_PRESENTER_ONLY)
     presenter/D3D11WaterReflection.cpp
     presenter/SharedControlChannel.cpp
     presenter/SharedTextureConsumer.cpp
+    settings/UserSettings.cpp
     openxr/OpenXRQuickMenu.cpp
     openxr/OpenXRPresentation.cpp
     openxr/OpenXRScopeOverlayLayer.cpp
     stereo/QuickMenuInteraction.cpp
     stereo/QuickMenuMirrorMath.cpp
+    stereo/SettingsMenuInteraction.cpp
     stereo/ScopeViewMath.cpp
     stereo/UiPointerMath.cpp
   )
@@ -61,6 +64,7 @@ if(BFVR_PRESENTER_ONLY)
     presenter/D3D11WaterReflection.cpp
     presenter/SharedControlChannel.cpp
     presenter/SharedTextureConsumer.cpp
+    settings/UserSettings.cpp
   )
   add_executable(BFVRAmbientOcclusionGpuProbe
     presenter/BFVRAmbientOcclusionGpuProbe.cpp
@@ -86,7 +90,7 @@ if(BFVR_PRESENTER_ONLY)
       "${CMAKE_CURRENT_SOURCE_DIR}"
       "${BFVR_OPENXR_INCLUDE_DIRECTORY}")
     target_link_libraries(${target} PRIVATE
-      kernel32 ole32 user32 windowscodecs d3d11 dxgi d3dcompiler)
+      kernel32 ole32 user32 gdi32 windowscodecs d3d11 dxgi d3dcompiler)
     set_property(TARGET ${target} PROPERTY
       MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
     if(MSVC)
@@ -103,6 +107,8 @@ if(BFVR_PRESENTER_ONLY)
     add_custom_command(TARGET ${target} POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory
         "$<TARGET_FILE_DIR:${target}>/assets"
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+        "$<TARGET_FILE_DIR:${target}>/assets/SettingsMenu"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
       "${CMAKE_CURRENT_SOURCE_DIR}/../assets/BackToGame_bg.png"
       "${CMAKE_CURRENT_SOURCE_DIR}/../assets/BackToGame_hover.png"
@@ -130,7 +136,10 @@ if(BFVR_PRESENTER_ONLY)
       "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_stripMapHover.png"
       "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_stripSettingsHover.png"
       "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_stripText.png"
-        "$<TARGET_FILE_DIR:${target}>/assets")
+        "$<TARGET_FILE_DIR:${target}>/assets"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+      "${CMAKE_CURRENT_SOURCE_DIR}/../assets/SettingsMenu"
+      "$<TARGET_FILE_DIR:${target}>/assets/SettingsMenu")
   endforeach()
   return()
 endif()
@@ -241,6 +250,7 @@ add_library(BFVRClient SHARED
   presenter/SharedControlChannel.cpp
   presenter/D3DSystemRuntime.cpp
   presenter/SharedTextureProducer.cpp
+  settings/UserSettings.cpp
 )
 
 add_library(BFVROpenALHrtfRouter SHARED
@@ -285,11 +295,14 @@ add_executable(BFVRLoader
 
 add_executable(BFVROpenXRProbe
   client/QuickMenuArt.cpp
+  client/SettingsMenuArt.cpp
   openxr/BFVROpenXRProbe.cpp
   openxr/OpenXRBootstrap.cpp
   openxr/OpenXRQuickMenu.cpp
   openxr/OpenXRPresentation.cpp
   openxr/OpenXRScopeOverlayLayer.cpp
+  settings/UserSettings.cpp
+  stereo/SettingsMenuInteraction.cpp
 )
 
 add_executable(BFVRSharedTextureProducerProbe
@@ -352,6 +365,17 @@ add_executable(BFVRQuickMenuTests
   stereo/QuickMenuTests.cpp
 )
 
+add_executable(BFVRSettingsMenuTests
+  client/SettingsMenuArt.cpp
+  stereo/SettingsMenuInteraction.cpp
+  stereo/SettingsMenuTests.cpp
+)
+
+add_executable(BFVRUserSettingsTests
+  settings/UserSettings.cpp
+  settings/UserSettingsTests.cpp
+)
+
 add_executable(BFVRVehicleMotionAimMathTests
   stereo/VehicleMotionAimMathTests.cpp
 )
@@ -411,7 +435,7 @@ add_executable(BFVRRfaInspect
   tools/RfaInspect.cpp
 )
 
-foreach(target BFVRClient BFVROpenALHrtfRouter BFVRD3D8To9FlatClient BFVRLoader BFVROpenXRProbe BFVRSharedTextureProducerProbe BFVRD3D8To9SharedSurfaceProbe BFVRAmbientOcclusionDepthProbe BFVRStereoMath BFVRStereoMathTests BFVRWaterReflectionTextureBasisTests BFVRWeaponFireAimMathTests BFVROffHandSupportPolicyTests BFVRArmPoleVectorMathTests BFVRMainMenuOverlayTests BFVRQuickMenuTests BFVRVehicleMotionAimMathTests BFVRMountedCameraMathTests BFVRScopeViewMathTests BFVROpenXRScopeOverlayLayerTests BFVRWorldCrosshairMathTests BFVRRuntimeDiagnosticsTests BFVRHrtfListenerMathTests BFVRHrtfBufferPolicyTests BFVRHrtfMenuSoundPolicyTests BFVRHrtfBackendProbe BFVRDirectSoundImportRouteTests BFVRSharedControlChannelTests BFVRRfaInspect)
+foreach(target BFVRClient BFVROpenALHrtfRouter BFVRD3D8To9FlatClient BFVRLoader BFVROpenXRProbe BFVRSharedTextureProducerProbe BFVRD3D8To9SharedSurfaceProbe BFVRAmbientOcclusionDepthProbe BFVRStereoMath BFVRStereoMathTests BFVRWaterReflectionTextureBasisTests BFVRWeaponFireAimMathTests BFVROffHandSupportPolicyTests BFVRArmPoleVectorMathTests BFVRMainMenuOverlayTests BFVRQuickMenuTests BFVRSettingsMenuTests BFVRUserSettingsTests BFVRVehicleMotionAimMathTests BFVRMountedCameraMathTests BFVRScopeViewMathTests BFVROpenXRScopeOverlayLayerTests BFVRWorldCrosshairMathTests BFVRRuntimeDiagnosticsTests BFVRHrtfListenerMathTests BFVRHrtfBufferPolicyTests BFVRHrtfMenuSoundPolicyTests BFVRHrtfBackendProbe BFVRDirectSoundImportRouteTests BFVRSharedControlChannelTests BFVRRfaInspect)
   target_compile_definitions(${target} PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
   set_property(TARGET ${target} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
   if(MSVC)
@@ -424,7 +448,7 @@ target_link_libraries(BFVRClient PRIVATE
 target_link_libraries(BFVRD3D8To9FlatClient PRIVATE kernel32)
 target_link_libraries(BFVRLoader PRIVATE kernel32)
 target_link_libraries(BFVROpenXRProbe PRIVATE
-  kernel32 ole32 windowscodecs d3d11 dxgi BFVRStereoMath)
+  kernel32 ole32 gdi32 windowscodecs d3d11 dxgi BFVRStereoMath)
 target_link_libraries(BFVRSharedTextureProducerProbe PRIVATE kernel32)
 target_link_libraries(BFVRD3D8To9SharedSurfaceProbe PRIVATE kernel32 user32)
 target_link_libraries(BFVRAmbientOcclusionDepthProbe PRIVATE kernel32 user32)
@@ -460,6 +484,8 @@ target_link_libraries(BFVRMainMenuOverlayTests PRIVATE
   ole32 user32 windowscodecs)
 target_link_libraries(BFVRQuickMenuTests PRIVATE
   BFVRStereoMath ole32 user32 windowscodecs)
+target_link_libraries(BFVRSettingsMenuTests PRIVATE
+  BFVRStereoMath ole32 user32 gdi32 windowscodecs)
 target_link_libraries(BFVRVehicleMotionAimMathTests PRIVATE BFVRStereoMath)
 target_link_libraries(BFVRMountedCameraMathTests PRIVATE BFVRStereoMath)
 target_link_libraries(BFVRScopeViewMathTests PRIVATE BFVRStereoMath)
@@ -470,6 +496,10 @@ target_link_libraries(BFVRDirectSoundImportRouteTests PRIVATE dsound)
 target_include_directories(BFVRMainMenuOverlayTests PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}")
 target_include_directories(BFVRQuickMenuTests PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}")
+target_include_directories(BFVRSettingsMenuTests PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}")
+target_include_directories(BFVRUserSettingsTests PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}")
 target_include_directories(BFVRRuntimeDiagnosticsTests PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}")
@@ -502,6 +532,13 @@ if(BUILD_TESTING)
     NAME BFVRQuickMenuTests
     COMMAND BFVRQuickMenuTests
       "${CMAKE_CURRENT_SOURCE_DIR}/../assets")
+  add_test(
+    NAME BFVRSettingsMenuTests
+    COMMAND BFVRSettingsMenuTests
+      "${CMAKE_CURRENT_SOURCE_DIR}/../assets/SettingsMenu")
+  add_test(
+    NAME BFVRUserSettingsTests
+    COMMAND BFVRUserSettingsTests)
   add_test(
     NAME BFVRVehicleMotionAimMathTests
     COMMAND BFVRVehicleMotionAimMathTests)
@@ -553,6 +590,8 @@ endforeach()
 add_custom_command(TARGET BFVRClient POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E make_directory
     "$<TARGET_FILE_DIR:BFVRClient>/assets"
+  COMMAND ${CMAKE_COMMAND} -E make_directory
+    "$<TARGET_FILE_DIR:BFVRClient>/assets/SettingsMenu"
   COMMAND ${CMAKE_COMMAND} -E copy_if_different
     "${CMAKE_CURRENT_SOURCE_DIR}/../assets/BackToGame_bg.png"
     "${CMAKE_CURRENT_SOURCE_DIR}/../assets/BackToGame_hover.png"
@@ -582,7 +621,10 @@ add_custom_command(TARGET BFVRClient POST_BUILD
     "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_stripText.png"
     "${CMAKE_CURRENT_SOURCE_DIR}/../assets/Crosshair.png"
     "${CMAKE_CURRENT_SOURCE_DIR}/../assets/HitMarker.png"
-    "$<TARGET_FILE_DIR:BFVRClient>/assets")
+    "$<TARGET_FILE_DIR:BFVRClient>/assets"
+  COMMAND ${CMAKE_COMMAND} -E copy_directory
+    "${CMAKE_CURRENT_SOURCE_DIR}/../assets/SettingsMenu"
+    "$<TARGET_FILE_DIR:BFVRClient>/assets/SettingsMenu")
 
 add_dependencies(BFVRClient BFVROpenALHrtfRouter)
 add_custom_command(TARGET BFVRClient POST_BUILD

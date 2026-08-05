@@ -435,6 +435,49 @@ bool AuthoredBindingAllowsOnlyCurrentSupportedSteering() noexcept
         "current squeeze-up retained stale steering");
 }
 
+bool ToggleGripReleasesOnlyOnNextPress() noexcept
+{
+    bfvr::BFSoldierOffHandSupportBinding binding;
+    bfvr::BFSoldierOffHandSupportInput input = {};
+    input.bindingId = 13;
+    input.timeSeconds = 1.0;
+    input.squeezeValue = 1.0F;
+    input.sessionFocused = true;
+    input.leftGripTracked = true;
+    input.leftSqueezeActive = true;
+    input.toggleGripStyle = true;
+    input.mode = bfvr::BFSoldierOffHandSupportMode::AuthoredHandSpan;
+    input.leftHandFromRightHand = Translation(0.0F, 0.0F, 0.40F);
+    input.controllerRightHandWorld = Translation(2.0F, 1.0F, -3.0F);
+    input.inverseSoldierWorld = Translation(-2.0F, -1.0F, 3.0F);
+    input.controllerLeftHandLocal = Translation(0.0F, 0.0F, 0.35F);
+    static_cast<void>(binding.Update(input));
+    input.timeSeconds = 1.05;
+    if (!Expect(
+            binding.Update(input).supported,
+            "toggle grip did not acquire support"))
+    {
+        return false;
+    }
+    input.timeSeconds = 1.06;
+    input.leftSqueezeActive = false;
+    input.squeezeValue = 0.0F;
+    if (!Expect(
+            binding.Update(input).supported,
+            "toggle grip released on physical squeeze-up"))
+    {
+        return false;
+    }
+    input.timeSeconds = 1.07;
+    input.leftSqueezeActive = true;
+    input.squeezeValue = 1.0F;
+    const auto released = binding.Update(input);
+    return Expect(
+        released.state == OffHandSupportState::Free &&
+            released.exitedSupport,
+        "toggle grip did not release on the next press");
+}
+
 bool SoldierSteeringFrameUsesTrackedGripAndRejectsPistol() noexcept
 {
     bfvr::BFSoldierOffHandSupportBinding binding;
@@ -762,6 +805,7 @@ int main()
         CapturedClosePoseIsNoJumpAndFollowsRightHand() &&
         CloseBindingCapturesAndIgnoresLeftNoise() &&
         AuthoredBindingAllowsOnlyCurrentSupportedSteering() &&
+        ToggleGripReleasesOnlyOnNextPress() &&
         SoldierSteeringFrameUsesTrackedGripAndRejectsPistol() &&
         SteeringUsesFixedPivotAndFullDirectionalSwing() &&
         SteeringIgnoresRadialMismatchAndHandlesOppositeDirection() &&

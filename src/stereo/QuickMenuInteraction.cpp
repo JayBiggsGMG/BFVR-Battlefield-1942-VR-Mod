@@ -396,7 +396,7 @@ const wchar_t* QuickMenuSelectionName(
     case QuickMenuSelection::SwapKit:
         return L"G / swap kit";
     case QuickMenuSelection::VrSettings:
-        return L"VR settings (not yet implemented)";
+        return L"VR settings";
     default: return L"none";
     }
 }

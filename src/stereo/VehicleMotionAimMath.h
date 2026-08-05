@@ -37,6 +37,30 @@ struct VehicleMotionAimOutput
     bool sampleAdvanced = false;
 };
 
+struct VehicleAimInputSigns
+{
+    float stickYaw = 1.0F;
+    float motionYaw = -1.0F;
+    float stickPitch = 1.0F;
+    float motionPitch = 1.0F;
+};
+
+// Live calibration establishes different raw-axis bases: motion yaw requires
+// one correction to agree with stick yaw, while motion pitch already agrees
+// with stick pitch. Each saved inversion then reverses its complete pair.
+[[nodiscard]] constexpr VehicleAimInputSigns CalibratedVehicleAimInputSigns(
+    bool invertPitch,
+    bool invertYaw) noexcept
+{
+    const float yawInversion = invertYaw ? -1.0F : 1.0F;
+    const float pitchInversion = invertPitch ? -1.0F : 1.0F;
+    return {
+        yawInversion,
+        -yawInversion,
+        pitchInversion,
+        pitchInversion};
+}
+
 void ResetVehicleMotionAim(VehicleMotionAimTracker& tracker) noexcept;
 
 // Only a newly timestamped tracked sample may produce an input delta. The

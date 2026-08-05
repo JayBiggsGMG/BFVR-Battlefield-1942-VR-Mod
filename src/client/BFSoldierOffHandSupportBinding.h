@@ -33,6 +33,7 @@ struct BFSoldierOffHandSupportInput
     bool sessionFocused = false;
     bool leftGripTracked = false;
     bool leftSqueezeActive = false;
+    bool toggleGripStyle = false;
     bool nativeLeftHandTargetActive = false;
     BFSoldierOffHandSupportMode mode =
         BFSoldierOffHandSupportMode::Disabled;
@@ -94,6 +95,9 @@ private:
         BFSoldierOffHandSupportMode::Disabled;
     bool closeRelationValid_ = false;
     bool squeezeHeld_ = false;
+    bool physicalSqueezeHeld_ = false;
+    bool toggleSupportHeld_ = false;
+    bool toggleGripStyle_ = false;
     DWORD lastBlockedReportAt_ = 0;
     LONG blockedReports_ = 0;
 };

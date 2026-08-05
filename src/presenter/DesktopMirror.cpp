@@ -642,7 +642,8 @@ bool DesktopMirror::EnsureQuickMenuViews(
         quickMenuUtilityTexture_ == quickMenu.utilityTexture &&
         quickMenuCursorTexture_ == quickMenu.cursorTexture &&
         quickMenuView_ != nullptr &&
-        quickMenuUtilityView_ != nullptr &&
+        (quickMenu.utilityTexture == nullptr ||
+         quickMenuUtilityView_ != nullptr) &&
         (!quickMenu.pointerVisible || quickMenuCursorView_ != nullptr))
     {
         return true;
@@ -658,7 +659,7 @@ bool DesktopMirror::EnsureQuickMenuViews(
     if (SUCCEEDED(result))
     {
         result = quickMenu.utilityTexture == nullptr
-            ? E_INVALIDARG
+            ? S_OK
             : device_->CreateShaderResourceView(
                 quickMenu.utilityTexture,
                 nullptr,

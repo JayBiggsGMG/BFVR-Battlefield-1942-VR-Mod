@@ -1,0 +1,1046 @@
+#include "settings/UserSettings.h"
+
+#include <windows.h>
+
+#include <algorithm>
+#include <array>
+#include <charconv>
+#include <limits>
+#include <string_view>
+
+namespace
+{
+constexpr std::uint64_t kMaximumUserConfigBytes = 1024U * 1024U;
+constexpr wchar_t kUserConfigEnvironmentName[] = L"BFVR_USER_CONFIG_PATH";
+constexpr wchar_t kUserConfigFileName[] = L"UserConfig.txt";
+constexpr std::string_view kInfantryTurnSpeedKey =
+    "infantry_turn_speed_percent";
+constexpr std::string_view kInvertFlightPitchKey = "invert_flight_pitch";
+constexpr std::string_view kInvertTurretPitchKey = "invert_turret_pitch";
+constexpr std::string_view kInvertTurretYawKey = "invert_turret_yaw";
+constexpr std::string_view kOffHandGripStyleKey = "off_hand_grip_style";
+constexpr std::string_view kHandWeaponCrosshairKey =
+    "hand_weapon_3d_crosshair";
+constexpr std::string_view kMountedWeaponCrosshairKey =
+    "mounted_weapon_3d_crosshair";
+constexpr std::string_view kFxaaEnabledKey = "fxaa_enabled";
+constexpr std::string_view kAmbientOcclusionEnabledKey =
+    "ambient_occlusion_enabled";
+constexpr std::string_view kAmbientOcclusionRadiusKey =
+    "ambient_occlusion_radius_centimeters";
+constexpr std::string_view kAmbientOcclusionStrengthKey =
+    "ambient_occlusion_strength_percent";
+constexpr std::string_view kBloomEnabledKey = "bloom_enabled";
+constexpr std::string_view kBloomThresholdKey = "bloom_threshold_percent";
+constexpr std::string_view kBloomIntensityKey = "bloom_intensity_percent";
+
+std::string_view Trim(std::string_view value) noexcept
+{
+    constexpr std::string_view whitespace = " \t\r\n";
+    const std::size_t first = value.find_first_not_of(whitespace);
+    if (first == std::string_view::npos)
+    {
+        return {};
+    }
+    const std::size_t last = value.find_last_not_of(whitespace);
+    return value.substr(first, last - first + 1);
+}
+
+bool IsValidKey(std::string_view key) noexcept
+{
+    if (key.empty())
+    {
+        return false;
+    }
+    return std::all_of(
+        key.begin(),
+        key.end(),
+        [](char value) {
+            return (value >= 'a' && value <= 'z') ||
+                (value >= '0' && value <= '9') || value == '_';
+        });
+}
+
+bool IsDirectory(const std::wstring& path) noexcept
+{
+    const DWORD attributes = GetFileAttributesW(path.c_str());
+    return attributes != INVALID_FILE_ATTRIBUTES &&
+        (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+}
+
+bool IsBoolean(std::string_view value) noexcept
+{
+    return value == "true" || value == "false";
+}
+
+bool IsOffHandGripStyle(std::string_view value) noexcept
+{
+    return value == "hold" || value == "toggle";
+}
+
+bool IsWorldCrosshairMode(std::string_view value) noexcept
+{
+    return value == "off" || value == "on" ||
+        value == "hit_marker_only";
+}
+
+bool IsInfantryTurnSpeed(std::string_view value) noexcept
+{
+    std::uint32_t percent = 0;
+    const auto parsed = std::from_chars(
+        value.data(),
+        value.data() + value.size(),
+        percent);
+    return parsed.ec == std::errc{} &&
+        parsed.ptr == value.data() + value.size() &&
+        percent >= bfvr::settings::kMinimumInfantryTurnSpeedPercent &&
+        percent <= bfvr::settings::kMaximumInfantryTurnSpeedPercent &&
+        percent % bfvr::settings::kInfantryTurnSpeedStepPercent == 0;
+}
+
+bool IsUnsignedInRangeStep(
+    std::string_view value,
+    std::uint32_t minimum,
+    std::uint32_t maximum,
+    std::uint32_t step) noexcept
+{
+    std::uint32_t parsedValue = 0;
+    const auto parsed = std::from_chars(
+        value.data(),
+        value.data() + value.size(),
+        parsedValue);
+    return parsed.ec == std::errc{} &&
+        parsed.ptr == value.data() + value.size() &&
+        parsedValue >= minimum && parsedValue <= maximum &&
+        step != 0 && (parsedValue - minimum) % step == 0;
+}
+
+bool IsAmbientOcclusionRadius(std::string_view value) noexcept
+{
+    return IsUnsignedInRangeStep(
+        value,
+        bfvr::settings::kMinimumAmbientOcclusionRadiusCentimeters,
+        bfvr::settings::kMaximumAmbientOcclusionRadiusCentimeters,
+        bfvr::settings::kAmbientOcclusionRadiusStepCentimeters);
+}
+
+bool IsAmbientOcclusionStrength(std::string_view value) noexcept
+{
+    return IsUnsignedInRangeStep(
+        value,
+        bfvr::settings::kMinimumAmbientOcclusionStrengthPercent,
+        bfvr::settings::kMaximumAmbientOcclusionStrengthPercent,
+        bfvr::settings::kAmbientOcclusionStrengthStepPercent);
+}
+
+bool IsBloomThreshold(std::string_view value) noexcept
+{
+    return IsUnsignedInRangeStep(
+        value,
+        bfvr::settings::kMinimumBloomThresholdPercent,
+        bfvr::settings::kMaximumBloomThresholdPercent,
+        bfvr::settings::kBloomThresholdStepPercent);
+}
+
+bool IsBloomIntensity(std::string_view value) noexcept
+{
+    return IsUnsignedInRangeStep(
+        value,
+        bfvr::settings::kMinimumBloomIntensityPercent,
+        bfvr::settings::kMaximumBloomIntensityPercent,
+        bfvr::settings::kBloomIntensityStepPercent);
+}
+
+bool QueryFileSignature(
+    const std::wstring& path,
+    bool& exists,
+    std::uint64_t& writeTime,
+    std::uint64_t& fileSize) noexcept
+{
+    WIN32_FILE_ATTRIBUTE_DATA data = {};
+    if (GetFileAttributesExW(
+            path.c_str(),
+            GetFileExInfoStandard,
+            &data) == FALSE)
+    {
+        const DWORD error = GetLastError();
+        if (error != ERROR_FILE_NOT_FOUND && error != ERROR_PATH_NOT_FOUND)
+        {
+            return false;
+        }
+        exists = false;
+        writeTime = 0;
+        fileSize = 0;
+        return true;
+    }
+    if ((data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0)
+    {
+        return false;
+    }
+    exists = true;
+    writeTime =
+        (static_cast<std::uint64_t>(data.ftLastWriteTime.dwHighDateTime) << 32U) |
+        data.ftLastWriteTime.dwLowDateTime;
+    fileSize = (static_cast<std::uint64_t>(data.nFileSizeHigh) << 32U) |
+        data.nFileSizeLow;
+    return true;
+}
+
+std::wstring ParentPath(const std::wstring& path)
+{
+    const std::size_t separator = path.find_last_of(L"\\/");
+    return separator == std::wstring::npos
+        ? std::wstring{}
+        : path.substr(0, separator);
+}
+
+std::wstring JoinPath(
+    const std::wstring& directory,
+    const wchar_t* child)
+{
+    if (directory.empty() || child == nullptr || child[0] == L'\0')
+    {
+        return {};
+    }
+    std::wstring result = directory;
+    if (result.back() != L'\\' && result.back() != L'/')
+    {
+        result.push_back(L'\\');
+    }
+    result.append(child);
+    return result;
+}
+
+bool ReadWholeFile(
+    const std::wstring& path,
+    std::string& bytes,
+    DWORD& errorCode)
+{
+    bytes.clear();
+    errorCode = ERROR_SUCCESS;
+    HANDLE file = CreateFileW(
+        path.c_str(),
+        GENERIC_READ,
+        FILE_SHARE_READ,
+        nullptr,
+        OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL,
+        nullptr);
+    if (file == INVALID_HANDLE_VALUE)
+    {
+        errorCode = GetLastError();
+        return false;
+    }
+    LARGE_INTEGER size = {};
+    bool success = GetFileSizeEx(file, &size) != FALSE &&
+        size.QuadPart >= 0 &&
+        static_cast<std::uint64_t>(size.QuadPart) <=
+            kMaximumUserConfigBytes &&
+        size.QuadPart <= std::numeric_limits<DWORD>::max();
+    if (success)
+    {
+        bytes.resize(static_cast<std::size_t>(size.QuadPart));
+        DWORD bytesRead = 0;
+        success = bytes.empty() ||
+            (ReadFile(
+                 file,
+                 bytes.data(),
+                 static_cast<DWORD>(bytes.size()),
+                 &bytesRead,
+                 nullptr) != FALSE &&
+             bytesRead == bytes.size());
+    }
+    if (!success)
+    {
+        errorCode = GetLastError();
+        if (errorCode == ERROR_SUCCESS)
+        {
+            errorCode = ERROR_INVALID_DATA;
+        }
+        bytes.clear();
+    }
+    CloseHandle(file);
+    return success;
+}
+
+bool WriteWholeFile(HANDLE file, const std::string& bytes)
+{
+    std::size_t offset = 0;
+    while (offset < bytes.size())
+    {
+        const DWORD chunk = static_cast<DWORD>((std::min)(
+            bytes.size() - offset,
+            static_cast<std::size_t>(
+                std::numeric_limits<DWORD>::max())));
+        DWORD written = 0;
+        if (WriteFile(
+                file,
+                bytes.data() + offset,
+                chunk,
+                &written,
+                nullptr) == FALSE ||
+            written != chunk)
+        {
+            return false;
+        }
+        offset += written;
+    }
+    return true;
+}
+} // namespace
+
+namespace bfvr::settings
+{
+
+UserSettingsSchema SeededUserSettingsSchema()
+{
+    return {
+        {
+            std::string(kInfantryTurnSpeedKey),
+            std::to_string(kDefaultInfantryTurnSpeedPercent),
+            {
+                "Infantry right-thumbstick smooth-turn speed as a percentage of BFVR's original tuned speed. This does not affect vehicles, aircraft, turrets, or mounted weapons.",
+                "Accepted values: 50 through 300 in steps of 10. 100 is the original speed, 50 is half speed, and 300 is three times that speed."
+            },
+            IsInfantryTurnSpeed
+        },
+        {
+            std::string(kInvertFlightPitchKey),
+            "false",
+            {
+                "Inverts the aircraft right-stick vertical pitch axis only. It does not change infantry turning or turret elevation.",
+                "Accepted values: true or false. false keeps stick-up as dive/nose-down; true makes stick-up climb/nose-up."
+            },
+            IsBoolean
+        },
+        {
+            std::string(kInvertTurretPitchKey),
+            "false",
+            {
+                "Inverts up/down aiming for surface vehicles, sea vehicles, turrets, and mounted weapons, including right-stick and right-grip motion aim.",
+                "Accepted values: true or false. false keeps stick and controller movement aligned in their normal pitch direction; true reverses both."
+            },
+            IsBoolean
+        },
+        {
+            std::string(kInvertTurretYawKey),
+            "false",
+            {
+                "Inverts left/right aiming for surface vehicles, sea vehicles, turrets, and mounted weapons, including right-stick and right-grip motion aim.",
+                "Accepted values: true or false. false keeps stick and controller movement aligned in their normal yaw direction; true reverses both."
+            },
+            IsBoolean
+        },
+        {
+            std::string(kOffHandGripStyleKey),
+            "hold",
+            {
+                "Chooses how the left-hand grip controls weapon support. hold keeps the off hand attached only while the grip is held; toggle attaches on one grip press and releases on the next.",
+                "Accepted values: hold or toggle. toggle is intended for controllers such as Vive Wands and Valve Index controllers where continuously holding grip may be uncomfortable or unreliable. Applied only after VR Settings > Save."
+            },
+            IsOffHandGripStyle
+        },
+        {
+            std::string(kHandWeaponCrosshairKey),
+            "on",
+            {
+                "Controls the stereo 3D HUD crosshair only for shooting hand weapons such as rifles and pistols. off hides both the aiming crosshair and its hit marker; on shows both; hit_marker_only hides the aiming crosshair but still shows confirmed-hit feedback.",
+                "Accepted values: off, on, or hit_marker_only. Gadget crosshairs always remain enabled. This does not change weapon aim, bullet direction, scopes, or BF1942 hit detection. Applied only after VR Settings > Save."
+            },
+            IsWorldCrosshairMode
+        },
+        {
+            std::string(kMountedWeaponCrosshairKey),
+            "on",
+            {
+                "Controls the stereo 3D HUD crosshair for vehicles, turrets, and mounted guns. off hides both the aiming crosshair and its hit marker; on shows both; hit_marker_only hides the aiming crosshair but still shows confirmed-hit feedback.",
+                "Accepted values: off, on, or hit_marker_only. This does not change mounted aim, projectile direction, or BF1942 hit detection. Applied only after VR Settings > Save."
+            },
+            IsWorldCrosshairMode
+        },
+        {
+            std::string(kFxaaEnabledKey),
+            "true",
+            {
+                "Enables BFVR's world-only Fast Approximate Anti-Aliasing pass. It smooths jagged world edges without filtering the separate VR menu and HUD composition layers.",
+                "Accepted values: true or false. This setting is applied only after VR Settings > Save and does not require a restart."
+            },
+            IsBoolean
+        },
+        {
+            std::string(kAmbientOcclusionEnabledKey),
+            "true",
+            {
+                "Enables BFVR's world-only screen-space ambient occlusion, adding contact shading where nearby surfaces meet. It uses the stereo depth resources produced by the game process.",
+                "Accepted values: true or false. Changing this setting requires restarting BFVR after Save because the depth resources are negotiated at startup."
+            },
+            IsBoolean
+        },
+        {
+            std::string(kAmbientOcclusionRadiusKey),
+            std::to_string(kDefaultAmbientOcclusionRadiusCentimeters),
+            {
+                "Sets the view-space radius around each visible surface point searched for ambient occlusion. Larger values spread contact shading farther but can make broad halos more noticeable.",
+                "Units are centimeters. Accepted values: 10 through 150 in steps of 5. This setting is applied only after VR Settings > Save."
+            },
+            IsAmbientOcclusionRadius
+        },
+        {
+            std::string(kAmbientOcclusionStrengthKey),
+            std::to_string(kDefaultAmbientOcclusionStrengthPercent),
+            {
+                "Controls how strongly the computed ambient occlusion darkens the world image. 0 preserves the AO computation but applies no darkening; 100 applies the full tuned result.",
+                "Accepted values: 0 through 100 percent in steps of 5. This setting is applied only after VR Settings > Save."
+            },
+            IsAmbientOcclusionStrength
+        },
+        {
+            std::string(kBloomEnabledKey),
+            "true",
+            {
+                "Enables BFVR's world-only bloom pass, extracting bright scene areas, blurring them, and adding the resulting glow back to the two eye images. VR menus and HUD layers are excluded.",
+                "Accepted values: true or false. Changing this setting requires restarting BFVR after Save because bloom shaders and render targets are created at startup."
+            },
+            IsBoolean
+        },
+        {
+            std::string(kBloomThresholdKey),
+            std::to_string(kDefaultBloomThresholdPercent),
+            {
+                "Sets the linear brightness threshold at which pixels begin contributing to bloom. Lower values allow more of the scene to glow; higher values restrict bloom to the brightest areas.",
+                "Accepted values: 5 through 95 percent in steps of 5. 75 means a linear threshold of 0.75. This setting is applied only after VR Settings > Save."
+            },
+            IsBloomThreshold
+        },
+        {
+            std::string(kBloomIntensityKey),
+            std::to_string(kDefaultBloomIntensityPercent),
+            {
+                "Controls how strongly the blurred bloom image is added back to the world. 0 produces no visible glow while retaining the saved bloom enable choice; 100 is the maximum menu value.",
+                "Accepted values: 0 through 100 percent in steps of 5. 25 means an intensity of 0.25. This setting is applied only after VR Settings > Save."
+            },
+            IsBloomIntensity
+        }
+    };
+}
+
+UserSettingsValues DecodeUserSettings(const UserSettings& settings) noexcept
+{
+    UserSettingsValues result;
+    const auto turnSpeed = settings.values.find(
+        std::string(kInfantryTurnSpeedKey));
+    if (turnSpeed != settings.values.end())
+    {
+        std::uint32_t parsedPercent = 0;
+        const auto parsed = std::from_chars(
+            turnSpeed->second.data(),
+            turnSpeed->second.data() + turnSpeed->second.size(),
+            parsedPercent);
+        if (parsed.ec == std::errc{} &&
+            parsed.ptr == turnSpeed->second.data() + turnSpeed->second.size() &&
+            IsInfantryTurnSpeed(turnSpeed->second))
+        {
+            result.infantryTurnSpeedPercent = parsedPercent;
+        }
+    }
+    const auto readBoolean = [&](std::string_view key, bool fallback) {
+        const auto found = settings.values.find(std::string(key));
+        return found == settings.values.end()
+            ? fallback
+            : found->second == "true";
+    };
+    result.invertFlightPitch = readBoolean(kInvertFlightPitchKey, false);
+    result.invertTurretPitch = readBoolean(kInvertTurretPitchKey, false);
+    result.invertTurretYaw = readBoolean(kInvertTurretYawKey, false);
+    const auto readGripStyle = [&settings]() {
+        const auto found = settings.values.find(
+            std::string(kOffHandGripStyleKey));
+        return found != settings.values.end() && found->second == "toggle"
+            ? OffHandGripStyle::Toggle
+            : OffHandGripStyle::Hold;
+    };
+    const auto readCrosshairMode = [&settings](std::string_view key) {
+        const auto found = settings.values.find(std::string(key));
+        if (found == settings.values.end() || found->second == "on")
+        {
+            return WorldCrosshairMode::On;
+        }
+        return found->second == "hit_marker_only"
+            ? WorldCrosshairMode::HitMarkerOnly
+            : WorldCrosshairMode::Off;
+    };
+    result.offHandGripStyle = readGripStyle();
+    result.handWeaponCrosshair = readCrosshairMode(kHandWeaponCrosshairKey);
+    result.mountedWeaponCrosshair = readCrosshairMode(
+        kMountedWeaponCrosshairKey);
+    result.fxaaEnabled = readBoolean(kFxaaEnabledKey, true);
+    result.ambientOcclusionEnabled = readBoolean(
+        kAmbientOcclusionEnabledKey,
+        true);
+    result.bloomEnabled = readBoolean(kBloomEnabledKey, true);
+    const auto readUnsigned = [&settings](
+                                  std::string_view key,
+                                  std::uint32_t fallback,
+                                  UserSettingValidator validator) {
+        const auto found = settings.values.find(std::string(key));
+        if (found == settings.values.end() || validator == nullptr ||
+            !validator(found->second))
+        {
+            return fallback;
+        }
+        std::uint32_t value = fallback;
+        const auto parsed = std::from_chars(
+            found->second.data(),
+            found->second.data() + found->second.size(),
+            value);
+        return parsed.ec == std::errc{} ? value : fallback;
+    };
+    result.ambientOcclusionRadiusCentimeters = readUnsigned(
+        kAmbientOcclusionRadiusKey,
+        kDefaultAmbientOcclusionRadiusCentimeters,
+        IsAmbientOcclusionRadius);
+    result.ambientOcclusionStrengthPercent = readUnsigned(
+        kAmbientOcclusionStrengthKey,
+        kDefaultAmbientOcclusionStrengthPercent,
+        IsAmbientOcclusionStrength);
+    result.bloomThresholdPercent = readUnsigned(
+        kBloomThresholdKey,
+        kDefaultBloomThresholdPercent,
+        IsBloomThreshold);
+    result.bloomIntensityPercent = readUnsigned(
+        kBloomIntensityKey,
+        kDefaultBloomIntensityPercent,
+        IsBloomIntensity);
+    return result;
+}
+
+void EncodeUserSettings(
+    const UserSettingsValues& values,
+    UserSettings& settings)
+{
+    const std::uint32_t clampedTurnSpeed = std::clamp(
+        values.infantryTurnSpeedPercent,
+        kMinimumInfantryTurnSpeedPercent,
+        kMaximumInfantryTurnSpeedPercent);
+    const std::uint32_t snappedTurnSpeed =
+        ((clampedTurnSpeed + kInfantryTurnSpeedStepPercent / 2U) /
+         kInfantryTurnSpeedStepPercent) *
+        kInfantryTurnSpeedStepPercent;
+    settings.values[std::string(kInfantryTurnSpeedKey)] =
+        std::to_string(snappedTurnSpeed);
+    settings.values[std::string(kInvertFlightPitchKey)] =
+        values.invertFlightPitch ? "true" : "false";
+    settings.values[std::string(kInvertTurretPitchKey)] =
+        values.invertTurretPitch ? "true" : "false";
+    settings.values[std::string(kInvertTurretYawKey)] =
+        values.invertTurretYaw ? "true" : "false";
+    settings.values[std::string(kOffHandGripStyleKey)] =
+        values.offHandGripStyle == OffHandGripStyle::Toggle
+        ? "toggle"
+        : "hold";
+    const auto encodeCrosshairMode = [](WorldCrosshairMode mode) {
+        switch (mode)
+        {
+        case WorldCrosshairMode::Off: return "off";
+        case WorldCrosshairMode::HitMarkerOnly: return "hit_marker_only";
+        case WorldCrosshairMode::On:
+        default: return "on";
+        }
+    };
+    settings.values[std::string(kHandWeaponCrosshairKey)] =
+        encodeCrosshairMode(values.handWeaponCrosshair);
+    settings.values[std::string(kMountedWeaponCrosshairKey)] =
+        encodeCrosshairMode(values.mountedWeaponCrosshair);
+    settings.values[std::string(kFxaaEnabledKey)] =
+        values.fxaaEnabled ? "true" : "false";
+    settings.values[std::string(kAmbientOcclusionEnabledKey)] =
+        values.ambientOcclusionEnabled ? "true" : "false";
+    settings.values[std::string(kBloomEnabledKey)] =
+        values.bloomEnabled ? "true" : "false";
+    const auto snap = [](std::uint32_t value,
+                         std::uint32_t minimum,
+                         std::uint32_t maximum,
+                         std::uint32_t step) {
+        const std::uint32_t clamped = std::clamp(value, minimum, maximum);
+        return minimum +
+            ((clamped - minimum + step / 2U) / step) * step;
+    };
+    settings.values[std::string(kAmbientOcclusionRadiusKey)] =
+        std::to_string(snap(
+            values.ambientOcclusionRadiusCentimeters,
+            kMinimumAmbientOcclusionRadiusCentimeters,
+            kMaximumAmbientOcclusionRadiusCentimeters,
+            kAmbientOcclusionRadiusStepCentimeters));
+    settings.values[std::string(kAmbientOcclusionStrengthKey)] =
+        std::to_string(snap(
+            values.ambientOcclusionStrengthPercent,
+            kMinimumAmbientOcclusionStrengthPercent,
+            kMaximumAmbientOcclusionStrengthPercent,
+            kAmbientOcclusionStrengthStepPercent));
+    settings.values[std::string(kBloomThresholdKey)] =
+        std::to_string(snap(
+            values.bloomThresholdPercent,
+            kMinimumBloomThresholdPercent,
+            kMaximumBloomThresholdPercent,
+            kBloomThresholdStepPercent));
+    settings.values[std::string(kBloomIntensityKey)] =
+        std::to_string(snap(
+            values.bloomIntensityPercent,
+            kMinimumBloomIntensityPercent,
+            kMaximumBloomIntensityPercent,
+            kBloomIntensityStepPercent));
+}
+
+bool UserSettingsStore::Initialize(
+    const std::wstring& path,
+    UserSettingsSchema schema)
+{
+    path_.clear();
+    schema_.clear();
+    ready_ = false;
+    const std::wstring parent = ParentPath(path);
+    if (path.empty() || parent.empty() || !IsDirectory(parent))
+    {
+        return false;
+    }
+    for (const UserSettingSeed& seed : schema)
+    {
+        if (!IsValidKey(seed.key) ||
+            !IsValid(seed, seed.defaultValue) ||
+            seed.documentation.size() < 2 ||
+            std::any_of(
+                seed.documentation.begin(),
+                seed.documentation.end(),
+                [](const std::string& line) {
+                    return line.empty() ||
+                        line.find_first_of("\r\n") != std::string::npos;
+                }) ||
+            std::any_of(
+                schema_.begin(),
+                schema_.end(),
+                [&](const UserSettingSeed& existing) {
+                    return existing.key == seed.key;
+                }))
+        {
+            schema_.clear();
+            return false;
+        }
+        schema_.push_back(seed);
+    }
+    path_ = path;
+    ready_ = true;
+    return true;
+}
+
+UserSettings UserSettingsStore::Defaults() const
+{
+    UserSettings result;
+    for (const UserSettingSeed& seed : schema_)
+    {
+        result.values.emplace(seed.key, seed.defaultValue);
+    }
+    return result;
+}
+
+UserSettingsLoadResult UserSettingsStore::Load() const
+{
+    UserSettingsLoadResult result;
+    result.settings = Defaults();
+    if (!ready_)
+    {
+        result.status = UserSettingsLoadStatus::IoErrorUsedDefaults;
+        return result;
+    }
+    std::string bytes;
+    DWORD errorCode = ERROR_SUCCESS;
+    if (!ReadWholeFile(path_, bytes, errorCode))
+    {
+        result.status = errorCode == ERROR_FILE_NOT_FOUND ||
+                errorCode == ERROR_PATH_NOT_FOUND
+            ? UserSettingsLoadStatus::MissingUsedDefaults
+            : UserSettingsLoadStatus::IoErrorUsedDefaults;
+        return result;
+    }
+    if (bytes.size() >= 3 &&
+        static_cast<unsigned char>(bytes[0]) == 0xEFU &&
+        static_cast<unsigned char>(bytes[1]) == 0xBBU &&
+        static_cast<unsigned char>(bytes[2]) == 0xBFU)
+    {
+        bytes.erase(0, 3);
+    }
+
+    bool schemaSeen = false;
+    std::vector<bool> settingSeen(schema_.size(), false);
+    std::size_t offset = 0;
+    while (offset <= bytes.size())
+    {
+        const std::size_t end = bytes.find('\n', offset);
+        std::string_view line(
+            bytes.data() + offset,
+            (end == std::string::npos ? bytes.size() : end) - offset);
+        line = Trim(line);
+        if (!line.empty() && line.front() != '#')
+        {
+            const std::size_t equals = line.find('=');
+            if (equals == std::string_view::npos)
+            {
+                result.settings = Defaults();
+                result.status = UserSettingsLoadStatus::InvalidUsedDefaults;
+                return result;
+            }
+            const std::string_view key = Trim(line.substr(0, equals));
+            const std::string_view value = Trim(line.substr(equals + 1));
+            if (key == "schema_version")
+            {
+                std::uint32_t version = 0;
+                const auto parsed = std::from_chars(
+                    value.data(),
+                    value.data() + value.size(),
+                    version);
+                if (schemaSeen || parsed.ec != std::errc{} ||
+                    parsed.ptr != value.data() + value.size() ||
+                    version != kUserSettingsSchemaVersion)
+                {
+                    result.settings = Defaults();
+                    result.status =
+                        UserSettingsLoadStatus::InvalidUsedDefaults;
+                    return result;
+                }
+                schemaSeen = true;
+            }
+            else if (const UserSettingSeed* seed = FindSeed(key))
+            {
+                if (!IsValid(*seed, value))
+                {
+                    result.settings = Defaults();
+                    result.status =
+                        UserSettingsLoadStatus::InvalidUsedDefaults;
+                    return result;
+                }
+                result.settings.values[seed->key] = std::string(value);
+                const std::size_t seedIndex = static_cast<std::size_t>(
+                    seed - schema_.data());
+                if (seedIndex < settingSeen.size())
+                {
+                    settingSeen[seedIndex] = true;
+                }
+            }
+        }
+        if (end == std::string::npos)
+        {
+            break;
+        }
+        offset = end + 1;
+    }
+    result.status = schemaSeen
+        ? (std::all_of(settingSeen.begin(), settingSeen.end(), [](bool seen) {
+               return seen;
+           })
+               ? UserSettingsLoadStatus::Loaded
+               : UserSettingsLoadStatus::LoadedCompletedSeed)
+        : UserSettingsLoadStatus::InvalidUsedDefaults;
+    if (!schemaSeen)
+    {
+        result.settings = Defaults();
+    }
+    return result;
+}
+
+UserSettingsLoadResult UserSettingsStore::LoadOrCreateDefaults() const
+{
+    UserSettingsLoadResult result = Load();
+    if (result.status == UserSettingsLoadStatus::MissingUsedDefaults)
+    {
+        result.status = Save(result.settings)
+            ? UserSettingsLoadStatus::MissingCreatedDefaults
+            : UserSettingsLoadStatus::IoErrorUsedDefaults;
+    }
+    else if (result.status == UserSettingsLoadStatus::LoadedCompletedSeed)
+    {
+        result.status = Save(result.settings)
+            ? UserSettingsLoadStatus::LoadedCompletedSeed
+            : UserSettingsLoadStatus::IoErrorUsedDefaults;
+    }
+    return result;
+}
+
+bool UserSettingsStore::Save(const UserSettings& settings) const
+{
+    if (!ready_)
+    {
+        return false;
+    }
+    std::string contents =
+        "# BFVR user configuration\r\n"
+        "# You may edit this file manually with BFVR stopped.\r\n"
+        "# Every setting includes its behavior, accepted values, and seeded default.\r\n"
+        "# Keep each setting in the form: setting_name = value\r\n"
+        "# Restart BFVR after manual edits so both runtime processes reload it.\r\n"
+        "# Invalid values make BFVR safely use seeded defaults without replacing this file.\r\n"
+        "# After initial creation, this is rewritten only by VR Settings > Save.\r\n"
+        "# Delete this file to restore seeded defaults on the next open.\r\n"
+        "schema_version = " +
+        std::to_string(kUserSettingsSchemaVersion) + "\r\n";
+    for (const UserSettingSeed& seed : schema_)
+    {
+        const auto value = settings.values.find(seed.key);
+        const std::string& selected = value == settings.values.end()
+            ? seed.defaultValue
+            : value->second;
+        if (!IsValid(seed, selected))
+        {
+            return false;
+        }
+        contents += "\r\n";
+        for (const std::string& line : seed.documentation)
+        {
+            contents += "# " + line + "\r\n";
+        }
+        contents += "# Seeded default: " + seed.defaultValue + "\r\n";
+        contents += seed.key + " = " + selected + "\r\n";
+    }
+    contents +=
+        "\r\n# Settings entries will appear above as their controls are implemented.\r\n";
+
+    const std::wstring temporaryPath = path_ + L"." +
+        std::to_wstring(GetCurrentProcessId()) + L".tmp";
+    HANDLE file = CreateFileW(
+        temporaryPath.c_str(),
+        GENERIC_WRITE,
+        0,
+        nullptr,
+        CREATE_ALWAYS,
+        FILE_ATTRIBUTE_NORMAL,
+        nullptr);
+    if (file == INVALID_HANDLE_VALUE)
+    {
+        return false;
+    }
+    const bool written = WriteWholeFile(file, contents) &&
+        FlushFileBuffers(file) != FALSE;
+    const bool closed = CloseHandle(file) != FALSE;
+    if (!written || !closed ||
+        MoveFileExW(
+            temporaryPath.c_str(),
+            path_.c_str(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) == FALSE)
+    {
+        DeleteFileW(temporaryPath.c_str());
+        return false;
+    }
+    return true;
+}
+
+bool UserSettingsStore::IsReady() const noexcept
+{
+    return ready_;
+}
+
+const std::wstring& UserSettingsStore::Path() const noexcept
+{
+    return path_;
+}
+
+const UserSettingSeed* UserSettingsStore::FindSeed(
+    std::string_view key) const noexcept
+{
+    const auto found = std::find_if(
+        schema_.begin(),
+        schema_.end(),
+        [&](const UserSettingSeed& seed) { return seed.key == key; });
+    return found == schema_.end() ? nullptr : &*found;
+}
+
+bool UserSettingsStore::IsValid(
+    const UserSettingSeed& seed,
+    std::string_view value) const noexcept
+{
+    return !value.empty() && value.find_first_of("\r\n") ==
+            std::string_view::npos &&
+        (seed.validator == nullptr || seed.validator(value));
+}
+
+UserSettingsLoadStatus UserSettingsSession::Begin(
+    const UserSettingsStore& store)
+{
+    store_ = &store;
+    const UserSettingsLoadResult loaded = store.Load();
+    working_ = loaded.settings;
+    active_ = true;
+    return loaded.status;
+}
+
+void UserSettingsSession::ResetToDefaults()
+{
+    if (active_ && store_ != nullptr)
+    {
+        working_ = store_->Defaults();
+    }
+}
+
+bool UserSettingsSession::Save()
+{
+    return active_ && store_ != nullptr && store_->Save(working_);
+}
+
+void UserSettingsSession::Cancel() noexcept
+{
+    working_ = {};
+    store_ = nullptr;
+    active_ = false;
+}
+
+bool UserSettingsSession::IsActive() const noexcept
+{
+    return active_;
+}
+
+const UserSettings& UserSettingsSession::Working() const noexcept
+{
+    return working_;
+}
+
+UserSettings& UserSettingsSession::Working() noexcept
+{
+    return working_;
+}
+
+UserSettingsLoadStatus UserSettingsRuntime::Initialize(
+    const wchar_t* payloadDirectory)
+{
+    ready_ = store_.Initialize(
+        ResolveUserSettingsPath(payloadDirectory),
+        SeededUserSettingsSchema());
+    if (!ready_)
+    {
+        current_ = {};
+        return UserSettingsLoadStatus::IoErrorUsedDefaults;
+    }
+    return Reload();
+}
+
+UserSettingsLoadStatus UserSettingsRuntime::Reload()
+{
+    if (!ready_)
+    {
+        current_ = {};
+        return UserSettingsLoadStatus::IoErrorUsedDefaults;
+    }
+    const UserSettingsLoadResult loaded = store_.LoadOrCreateDefaults();
+    current_ = loaded.settings;
+    (void)QueryFileSignature(
+        store_.Path(),
+        observedFileExists_,
+        observedWriteTime_,
+        observedFileSize_);
+    return loaded.status;
+}
+
+bool UserSettingsRuntime::ReloadIfChanged()
+{
+    if (!ready_)
+    {
+        return false;
+    }
+    bool exists = false;
+    std::uint64_t writeTime = 0;
+    std::uint64_t fileSize = 0;
+    if (!QueryFileSignature(store_.Path(), exists, writeTime, fileSize) ||
+        (exists == observedFileExists_ &&
+         writeTime == observedWriteTime_ &&
+         fileSize == observedFileSize_))
+    {
+        return false;
+    }
+    (void)Reload();
+    return true;
+}
+
+bool UserSettingsRuntime::Commit(const UserSettings& settings)
+{
+    if (!ready_ || !store_.Save(settings))
+    {
+        return false;
+    }
+    current_ = settings;
+    (void)QueryFileSignature(
+        store_.Path(),
+        observedFileExists_,
+        observedWriteTime_,
+        observedFileSize_);
+    return true;
+}
+
+bool UserSettingsRuntime::IsReady() const noexcept
+{
+    return ready_;
+}
+
+const UserSettings& UserSettingsRuntime::Current() const noexcept
+{
+    return current_;
+}
+
+const UserSettingsStore& UserSettingsRuntime::Store() const noexcept
+{
+    return store_;
+}
+
+UserSettingsRuntime& ProcessUserSettingsRuntime()
+{
+    static UserSettingsRuntime runtime;
+    return runtime;
+}
+
+std::wstring ResolveUserSettingsPath(const wchar_t* payloadDirectory)
+{
+    std::array<wchar_t, 32768> environmentPath = {};
+    const DWORD environmentLength = GetEnvironmentVariableW(
+        kUserConfigEnvironmentName,
+        environmentPath.data(),
+        static_cast<DWORD>(environmentPath.size()));
+    if (environmentLength > 0 &&
+        environmentLength < environmentPath.size())
+    {
+        return environmentPath.data();
+    }
+
+    std::array<wchar_t, 32768> currentDirectory = {};
+    const DWORD currentLength = GetCurrentDirectoryW(
+        static_cast<DWORD>(currentDirectory.size()),
+        currentDirectory.data());
+    if (currentLength > 0 && currentLength < currentDirectory.size())
+    {
+        const std::wstring bfvrDirectory = JoinPath(
+            currentDirectory.data(),
+            L"BFVR");
+        if (IsDirectory(bfvrDirectory))
+        {
+            return JoinPath(bfvrDirectory, kUserConfigFileName);
+        }
+    }
+    return payloadDirectory == nullptr
+        ? std::wstring{}
+        : JoinPath(payloadDirectory, kUserConfigFileName);
+}
+
+const wchar_t* UserSettingsLoadStatusName(
+    UserSettingsLoadStatus status) noexcept
+{
+    switch (status)
+    {
+    case UserSettingsLoadStatus::Loaded: return L"saved user values";
+    case UserSettingsLoadStatus::LoadedCompletedSeed:
+        return L"saved user values plus newly seeded settings";
+    case UserSettingsLoadStatus::MissingUsedDefaults:
+        return L"seeded defaults (no save exists)";
+    case UserSettingsLoadStatus::MissingCreatedDefaults:
+        return L"seeded defaults (created a new UserConfig.txt)";
+    case UserSettingsLoadStatus::InvalidUsedDefaults:
+        return L"seeded defaults (save is invalid)";
+    case UserSettingsLoadStatus::IoErrorUsedDefaults:
+    default: return L"seeded defaults (save could not be read)";
+    }
+}
+
+} // namespace bfvr::settings

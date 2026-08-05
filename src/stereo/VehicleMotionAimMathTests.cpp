@@ -171,6 +171,22 @@ bool TestTrackingJumpBecomesZeroInputReference()
         NearlyEqual(afterJump.mouseLookX, 0.24F) &&
         NearlyEqual(afterJump.mouseLookY, 0.0F);
 }
+
+bool TestLiveCalibratedStickAndMotionSigns()
+{
+    const auto normal =
+        bfvr::stereo::CalibratedVehicleAimInputSigns(false, false);
+    const auto inverted =
+        bfvr::stereo::CalibratedVehicleAimInputSigns(true, true);
+    return NearlyEqual(normal.stickYaw, 1.0F) &&
+        NearlyEqual(normal.motionYaw, -1.0F) &&
+        NearlyEqual(normal.stickPitch, 1.0F) &&
+        NearlyEqual(normal.motionPitch, 1.0F) &&
+        NearlyEqual(inverted.stickYaw, -1.0F) &&
+        NearlyEqual(inverted.motionYaw, 1.0F) &&
+        NearlyEqual(inverted.stickPitch, -1.0F) &&
+        NearlyEqual(inverted.motionPitch, -1.0F);
+}
 } // namespace
 
 int main()
@@ -180,7 +196,8 @@ int main()
         TestOppositeMovementAndJitterDeadzone() &&
         TestSlowMovementAccumulatesAcrossDeadzone() &&
         TestTrackingLossAndModePauseRebaseline() &&
-        TestTrackingJumpBecomesZeroInputReference();
+        TestTrackingJumpBecomesZeroInputReference() &&
+        TestLiveCalibratedStickAndMotionSigns();
     if (!passed)
     {
         std::fprintf(stderr, "Vehicle motion-aim math tests failed.\n");

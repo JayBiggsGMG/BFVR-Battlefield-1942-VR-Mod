@@ -11,6 +11,7 @@
 #include "client/PlayerInputProbe.h"
 #include "client/WeaponFireProbe.h"
 #include "presenter/D3DSystemRuntime.h"
+#include "settings/UserSettings.h"
 #include "bfvr_runtime_diagnostics.hpp"
 
 #include <MinHook.h>
@@ -1577,6 +1578,40 @@ extern "C" __declspec(dllexport) DWORD WINAPI BFVRInitializeObserver(LPVOID init
     {
         return 1;
     }
+
+    wchar_t payloadDirectory[MAX_PATH] = {};
+    const DWORD modulePathLength = GetModuleFileNameW(
+        g_module,
+        payloadDirectory,
+        static_cast<DWORD>(std::size(payloadDirectory)));
+    if (modulePathLength > 0 && modulePathLength < std::size(payloadDirectory))
+    {
+        wchar_t* const separator = wcsrchr(payloadDirectory, L'\\');
+        if (separator != nullptr)
+        {
+            *separator = L'\0';
+        }
+        else
+        {
+            payloadDirectory[0] = L'\0';
+        }
+    }
+    else
+    {
+        payloadDirectory[0] = L'\0';
+    }
+    const bfvr::settings::UserSettingsLoadStatus userSettingsStatus =
+        bfvr::settings::ProcessUserSettingsRuntime().Initialize(
+            payloadDirectory[0] == L'\0' ? nullptr : payloadDirectory);
+    AppendLog(
+        L"BFVR game-client startup user configuration selected %s at %s.",
+        bfvr::settings::UserSettingsLoadStatusName(userSettingsStatus),
+        bfvr::settings::ProcessUserSettingsRuntime().Store().Path().empty()
+            ? L"<unavailable path>"
+            : bfvr::settings::ProcessUserSettingsRuntime()
+                  .Store()
+                  .Path()
+                  .c_str());
 
     struct ObserverInitializationParameters
     {

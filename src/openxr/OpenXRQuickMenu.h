@@ -1,8 +1,11 @@
 #pragma once
 
 #include "client/QuickMenuArt.h"
+#include "client/SettingsMenuArt.h"
 #include "openxr/OpenXRPresentation.h"
+#include "settings/UserSettings.h"
 #include "stereo/QuickMenuInteraction.h"
+#include "stereo/SettingsMenuInteraction.h"
 
 #include <windows.h>
 #include <d3d11.h>
@@ -51,10 +54,13 @@ public:
         ID3D11Device* device,
         ID3D11DeviceContext* context,
         const OpenXRQuickMenuApi& api,
+        float nativeMenuWidthMeters,
+        float nativeMenuDistanceMeters,
         OpenXRLogCallback logCallback,
         void* logContext);
     void Update(const OpenXRPresentationFrameState& frame) noexcept;
     void SetMountedCameraDecoupled(bool decoupled) noexcept;
+    void OpenSettingsMenu() noexcept;
 
     std::size_t AppendLayers(
         XrSpace localSpace,
@@ -82,6 +88,13 @@ private:
         UINT width,
         UINT height,
         ID3D11Texture2D** texture);
+    bool CreateMutableSourceTexture(
+        const std::vector<std::uint32_t>& bgraPixels,
+        UINT width,
+        UINT height,
+        ID3D11Texture2D** texture);
+    bool RefreshSettingsSource(
+        const stereo::SettingsMenuSnapshot& state);
     bool CopyToSwapchain(
         Swapchain& target,
         ID3D11Texture2D* source,
@@ -100,16 +113,27 @@ private:
         ID3D11Texture2D*,
         stereo::kQuickMenuUtilityVisualCount> utilitySources_ = {};
     ID3D11Texture2D* cursorSource_ = nullptr;
+    ID3D11Texture2D* settingsSource_ = nullptr;
     Swapchain menuSwapchain_ = {};
     Swapchain utilitySwapchain_ = {};
     Swapchain cursorSwapchain_ = {};
+    Swapchain settingsSwapchain_ = {};
     XrCompositionLayerQuad menuLayer_{XR_TYPE_COMPOSITION_LAYER_QUAD};
     XrCompositionLayerQuad utilityLayer_{XR_TYPE_COMPOSITION_LAYER_QUAD};
     XrCompositionLayerQuad cursorLayer_{XR_TYPE_COMPOSITION_LAYER_QUAD};
     stereo::QuickMenuInteraction interaction_ = {};
+    stereo::SettingsMenuInteraction settingsInteraction_ = {};
+    SettingsMenuArt settingsArt_ = {};
+    settings::UserSettingsRuntime* userSettingsRuntime_ = nullptr;
+    settings::UserSettingsSession userSettingsSession_ = {};
+    settings::UserSettingsValues startupSettingsValues_ = {};
+    stereo::SettingsMenuSnapshot renderedSettingsState_ = {};
     OpenXRLogCallback logCallback_ = nullptr;
     void* logContext_ = nullptr;
     bool firstVisibleFrameLogged_ = false;
+    bool firstSettingsFrameLogged_ = false;
+    bool settingsAvailable_ = false;
+    bool settingsVisualValid_ = false;
     bool mountedCameraDecoupled_ = false;
 };
 

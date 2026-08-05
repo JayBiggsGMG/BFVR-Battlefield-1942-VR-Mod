@@ -5,6 +5,7 @@
 #include "client/D3D8StereoProbeRecords.h"
 #include "client/ScopeViewOverlay.h"
 #include "presenter/SharedControlChannel.h"
+#include "settings/UserSettings.h"
 #include "stereo/ScopeViewMath.h"
 #include "stereo/StereoMath.h"
 
@@ -108,6 +109,12 @@ UINT ScaleWorldDimension(UINT dimension, float scale)
 
 bool ReadAmbientOcclusionRequested()
 {
+    const auto& runtime = bfvr::settings::ProcessUserSettingsRuntime();
+    if (runtime.IsReady())
+    {
+        return bfvr::settings::DecodeUserSettings(
+            runtime.Current()).ambientOcclusionEnabled;
+    }
     wchar_t value[16] = {};
     const DWORD length = GetEnvironmentVariableW(
         L"BFVR_OPENXR_AO",

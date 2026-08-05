@@ -131,6 +131,8 @@ bool OpenXRQuickMenu::Initialize(
     ID3D11Device* device,
     ID3D11DeviceContext* context,
     const OpenXRQuickMenuApi& api,
+    float nativeMenuWidthMeters,
+    float nativeMenuDistanceMeters,
     OpenXRLogCallback logCallback,
     void* logContext)
 {
@@ -158,10 +160,25 @@ bool OpenXRQuickMenu::Initialize(
     context_ = context;
     context_->AddRef();
 
+    userSettingsRuntime_ = &settings::ProcessUserSettingsRuntime();
+    const settings::UserSettingsLoadStatus startupSettingsStatus =
+        userSettingsRuntime_->Initialize(payloadDirectory);
+    startupSettingsValues_ = settings::DecodeUserSettings(
+        userSettingsRuntime_->Current());
+    WriteLog(
+        L"BFVR startup user configuration selected %s at %s.",
+        settings::UserSettingsLoadStatusName(startupSettingsStatus),
+        userSettingsRuntime_->Store().Path().empty()
+            ? L"<unavailable path>"
+            : userSettingsRuntime_->Store().Path().c_str());
+
     QuickMenuArt art;
     const std::wstring assetsDirectory = JoinPath(
         payloadDirectory,
         L"assets");
+    const std::wstring settingsDirectory = JoinPath(
+        assetsDirectory.c_str(),
+        L"SettingsMenu");
     if (!art.InitializeFromDirectory(
             assetsDirectory,
             logCallback_,
@@ -170,6 +187,12 @@ bool OpenXRQuickMenu::Initialize(
         Shutdown();
         return false;
     }
+    settingsInteraction_.Configure(
+        nativeMenuWidthMeters * stereo::kSettingsMenuNativeWidthScale,
+        std::max(
+            nativeMenuDistanceMeters -
+                stereo::kSettingsMenuForwardOffsetMeters,
+            0.05F));
 
     bool resourcesReady = true;
     for (std::size_t index = 0;
@@ -250,17 +273,52 @@ bool OpenXRQuickMenu::Initialize(
         Shutdown();
         return false;
     }
+
+    std::vector<std::uint32_t> settingsPixels;
+    UINT settingsWidth = 0;
+    UINT settingsHeight = 0;
+    settingsAvailable_ =
+        settingsArt_.InitializeFromDirectory(
+            settingsDirectory,
+            logCallback_,
+            logContext_) &&
+        settingsArt_.Compose(
+            settingsInteraction_.Snapshot(),
+            settingsPixels,
+            settingsWidth,
+            settingsHeight) &&
+        CreateMutableSourceTexture(
+            settingsPixels,
+            settingsWidth,
+            settingsHeight,
+            &settingsSource_) &&
+        CreateSwapchain(
+            settingsSwapchain_,
+            stereo::kSettingsMenuTextureSize,
+            stereo::kSettingsMenuTextureSize);
+    if (!settingsAvailable_)
+    {
+        settingsInteraction_.Reset();
+        settingsArt_.Reset();
+        DestroySwapchain(settingsSwapchain_);
+        ReleaseInterface(settingsSource_);
+        WriteLog(
+            L"VR Settings resources are unavailable; the independent Quick Menu remains active and Settings will fail closed.");
+    }
     WriteLog(
-        L"Quick Menu OpenXR resources are ready: menu=%ux%u utilityStrip=%ux%u cursor=%ux%u panel=%.2fx%.2f m, positioned %.2f m ahead of the right grip. The authored strip provides Decouple Turret, native G swap-kit, and reserved VR Settings buttons; decoupling defaults to coupled. Right A is the dedicated hold action.",
+        settingsAvailable_
+            ? L"Quick Menu and VR Settings OpenXR resources are ready: quick=%ux%u utilityStrip=%ux%u settings=%ux%u cursor=%ux%u. Settings uses the owner-tuned %.2f m width and sits %.2f m closer than its Deploy/Spawn plane; right A remains the dedicated interaction action."
+            : L"Quick Menu OpenXR resources are ready without VR Settings: quick=%ux%u utilityStrip=%ux%u settings=%ux%u cursor=%ux%u. The Quick Menu remains independent; owner-tuned Settings width %.2f m and depth offset %.2f m are reserved for a later successful Settings load.",
         menuSwapchain_.width,
         menuSwapchain_.height,
         utilitySwapchain_.width,
         utilitySwapchain_.height,
+        settingsSwapchain_.width,
+        settingsSwapchain_.height,
         cursorSwapchain_.width,
         cursorSwapchain_.height,
-        stereo::kQuickMenuWidthMeters,
-        stereo::kQuickMenuHeightMeters,
-        stereo::kQuickMenuHandForwardOffsetMeters);
+        nativeMenuWidthMeters * stereo::kSettingsMenuNativeWidthScale,
+        stereo::kSettingsMenuForwardOffsetMeters);
     return true;
 }
 
@@ -282,6 +340,62 @@ void OpenXRQuickMenu::Update(
         right.aimPositionTracked && right.aimOrientationTracked;
     input.rightGripPose = ToPose(right.gripPose);
     input.rightAimPose = ToPose(right.aimPose);
+    if (settingsInteraction_.IsActive())
+    {
+        settingsInteraction_.Update(input);
+        if (settingsInteraction_.TakeValuesChanged())
+        {
+            settings::EncodeUserSettings(
+                settingsInteraction_.Snapshot().values,
+                userSettingsSession_.Working());
+        }
+        const stereo::SettingsMenuCommand command =
+            settingsInteraction_.TakeCommand();
+        if (command == stereo::SettingsMenuCommand::ResetDefaults)
+        {
+            userSettingsSession_.ResetToDefaults();
+            settingsInteraction_.SetValues(settings::DecodeUserSettings(
+                userSettingsSession_.Working()));
+            settingsInteraction_.SetStatus(
+                stereo::SettingsMenuStatus::DefaultsRestored);
+            WriteLog(
+                L"VR Settings replaced only its working copy with the seeded defaults; the saved UserConfig.txt remains unchanged until Save.");
+        }
+        else if (command == stereo::SettingsMenuCommand::Save)
+        {
+            const settings::UserSettingsValues savedValues =
+                settings::DecodeUserSettings(userSettingsSession_.Working());
+            const bool saved = userSettingsRuntime_ != nullptr &&
+                userSettingsRuntime_->Commit(userSettingsSession_.Working());
+            const bool restartRequired = saved &&
+                (savedValues.ambientOcclusionEnabled !=
+                     startupSettingsValues_.ambientOcclusionEnabled ||
+                 savedValues.bloomEnabled !=
+                     startupSettingsValues_.bloomEnabled);
+            settingsInteraction_.SetStatus(
+                !saved
+                    ? stereo::SettingsMenuStatus::SaveFailed
+                    : restartRequired
+                    ? stereo::SettingsMenuStatus::
+                          SettingsSavedRestartRequired
+                    : stereo::SettingsMenuStatus::SettingsSaved);
+            WriteLog(
+                saved
+                    ? L"VR Settings atomically saved its complete working copy to UserConfig.txt; the menu remains open."
+                    : L"VR Settings could not save UserConfig.txt; the prior saved file remains intact and the menu remains open.");
+        }
+        else if (command == stereo::SettingsMenuCommand::Cancel)
+        {
+            userSettingsSession_.Cancel();
+            WriteLog(
+                L"VR Settings cancelled and discarded its unsaved working copy; UserConfig.txt was not changed.");
+        }
+        (void)RefreshSettingsSource(settingsInteraction_.Snapshot());
+        // The persistent panel owns right A until Cancel closes it. Resetting
+        // here prevents a held settings click from opening Quick Menu below.
+        interaction_.Reset();
+        return;
+    }
     interaction_.Update(input);
 }
 
@@ -291,11 +405,129 @@ void OpenXRQuickMenu::SetMountedCameraDecoupled(
     mountedCameraDecoupled_ = decoupled;
 }
 
+void OpenXRQuickMenu::OpenSettingsMenu() noexcept
+{
+    if (!settingsAvailable_)
+    {
+        WriteLog(
+            L"VR Settings open was ignored because its independent resources are unavailable; Quick Menu remains active.");
+        return;
+    }
+    interaction_.Reset();
+    const settings::UserSettingsLoadStatus loadStatus =
+        userSettingsSession_.Begin(userSettingsRuntime_->Store());
+    settingsInteraction_.Open();
+    settingsInteraction_.SetValues(settings::DecodeUserSettings(
+        userSettingsSession_.Working()));
+    switch (loadStatus)
+    {
+    case settings::UserSettingsLoadStatus::Loaded:
+        settingsInteraction_.SetStatus(
+            stereo::SettingsMenuStatus::SettingsLoaded);
+        break;
+    case settings::UserSettingsLoadStatus::InvalidUsedDefaults:
+        settingsInteraction_.SetStatus(
+            stereo::SettingsMenuStatus::InvalidConfigDefaultsLoaded);
+        break;
+    case settings::UserSettingsLoadStatus::IoErrorUsedDefaults:
+        settingsInteraction_.SetStatus(
+            stereo::SettingsMenuStatus::ConfigReadFailed);
+        break;
+    case settings::UserSettingsLoadStatus::LoadedCompletedSeed:
+    case settings::UserSettingsLoadStatus::MissingUsedDefaults:
+    case settings::UserSettingsLoadStatus::MissingCreatedDefaults:
+    default:
+        settingsInteraction_.SetStatus(
+            stereo::SettingsMenuStatus::DefaultsLoaded);
+        break;
+    }
+    settingsVisualValid_ = false;
+    WriteLog(
+        L"VR Settings menu opened on its persistent Deploy-style yaw anchor using %s; Cancel is its only close action.",
+        settings::UserSettingsLoadStatusName(loadStatus));
+}
+
 std::size_t OpenXRQuickMenu::AppendLayers(
     XrSpace localSpace,
     const XrCompositionLayerBaseHeader** destination,
     std::size_t capacity)
 {
+    const stereo::SettingsMenuSnapshot settings =
+        settingsInteraction_.Snapshot();
+    if (settings.active)
+    {
+        if (!IsReady() || !settings.visible ||
+            localSpace == XR_NULL_HANDLE || destination == nullptr ||
+            capacity < 1 || !RefreshSettingsSource(settings) ||
+            !CopyToSwapchain(
+                settingsSwapchain_,
+                settingsSource_,
+                L"VR Settings menu"))
+        {
+            return 0;
+        }
+        menuLayer_ = {XR_TYPE_COMPOSITION_LAYER_QUAD};
+        menuLayer_.layerFlags =
+            XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+        menuLayer_.space = localSpace;
+        menuLayer_.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+        menuLayer_.subImage.swapchain = settingsSwapchain_.handle;
+        menuLayer_.subImage.imageRect.extent = {
+            static_cast<std::int32_t>(settingsSwapchain_.width),
+            static_cast<std::int32_t>(settingsSwapchain_.height)};
+        menuLayer_.pose = ToXrPose(settings.panelPose);
+        menuLayer_.size = {settings.widthMeters, settings.heightMeters};
+        destination[0] =
+            reinterpret_cast<const XrCompositionLayerBaseHeader*>(
+                &menuLayer_);
+        std::size_t appended = 1;
+        if (settings.pointerVisible && capacity > appended &&
+            CopyToSwapchain(
+                cursorSwapchain_,
+                cursorSource_,
+                L"VR Settings cursor"))
+        {
+            const float cursorWidthMeters = settings.widthMeters *
+                static_cast<float>(cursorSwapchain_.width) /
+                static_cast<float>(settingsSwapchain_.width) *
+                stereo::kSettingsMenuCursorScale;
+            const float cursorHeightMeters = settings.heightMeters *
+                static_cast<float>(cursorSwapchain_.height) /
+                static_cast<float>(settingsSwapchain_.height) *
+                stereo::kSettingsMenuCursorScale;
+            const stereo::Pose cursorPose =
+                stereo::MakeSettingsMenuCursorPose(
+                    settings.panelPose,
+                    settings.widthMeters,
+                    settings.heightMeters,
+                    settings.pointerU,
+                    settings.pointerV,
+                    cursorWidthMeters,
+                    cursorHeightMeters);
+            cursorLayer_ = {XR_TYPE_COMPOSITION_LAYER_QUAD};
+            cursorLayer_.layerFlags =
+                XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+            cursorLayer_.space = localSpace;
+            cursorLayer_.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+            cursorLayer_.subImage.swapchain = cursorSwapchain_.handle;
+            cursorLayer_.subImage.imageRect.extent = {
+                static_cast<std::int32_t>(cursorSwapchain_.width),
+                static_cast<std::int32_t>(cursorSwapchain_.height)};
+            cursorLayer_.pose = ToXrPose(cursorPose);
+            cursorLayer_.size = {cursorWidthMeters, cursorHeightMeters};
+            destination[appended++] =
+                reinterpret_cast<const XrCompositionLayerBaseHeader*>(
+                    &cursorLayer_);
+        }
+        if (!firstSettingsFrameLogged_)
+        {
+            firstSettingsFrameLogged_ = true;
+            WriteLog(
+                L"VR Settings submitted its first persistent frame: tab=VR Settings, page=1/1, paging arrows hidden.");
+        }
+        return appended;
+    }
+
     const stereo::QuickMenuInteractionSnapshot state =
         interaction_.Snapshot();
     if (!IsReady() || !state.visible || localSpace == XR_NULL_HANDLE ||
@@ -422,6 +654,46 @@ bool OpenXRQuickMenu::GetMirrorState(
     OpenXRQuickMenuMirrorState& state) const noexcept
 {
     state = {};
+    const stereo::SettingsMenuSnapshot settings =
+        settingsInteraction_.Snapshot();
+    if (settings.active)
+    {
+        if (!IsReady() || !settings.visible || settingsSource_ == nullptr)
+        {
+            return false;
+        }
+        // The mutable texture is refreshed by AppendLayers earlier in the
+        // same EndFrame path; mirror borrows that exact composed visual.
+        state.visible = true;
+        state.pointerVisible = settings.pointerVisible;
+        state.panelPose = ToPresentationPose(settings.panelPose);
+        state.panelWidthMeters = settings.widthMeters;
+        state.panelHeightMeters = settings.heightMeters;
+        state.menuTexture = settingsSource_;
+        if (settings.pointerVisible && cursorSource_ != nullptr &&
+            settingsSwapchain_.width != 0 && settingsSwapchain_.height != 0)
+        {
+            state.cursorWidthMeters = settings.widthMeters *
+                static_cast<float>(cursorSwapchain_.width) /
+                static_cast<float>(settingsSwapchain_.width) *
+                stereo::kSettingsMenuCursorScale;
+            state.cursorHeightMeters = settings.heightMeters *
+                static_cast<float>(cursorSwapchain_.height) /
+                static_cast<float>(settingsSwapchain_.height) *
+                stereo::kSettingsMenuCursorScale;
+            state.cursorPose = ToPresentationPose(
+                stereo::MakeSettingsMenuCursorPose(
+                    settings.panelPose,
+                    settings.widthMeters,
+                    settings.heightMeters,
+                    settings.pointerU,
+                    settings.pointerV,
+                    state.cursorWidthMeters,
+                    state.cursorHeightMeters));
+            state.cursorTexture = cursorSource_;
+        }
+        return true;
+    }
     const stereo::QuickMenuInteractionSnapshot snapshot =
         interaction_.Snapshot();
     const std::size_t selectionIndex =
@@ -499,10 +771,17 @@ bool OpenXRQuickMenu::IsReady() const noexcept
 void OpenXRQuickMenu::Shutdown()
 {
     interaction_.Reset();
+    userSettingsSession_.Cancel();
+    userSettingsRuntime_ = nullptr;
+    startupSettingsValues_ = {};
+    settingsInteraction_.Reset();
+    settingsArt_.Reset();
+    DestroySwapchain(settingsSwapchain_);
     DestroySwapchain(cursorSwapchain_);
     DestroySwapchain(utilitySwapchain_);
     DestroySwapchain(menuSwapchain_);
     ReleaseInterface(cursorSource_);
+    ReleaseInterface(settingsSource_);
     for (ID3D11Texture2D*& source : menuSources_)
     {
         ReleaseInterface(source);
@@ -520,6 +799,10 @@ void OpenXRQuickMenu::Shutdown()
     utilityLayer_ = {XR_TYPE_COMPOSITION_LAYER_QUAD};
     cursorLayer_ = {XR_TYPE_COMPOSITION_LAYER_QUAD};
     firstVisibleFrameLogged_ = false;
+    firstSettingsFrameLogged_ = false;
+    settingsAvailable_ = false;
+    settingsVisualValid_ = false;
+    renderedSettingsState_ = {};
     mountedCameraDecoupled_ = false;
     logCallback_ = nullptr;
     logContext_ = nullptr;
@@ -630,6 +913,98 @@ bool OpenXRQuickMenu::CreateSourceTexture(
         &description,
         &data,
         texture)) && *texture != nullptr;
+}
+
+bool OpenXRQuickMenu::CreateMutableSourceTexture(
+    const std::vector<std::uint32_t>& bgraPixels,
+    UINT width,
+    UINT height,
+    ID3D11Texture2D** texture)
+{
+    if (texture == nullptr || width == 0 || height == 0 ||
+        bgraPixels.size() != static_cast<std::size_t>(width) * height)
+    {
+        return false;
+    }
+    std::vector<std::uint32_t> rgbaPixels;
+    const std::uint32_t* source = bgraPixels.data();
+    if (IsRgbaFormat(swapchainFormat_))
+    {
+        rgbaPixels.resize(bgraPixels.size());
+        std::transform(
+            bgraPixels.begin(),
+            bgraPixels.end(),
+            rgbaPixels.begin(),
+            SwapRedBlue);
+        source = rgbaPixels.data();
+    }
+    D3D11_TEXTURE2D_DESC description = {};
+    description.Width = width;
+    description.Height = height;
+    description.MipLevels = 1;
+    description.ArraySize = 1;
+    description.Format = swapchainFormat_;
+    description.SampleDesc.Count = 1;
+    description.Usage = D3D11_USAGE_DEFAULT;
+    description.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+    const D3D11_SUBRESOURCE_DATA data = {
+        source,
+        width * sizeof(std::uint32_t),
+        0};
+    return SUCCEEDED(device_->CreateTexture2D(
+        &description,
+        &data,
+        texture)) && *texture != nullptr;
+}
+
+bool OpenXRQuickMenu::RefreshSettingsSource(
+    const stereo::SettingsMenuSnapshot& state)
+{
+    const bool unchanged = settingsVisualValid_ &&
+        renderedSettingsState_.controllerLayoutVisible ==
+            state.controllerLayoutVisible &&
+        renderedSettingsState_.arrowLeftVisible == state.arrowLeftVisible &&
+        renderedSettingsState_.arrowRightVisible == state.arrowRightVisible &&
+        renderedSettingsState_.tab == state.tab &&
+        renderedSettingsState_.hovered == state.hovered &&
+        renderedSettingsState_.page == state.page &&
+        renderedSettingsState_.values == state.values &&
+        renderedSettingsState_.status == state.status;
+    if (unchanged)
+    {
+        return true;
+    }
+    if (settingsSource_ == nullptr || context_ == nullptr)
+    {
+        return false;
+    }
+    std::vector<std::uint32_t> pixels;
+    UINT width = 0;
+    UINT height = 0;
+    if (!settingsArt_.Compose(state, pixels, width, height) ||
+        width != stereo::kSettingsMenuTextureSize ||
+        height != stereo::kSettingsMenuTextureSize)
+    {
+        return false;
+    }
+    if (IsRgbaFormat(swapchainFormat_))
+    {
+        std::transform(
+            pixels.begin(),
+            pixels.end(),
+            pixels.begin(),
+            SwapRedBlue);
+    }
+    context_->UpdateSubresource(
+        settingsSource_,
+        0,
+        nullptr,
+        pixels.data(),
+        width * sizeof(std::uint32_t),
+        0);
+    renderedSettingsState_ = state;
+    settingsVisualValid_ = true;
+    return true;
 }
 
 bool OpenXRQuickMenu::CopyToSwapchain(

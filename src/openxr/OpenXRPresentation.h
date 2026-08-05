@@ -223,6 +223,10 @@ public:
     [[nodiscard]] stereo::QuickMenuSelection
     TakeQuickMenuSelection() noexcept;
 
+    // Opens the persistent owner-authored VR Settings panel after the
+    // presenter's Quick Menu command dispatcher accepts its release.
+    void OpenSettingsMenu() noexcept;
+
     // The game-side camera hook owns this state. The presenter mirrors it
     // only to render the left utility button's coupled/decoupled appearance.
     void SetMountedCameraDecoupled(bool decoupled) noexcept;

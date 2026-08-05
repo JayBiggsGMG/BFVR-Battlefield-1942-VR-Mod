@@ -42,7 +42,15 @@ bool TestStrictEligibility()
             return false;
         }
     }
-    for (int itemIndex : {1, 2, 3, 11})
+    for (int itemIndex : {2, 3})
+    {
+        input.activeItemIndex = itemIndex;
+        if (bfvr::stereo::SelectWorldCrosshairAimSource(input) != HandWeapon)
+        {
+            return false;
+        }
+    }
+    for (int itemIndex : {1, 11})
     {
         input.activeItemIndex = itemIndex;
         if (bfvr::stereo::SelectWorldCrosshairAimSource(input) != None)

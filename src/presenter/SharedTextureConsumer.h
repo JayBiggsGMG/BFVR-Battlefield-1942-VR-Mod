@@ -84,6 +84,7 @@ private:
         std::size_t index,
         const SharedTextureDescription& description);
     bool ReadCenterPixel(const Texture& texture, DWORD& pixel);
+    void ApplySavedLiveSettings();
     void WriteLog(const wchar_t* format, ...) const;
     void ReleaseTexture(Texture& texture);
     void ReleaseDepthTexture(DepthTexture& texture);
@@ -104,6 +105,7 @@ private:
     bool screenSpaceGlobalIlluminationEnabled_ = false;
     bool waterReflectionsEnabled_ = false;
     float ambientOcclusionIntensity_ = 1.0F;
+    float ambientOcclusionRadiusMeters_ = 0.60F;
     LONG ambientOcclusionFrameFailures_ = 0;
     float screenSpaceGlobalIlluminationIntensity_ = 0.65F;
     float screenSpaceGlobalIlluminationDebugMode_ = 0.0F;

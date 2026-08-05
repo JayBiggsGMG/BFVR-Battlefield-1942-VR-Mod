@@ -1,4 +1,5 @@
 #include "presenter/SharedTextureConsumer.h"
+#include "settings/UserSettings.h"
 
 #include <dxgi1_2.h>
 
@@ -160,11 +161,31 @@ bool SharedTextureConsumer::Initialize(
     device_->AddRef();
     context_ = context;
     context_->AddRef();
-    worldFxaaEnabled_ = ReadWorldFxaaEnabled();
-    const WorldBloomConfiguration bloom = ReadWorldBloomConfiguration();
-    worldBloomEnabled_ = bloom.enabled;
-    worldBloomThreshold_ = bloom.threshold;
-    worldBloomIntensity_ = bloom.intensity;
+    const auto& userSettingsRuntime =
+        settings::ProcessUserSettingsRuntime();
+    if (userSettingsRuntime.IsReady())
+    {
+        const settings::UserSettingsValues values =
+            settings::DecodeUserSettings(userSettingsRuntime.Current());
+        worldFxaaEnabled_ = values.fxaaEnabled;
+        worldBloomEnabled_ = values.bloomEnabled;
+        worldBloomThreshold_ =
+            static_cast<float>(values.bloomThresholdPercent) / 100.0F;
+        worldBloomIntensity_ =
+            static_cast<float>(values.bloomIntensityPercent) / 100.0F;
+        ambientOcclusionRadiusMeters_ = static_cast<float>(
+            values.ambientOcclusionRadiusCentimeters) / 100.0F;
+        ambientOcclusionIntensity_ = static_cast<float>(
+            values.ambientOcclusionStrengthPercent) / 100.0F;
+    }
+    else
+    {
+        worldFxaaEnabled_ = ReadWorldFxaaEnabled();
+        const WorldBloomConfiguration bloom = ReadWorldBloomConfiguration();
+        worldBloomEnabled_ = bloom.enabled;
+        worldBloomThreshold_ = bloom.threshold;
+        worldBloomIntensity_ = bloom.intensity;
+    }
     screenSpaceGlobalIlluminationIntensity_ = ReadEnvironmentFloat(
         L"BFVR_OPENXR_SSGI_INTENSITY",
         0.65F,
@@ -246,6 +267,8 @@ bool SharedTextureConsumer::Initialize(
             logCallback_,
             logContext_))
     {
+        ambientOcclusion_.SetViewRadiusMeters(
+            ambientOcclusionRadiusMeters_);
         ambientOcclusionEnabled_ = true;
     }
     if (depthOpened && screenSpaceGlobalIlluminationRequested &&
@@ -426,6 +449,7 @@ bool SharedTextureConsumer::ConsumeFrame(
     const SharedDepthFrameParameters* depthFrame,
     bool waterMaskValid)
 {
+    ApplySavedLiveSettings();
     if (context_ == nullptr)
     {
         return false;
@@ -736,6 +760,63 @@ bool SharedTextureConsumer::ConsumeFrame(
     return copied && completed && released;
 }
 
+void SharedTextureConsumer::ApplySavedLiveSettings()
+{
+    const auto& runtime = settings::ProcessUserSettingsRuntime();
+    if (!runtime.IsReady())
+    {
+        return;
+    }
+    const settings::UserSettingsValues values =
+        settings::DecodeUserSettings(runtime.Current());
+    if (worldFxaaEnabled_ != values.fxaaEnabled)
+    {
+        worldFxaaEnabled_ = values.fxaaEnabled;
+        for (std::size_t index = 0; index < textures_.size(); ++index)
+        {
+            textures_[index].applyAntialiasing =
+                worldFxaaEnabled_ &&
+                index != static_cast<std::size_t>(TextureSlot::Ref2Ui);
+        }
+        WriteLog(
+            L"Saved VR Settings applied world FXAA=%d without changing the Ref2 UI path.",
+            worldFxaaEnabled_ ? 1 : 0);
+    }
+    const float aoRadius = static_cast<float>(
+        values.ambientOcclusionRadiusCentimeters) / 100.0F;
+    if (ambientOcclusionRadiusMeters_ != aoRadius)
+    {
+        ambientOcclusionRadiusMeters_ = aoRadius;
+        ambientOcclusion_.SetViewRadiusMeters(aoRadius);
+        WriteLog(
+            L"Saved VR Settings applied AO radius %.2f m.",
+            aoRadius);
+    }
+    const float aoIntensity = static_cast<float>(
+        values.ambientOcclusionStrengthPercent) / 100.0F;
+    if (ambientOcclusionIntensity_ != aoIntensity)
+    {
+        ambientOcclusionIntensity_ = aoIntensity;
+        WriteLog(
+            L"Saved VR Settings applied AO strength %.2f.",
+            aoIntensity);
+    }
+    const float bloomThreshold = static_cast<float>(
+        values.bloomThresholdPercent) / 100.0F;
+    const float bloomIntensity = static_cast<float>(
+        values.bloomIntensityPercent) / 100.0F;
+    if (worldBloomThreshold_ != bloomThreshold ||
+        worldBloomIntensity_ != bloomIntensity)
+    {
+        worldBloomThreshold_ = bloomThreshold;
+        worldBloomIntensity_ = bloomIntensity;
+        WriteLog(
+            L"Saved VR Settings applied bloom threshold %.2f and intensity %.2f; the startup bloom enable state is unchanged.",
+            bloomThreshold,
+            bloomIntensity);
+    }
+}
+
 OpenXRPresentationTextures SharedTextureConsumer::GetLocalTextures() const noexcept
 {
     OpenXRPresentationTextures result = {};
@@ -774,6 +855,7 @@ void SharedTextureConsumer::Shutdown()
     screenSpaceGlobalIlluminationEnabled_ = false;
     waterReflectionsEnabled_ = false;
     ambientOcclusionIntensity_ = 1.0F;
+    ambientOcclusionRadiusMeters_ = 0.60F;
     ambientOcclusionFrameFailures_ = 0;
     screenSpaceGlobalIlluminationIntensity_ = 0.65F;
     screenSpaceGlobalIlluminationDebugMode_ = 0.0F;

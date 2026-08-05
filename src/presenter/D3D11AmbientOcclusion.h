@@ -24,6 +24,7 @@ public:
         ID3D11DeviceContext* context,
         SharedTextureLogCallback logCallback,
         void* logContext);
+    void SetViewRadiusMeters(float radiusMeters) noexcept;
     bool BeginFrame();
     bool BuildEye(
         std::size_t eye,
@@ -85,5 +86,6 @@ private:
     bool frameApplicationTimingActive_ = false;
     bool frameApplicationTimed_ = false;
     bool timingsReported_ = false;
+    float viewRadiusMeters_ = 0.60F;
 };
 } // namespace bfvr::shared

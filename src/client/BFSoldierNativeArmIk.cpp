@@ -11,6 +11,7 @@
 #include "client/ControllerInputCache.h"
 #include "client/WeaponPoseRuntimeCache.h"
 #include "presenter/SharedPresentationProtocol.h"
+#include "settings/UserSettings.h"
 #include "stereo/StereoMath.h"
 #include "stereo/WeaponFireAimMath.h"
 #include "stereo/WeaponPoseMath.h"
@@ -1717,6 +1718,11 @@ private:
                     (sample.hands[kLeftControllerHand].flags &
                      bfvr::shared::
                          kControllerHandFlagSqueezeActive) != 0;
+                supportInput.toggleGripStyle =
+                    bfvr::settings::DecodeUserSettings(
+                        bfvr::settings::ProcessUserSettingsRuntime().Current())
+                            .offHandGripStyle ==
+                    bfvr::settings::OffHandGripStyle::Toggle;
                 supportInput.nativeLeftHandTargetActive = false;
                 supportInput.mode =
                     activeItemIndex == 2

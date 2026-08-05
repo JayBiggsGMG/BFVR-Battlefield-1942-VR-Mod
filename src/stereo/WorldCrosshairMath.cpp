@@ -83,6 +83,11 @@ bool IsWorldCrosshairGadgetItemIndex(int itemIndex) noexcept
     return itemIndex == 4 || itemIndex == 5 || itemIndex == 6;
 }
 
+bool IsWorldCrosshairShootingWeaponItemIndex(int itemIndex) noexcept
+{
+    return itemIndex == 2 || itemIndex == 3;
+}
+
 WorldCrosshairAimSource SelectWorldCrosshairAimSource(
     const WorldCrosshairEligibility& eligibility) noexcept
 {
@@ -98,9 +103,17 @@ WorldCrosshairAimSource SelectWorldCrosshairAimSource(
             ? WorldCrosshairAimSource::MountedWeapon
             : WorldCrosshairAimSource::None;
     }
-    return eligibility.nativeArmPoseFresh &&
-            IsWorldCrosshairGadgetItemIndex(eligibility.activeItemIndex)
-        ? WorldCrosshairAimSource::GadgetController
+    if (!eligibility.nativeArmPoseFresh)
+    {
+        return WorldCrosshairAimSource::None;
+    }
+    if (IsWorldCrosshairGadgetItemIndex(eligibility.activeItemIndex))
+    {
+        return WorldCrosshairAimSource::GadgetController;
+    }
+    return IsWorldCrosshairShootingWeaponItemIndex(
+            eligibility.activeItemIndex)
+        ? WorldCrosshairAimSource::HandWeapon
         : WorldCrosshairAimSource::None;
 }
 

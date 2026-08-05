@@ -10,6 +10,7 @@ namespace bfvr::stereo
 enum class WorldCrosshairAimSource
 {
     None,
+    HandWeapon,
     GadgetController,
     MountedWeapon
 };
@@ -38,13 +39,15 @@ struct WorldCrosshairProjection
 // deliberately excluded: the owner requested the placement gadget, not an
 // unrestricted reticle for every hand item.
 [[nodiscard]] bool IsWorldCrosshairGadgetItemIndex(int itemIndex) noexcept;
+[[nodiscard]] bool IsWorldCrosshairShootingWeaponItemIndex(
+    int itemIndex) noexcept;
 
 // Infantry must have an exact fresh native-arm item pose in one of the three
-// allowed gadget slots. Modded items which reuse those gadget slots remain
-// eligible by design; unknown slots do not. A non-default PlayerControlObject
+// allowed shooting-weapon or gadget slots. Modded items which reuse those
+// slots remain eligible by design; unknown slots do not. A non-default PlayerControlObject
 // is eligible only while BF1942's own HudManager requests its crosshair and an
-// exact current weapon-fire pose is readable. Dead, stale, ordinary-weapon,
-// unarmed, and unresolved mounted states fail closed.
+// exact current weapon-fire pose is readable. Dead, stale, unarmed, unknown
+// hand-item, and unresolved mounted states fail closed.
 [[nodiscard]] WorldCrosshairAimSource SelectWorldCrosshairAimSource(
     const WorldCrosshairEligibility& eligibility) noexcept;
 

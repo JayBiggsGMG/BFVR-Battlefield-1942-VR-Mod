@@ -4,6 +4,7 @@
 #include "client/MountedWeaponAimResolver.h"
 #include "client/ScopeViewOverlay.h"
 #include "client/WeaponPoseRuntimeCache.h"
+#include "settings/UserSettings.h"
 #include "stereo/WorldCrosshairMath.h"
 
 #include <MinHook.h>
@@ -233,8 +234,23 @@ public:
                     : -1};
             const bfvr::stereo::WorldCrosshairAimSource source =
                 bfvr::stereo::SelectWorldCrosshairAimSource(eligibility);
+            const bfvr::settings::UserSettingsValues settings =
+                bfvr::settings::DecodeUserSettings(
+                    bfvr::settings::ProcessUserSettingsRuntime().Current());
+            const bfvr::settings::WorldCrosshairMode mode =
+                source == bfvr::stereo::WorldCrosshairAimSource::HandWeapon
+                ? settings.handWeaponCrosshair
+                : source == bfvr::stereo::WorldCrosshairAimSource::MountedWeapon
+                ? settings.mountedWeaponCrosshair
+                : bfvr::settings::WorldCrosshairMode::On;
+            if (source == bfvr::stereo::WorldCrosshairAimSource::None ||
+                mode == bfvr::settings::WorldCrosshairMode::Off)
+            {
+                return false;
+            }
             const auto endpoint =
-                source == bfvr::stereo::WorldCrosshairAimSource::GadgetController
+                source == bfvr::stereo::WorldCrosshairAimSource::GadgetController ||
+                    source == bfvr::stereo::WorldCrosshairAimSource::HandWeapon
                 ? bfvr::stereo::MakeWorldCrosshairEndpointFromFirePose(
                     nativeArmPose.controllerGunWorld,
                     maximumDistance_)
@@ -252,9 +268,11 @@ public:
                 player + kBFPlayerHitIndicationTimerOffset);
             state.endpoint = *endpoint;
             state.angularDiameterDegrees = angularDiameterDegrees_;
+            state.crosshairVisible =
+                mode == bfvr::settings::WorldCrosshairMode::On;
             state.hitMarkerVisible =
                 std::isfinite(hitTimer) && hitTimer > 0.0F;
-            return true;
+            return state.crosshairVisible || state.hitMarkerVisible;
         }
         __except (EXCEPTION_EXECUTE_HANDLER)
         {

@@ -27,6 +27,15 @@ BFSoldierOffHandSupportBinding::Update(
 {
     BFSoldierOffHandSupportOutput output = {};
     AcquireSRWLockExclusive(&lock_);
+    const bool toggleGripStyle = input.toggleGripStyle;
+    if (toggleGripStyle_ != toggleGripStyle)
+    {
+        policy_.Reset();
+        squeezeHeld_ = false;
+        physicalSqueezeHeld_ = false;
+        toggleSupportHeld_ = false;
+        toggleGripStyle_ = toggleGripStyle;
+    }
     if (bindingId_ != input.bindingId ||
         mode_ != input.mode)
     {
@@ -36,6 +45,7 @@ BFSoldierOffHandSupportBinding::Update(
         mode_ = input.mode;
         lastBlockedReportAt_ = 0;
         blockedReports_ = 0;
+        toggleSupportHeld_ = false;
     }
 
     std::optional<stereo::OffHandVisualSupportPose> pose;
@@ -69,21 +79,33 @@ BFSoldierOffHandSupportBinding::Update(
         break;
     }
 
+    const bool physicalWasHeld = physicalSqueezeHeld_;
     if (!input.leftSqueezeActive ||
         !std::isfinite(input.squeezeValue))
     {
-        squeezeHeld_ = false;
+        physicalSqueezeHeld_ = false;
     }
-    else if (squeezeHeld_)
+    else if (physicalSqueezeHeld_)
     {
-        squeezeHeld_ =
+        physicalSqueezeHeld_ =
             input.squeezeValue >= kSqueezeReleaseThreshold;
     }
     else
     {
-        squeezeHeld_ =
+        physicalSqueezeHeld_ =
             input.squeezeValue >= kSqueezePressThreshold;
     }
+    if (!input.sessionFocused || !input.leftGripTracked)
+    {
+        toggleSupportHeld_ = false;
+    }
+    else if (toggleGripStyle_ && physicalSqueezeHeld_ && !physicalWasHeld)
+    {
+        toggleSupportHeld_ = !toggleSupportHeld_;
+    }
+    squeezeHeld_ = toggleGripStyle_
+        ? toggleSupportHeld_
+        : physicalSqueezeHeld_;
 
     stereo::OffHandSupportSample sample = {};
     sample.bindingId = input.bindingId;
@@ -202,6 +224,11 @@ TryComputeSupportedWeaponSteering(
 {
     output = {};
     AcquireSRWLockShared(&lock_);
+    const bool gripStillActive = toggleGripStyle_
+        ? squeezeHeld_
+        : squeezeHeld_ && input.leftSqueezeActive &&
+            std::isfinite(input.squeezeValue) &&
+            input.squeezeValue >= kSqueezeReleaseThreshold;
     const bool supported =
         input.mode ==
             BFSoldierOffHandSupportMode::AuthoredHandSpan &&
@@ -210,13 +237,11 @@ TryComputeSupportedWeaponSteering(
         bindingId_ != 0 &&
         policy_.State() ==
             stereo::OffHandSupportState::Supported &&
-        squeezeHeld_ &&
+        gripStillActive &&
         input.sessionFocused &&
         input.leftGripTracked &&
-        input.leftSqueezeActive &&
         !input.nativeLeftHandTargetActive &&
-        std::isfinite(input.squeezeValue) &&
-        input.squeezeValue >= kSqueezeReleaseThreshold;
+        std::isfinite(input.squeezeValue);
     if (!supported)
     {
         ReleaseSRWLockShared(&lock_);
@@ -248,6 +273,9 @@ void BFSoldierOffHandSupportBinding::Reset() noexcept
     mode_ = BFSoldierOffHandSupportMode::Disabled;
     closeRelationValid_ = false;
     squeezeHeld_ = false;
+    physicalSqueezeHeld_ = false;
+    toggleSupportHeld_ = false;
+    toggleGripStyle_ = false;
     lastBlockedReportAt_ = 0;
     blockedReports_ = 0;
     ReleaseSRWLockExclusive(&lock_);

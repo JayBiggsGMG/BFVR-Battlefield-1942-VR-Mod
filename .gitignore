@@ -2,6 +2,7 @@
 # licenses, and the packaged OpenXR runtime loader remain versioned.
 /BFVRClient.dll
 /BFVRLoader.exe
+/UserConfig.txt
 /loader.log
 /logs/
 /src/BFVRLauncher/bin/

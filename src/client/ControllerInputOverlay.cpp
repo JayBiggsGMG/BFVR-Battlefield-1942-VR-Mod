@@ -3,6 +3,7 @@
 #include "client/ControllerInputCache.h"
 #include "client/ScopeViewOverlay.h"
 #include "presenter/SharedPresentationProtocol.h"
+#include "settings/UserSettings.h"
 #include "stereo/VehicleMotionAimMath.h"
 
 #include <MinHook.h>
@@ -72,6 +73,7 @@ constexpr float kThumbstickDirectionThreshold = 0.72F;
 // action.  Above it, submit the normal full-speed keyboard-equivalent axes.
 constexpr float kWalkStickMagnitudeThreshold = 0.60F;
 constexpr float kStickTurnInputPerFrame = 0.70F;
+constexpr ULONGLONG kUserSettingsPollIntervalMs = 250;
 constexpr float kTurnStickResponseExponent = 1.65F;
 constexpr float kVehicleAimStickResponseExponent = 1.35F;
 constexpr bfvr::stereo::VehicleMotionAimConfiguration
@@ -216,6 +218,9 @@ public:
         }
         gameImage = static_cast<std::byte*>(image);
         appendLog = log;
+        userSettings = bfvr::settings::DecodeUserSettings(
+            bfvr::settings::ProcessUserSettingsRuntime().Current());
+        nextUserSettingsPollAt = 0;
         frameBuilderTarget = gameImage == nullptr
             ? nullptr
             : gameImage + kFrameBuilderRva;
@@ -793,6 +798,30 @@ private:
         EnableInput(destination, input);
     }
 
+    static void AddInfantryTurnInput(
+        float* destination,
+        float value) noexcept
+    {
+        if (!std::isfinite(value) || value == 0.0F)
+        {
+            return;
+        }
+        const float current = std::isfinite(
+            destination[kLogicalInputMouseLookX])
+            ? destination[kLogicalInputMouseLookX]
+            : 0.0F;
+        constexpr float maximumConfiguredTurnInput =
+            kStickTurnInputPerFrame *
+            (static_cast<float>(
+                 bfvr::settings::kMaximumInfantryTurnSpeedPercent) /
+             100.0F);
+        destination[kLogicalInputMouseLookX] = std::clamp(
+            current + value,
+            -maximumConfiguredTurnInput,
+            maximumConfiguredTurnInput);
+        EnableInput(destination, kLogicalInputMouseLookX);
+    }
+
     static void SetHeldInput(
         float* destination,
         DWORD input,
@@ -850,6 +879,7 @@ private:
         std::int64_t predictedDisplayTime,
         bool multiplayerRoute) noexcept
     {
+        RefreshUserSettings();
         const bool quickMenuHeld = IsHandButtonPressed(
             right,
             bfvr::shared::kControllerHandButtonPrimary);
@@ -881,6 +911,10 @@ private:
                     right.gripPose.positionZ},
                 predictedDisplayTime,
                 kSurfaceVehicleMotionAimConfiguration);
+        const bfvr::stereo::VehicleAimInputSigns vehicleAimSigns =
+            bfvr::stereo::CalibratedVehicleAimInputSigns(
+                userSettings.invertTurretPitch,
+                userSettings.invertTurretYaw);
         if (motionAim.trackingAccepted &&
             InterlockedCompareExchange(
                 &firstSurfaceMotionAimLogged,
@@ -888,7 +922,7 @@ private:
                 0) == 0)
         {
             WriteLog(
-                L"Surface/sea/mounted right-grip motion aim acquired a tracked zero-input reference at %.1f native-input units/metre. Relative hand movement now complements right-stick traverse/elevation: hand-left moves the barrel right and hand-down moves it up. Quick Menu hold, tracking loss, and control-mode changes rebaseline without a turret jump.",
+                L"Surface/sea/mounted right-grip motion aim acquired a tracked zero-input reference at %.1f native-input units/metre. Relative hand movement now complements right-stick traverse/elevation with matching physical directions on both axes. Quick Menu hold, tracking loss, and control-mode changes rebaseline without a turret jump.",
                 kSurfaceVehicleMotionAimConfiguration.inputPerMetre);
         }
 
@@ -938,13 +972,13 @@ private:
                     ApplyThumbstickResponse(
                         right.thumbstickX,
                         kTurnStickResponseExponent) *
-                    kStickTurnInputPerFrame;
+                    kStickTurnInputPerFrame *
+                    (static_cast<float>(
+                         userSettings.infantryTurnSpeedPercent) /
+                     100.0F);
                 if (turnInput != 0.0F)
                 {
-                    AddAxisInput(
-                        destination,
-                        kLogicalInputMouseLookX,
-                        turnInput);
+                    AddInfantryTurnInput(destination, turnInput);
                     mouseLookEnabled = true;
                 }
 
@@ -1022,27 +1056,31 @@ private:
                         kLogicalInputMouseLookX,
                         ApplyThumbstickResponse(
                             right.thumbstickX,
-                            kVehicleAimStickResponseExponent));
+                            kVehicleAimStickResponseExponent) *
+                            vehicleAimSigns.stickYaw);
                     AddAxisInput(
                         destination,
                         kLogicalInputMouseLookY,
                         ApplyThumbstickResponse(
                             right.thumbstickY,
-                            kVehicleAimStickResponseExponent));
+                            kVehicleAimStickResponseExponent) *
+                            vehicleAimSigns.stickPitch);
                 }
                 // Relative grip movement is mouse-like: movement contributes a
                 // bounded fine delta, while holding the hand still contributes
                 // zero. It adds to, rather than replaces, unrestricted stick
-                // traverse/elevation. The mirrored signs model the controller
-                // on the opposite side of the gun's virtual pivot.
+                // traverse/elevation. Live owner validation found the former
+                // virtual-pivot yaw opposed the stick, while pitch already
+                // agreed. The calibrated raw-axis signs preserve that split,
+                // then apply each inversion toggle to its complete pair.
                 AddAxisInput(
                     destination,
                     kLogicalInputMouseLookX,
-                    motionAim.mouseLookX);
+                    motionAim.mouseLookX * vehicleAimSigns.motionYaw);
                 AddAxisInput(
                     destination,
                     kLogicalInputMouseLookY,
-                    motionAim.mouseLookY);
+                    motionAim.mouseLookY * vehicleAimSigns.motionPitch);
             }
             else if (controlMode == ControllerControlMode::AirVehicle)
             {
@@ -1071,7 +1109,8 @@ private:
                     AddAxisInput(
                         destination,
                         kLogicalInputPitch,
-                        ApplyThumbstickDeadzone(right.thumbstickY));
+                        ApplyThumbstickDeadzone(right.thumbstickY) *
+                            (userSettings.invertFlightPitch ? -1.0F : 1.0F));
                 }
             }
         }
@@ -1410,6 +1449,35 @@ private:
         }
     }
 
+    void RefreshUserSettings() noexcept
+    {
+        const ULONGLONG now = GetTickCount64();
+        if (now < nextUserSettingsPollAt)
+        {
+            return;
+        }
+        nextUserSettingsPollAt = now + kUserSettingsPollIntervalMs;
+        auto& runtime = bfvr::settings::ProcessUserSettingsRuntime();
+        if (!runtime.ReloadIfChanged())
+        {
+            return;
+        }
+        const bfvr::settings::UserSettingsValues updated =
+            bfvr::settings::DecodeUserSettings(runtime.Current());
+        if (updated == userSettings)
+        {
+            return;
+        }
+        userSettings = updated;
+        WriteLog(
+            L"Controller input applied updated UserConfig values: infantryTurnSpeed=%lu%% invertFlightPitch=%d invertTurretPitch=%d invertTurretYaw=%d.",
+            static_cast<unsigned long>(
+                userSettings.infantryTurnSpeedPercent),
+            userSettings.invertFlightPitch ? 1 : 0,
+            userSettings.invertTurretPitch ? 1 : 0,
+            userSettings.invertTurretYaw ? 1 : 0);
+    }
+
     void WriteLog(const wchar_t* format, ...) const
     {
         if (appendLog == nullptr)
@@ -1485,6 +1553,8 @@ private:
     bfvr::stereo::VehicleMotionAimTracker surfaceVehicleMotionAim = {};
     ControllerControlMode activeControlMode = ControllerControlMode::Unknown;
     bool controllerScoreboardWasHeld = false;
+    bfvr::settings::UserSettingsValues userSettings = {};
+    ULONGLONG nextUserSettingsPollAt = 0;
     bool ownsMinHook = false;
     bool frameBuilderCreated = false;
     bool playerActionEncoderCreated = false;

@@ -666,9 +666,10 @@ int RunPresenter(
         if (selection ==
             bfvr::stereo::QuickMenuSelection::VrSettings)
         {
+            presentation.OpenSettingsMenu();
             fwprintf(
                 g_output,
-                L"[PRESENTER] Quick Menu released inert %s; no command or keyboard input was sent.\n",
+                L"[PRESENTER] Quick Menu released %s and opened the persistent BFVR-owned panel; no keyboard input was sent.\n",
                 bfvr::stereo::QuickMenuSelectionName(selection));
             fflush(g_output);
             return;

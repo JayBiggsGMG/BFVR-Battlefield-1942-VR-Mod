@@ -827,14 +827,15 @@ bool RenderD3D8WorldCrosshair(
                     frame.colorTargets[eye],
                     frame.depthTargets[eye])) &&
                 SUCCEEDED(api.setViewport(frame.device, &frame.viewport));
-            const bool baseDrawn = targetReady && DrawLayer(
-                api,
-                frame.device,
-                g_crosshairTexture,
-                projections[eye],
-                frame.viewport);
+            const bool baseDrawn = !crosshair.crosshairVisible ||
+                (targetReady && DrawLayer(
+                    api,
+                    frame.device,
+                    g_crosshairTexture,
+                    projections[eye],
+                    frame.viewport));
             const bool markerDrawn = !crosshair.hitMarkerVisible ||
-                (baseDrawn && DrawLayer(
+                (targetReady && DrawLayer(
                     api,
                     frame.device,
                     g_hitMarkerTexture,
