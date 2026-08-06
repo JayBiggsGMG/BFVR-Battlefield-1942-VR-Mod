@@ -283,6 +283,7 @@ add_library(BFVRStereoMath STATIC
   stereo/QuickMenuInteraction.cpp
   stereo/QuickMenuMirrorMath.cpp
   stereo/ScopeViewMath.cpp
+  stereo/SurfaceVehicleDriveMath.cpp
   stereo/WeaponMotionPolicy.cpp
   stereo/WeaponFireAimMath.cpp
   stereo/StereoMath.cpp
@@ -391,6 +392,15 @@ add_executable(BFVRDirectionalLocomotionTests
   stereo/DirectionalLocomotionTests.cpp
 )
 
+add_executable(BFVRSurfaceVehicleDriveMathTests
+  stereo/SurfaceVehicleDriveMathTests.cpp
+)
+
+add_executable(BFVRTrackingAnchorTests
+  client/D3D8TrackingAnchor.cpp
+  client/D3D8TrackingAnchorTests.cpp
+)
+
 add_executable(BFVRMountedCameraMathTests
   stereo/MountedCameraMathTests.cpp
 )
@@ -446,7 +456,7 @@ add_executable(BFVRRfaInspect
   tools/RfaInspect.cpp
 )
 
-foreach(target BFVRClient BFVROpenALHrtfRouter BFVRD3D8To9FlatClient BFVRLoader BFVROpenXRProbe BFVRSharedTextureProducerProbe BFVRD3D8To9SharedSurfaceProbe BFVRAmbientOcclusionDepthProbe BFVRStereoMath BFVRStereoMathTests BFVRWaterReflectionTextureBasisTests BFVRWeaponFireAimMathTests BFVROffHandSupportPolicyTests BFVRArmPoleVectorMathTests BFVRMainMenuOverlayTests BFVRQuickMenuTests BFVRSettingsMenuTests BFVRUserSettingsTests BFVRVehicleMotionAimMathTests BFVRDirectionalLocomotionTests BFVRMountedCameraMathTests BFVRScopeViewMathTests BFVROpenXRScopeOverlayLayerTests BFVRWorldCrosshairMathTests BFVRRuntimeDiagnosticsTests BFVRHrtfListenerMathTests BFVRHrtfBufferPolicyTests BFVRHrtfMenuSoundPolicyTests BFVRHrtfBackendProbe BFVRDirectSoundImportRouteTests BFVRSharedControlChannelTests BFVRRfaInspect)
+foreach(target BFVRClient BFVROpenALHrtfRouter BFVRD3D8To9FlatClient BFVRLoader BFVROpenXRProbe BFVRSharedTextureProducerProbe BFVRD3D8To9SharedSurfaceProbe BFVRAmbientOcclusionDepthProbe BFVRStereoMath BFVRStereoMathTests BFVRWaterReflectionTextureBasisTests BFVRWeaponFireAimMathTests BFVROffHandSupportPolicyTests BFVRArmPoleVectorMathTests BFVRMainMenuOverlayTests BFVRQuickMenuTests BFVRSettingsMenuTests BFVRUserSettingsTests BFVRVehicleMotionAimMathTests BFVRDirectionalLocomotionTests BFVRSurfaceVehicleDriveMathTests BFVRTrackingAnchorTests BFVRMountedCameraMathTests BFVRScopeViewMathTests BFVROpenXRScopeOverlayLayerTests BFVRWorldCrosshairMathTests BFVRRuntimeDiagnosticsTests BFVRHrtfListenerMathTests BFVRHrtfBufferPolicyTests BFVRHrtfMenuSoundPolicyTests BFVRHrtfBackendProbe BFVRDirectSoundImportRouteTests BFVRSharedControlChannelTests BFVRRfaInspect)
   target_compile_definitions(${target} PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
   set_property(TARGET ${target} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
   if(MSVC)
@@ -499,6 +509,8 @@ target_link_libraries(BFVRSettingsMenuTests PRIVATE
   BFVRStereoMath ole32 user32 gdi32 windowscodecs)
 target_link_libraries(BFVRVehicleMotionAimMathTests PRIVATE BFVRStereoMath)
 target_link_libraries(BFVRDirectionalLocomotionTests PRIVATE BFVRStereoMath)
+target_link_libraries(BFVRSurfaceVehicleDriveMathTests PRIVATE BFVRStereoMath)
+target_link_libraries(BFVRTrackingAnchorTests PRIVATE BFVRStereoMath)
 target_link_libraries(BFVRMountedCameraMathTests PRIVATE BFVRStereoMath)
 target_link_libraries(BFVRScopeViewMathTests PRIVATE BFVRStereoMath)
 target_link_libraries(BFVROpenXRScopeOverlayLayerTests PRIVATE BFVRStereoMath)
@@ -557,6 +569,12 @@ if(BUILD_TESTING)
   add_test(
     NAME BFVRDirectionalLocomotionTests
     COMMAND BFVRDirectionalLocomotionTests)
+  add_test(
+    NAME BFVRSurfaceVehicleDriveMathTests
+    COMMAND BFVRSurfaceVehicleDriveMathTests)
+  add_test(
+    NAME BFVRTrackingAnchorTests
+    COMMAND BFVRTrackingAnchorTests)
   add_test(
     NAME BFVRMountedCameraMathTests
     COMMAND BFVRMountedCameraMathTests)

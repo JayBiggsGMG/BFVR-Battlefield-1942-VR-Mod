@@ -6,8 +6,6 @@
 
 namespace
 {
-constexpr float kScopeOverlayDistanceMeters = 1.0F;
-
 XrQuaternionf Multiply(
     const XrQuaternionf& left,
     const XrQuaternionf& right) noexcept
@@ -141,7 +139,7 @@ bool BuildOpenXREyeFillingScopeLayers(
                 sourceFov.angleRight,
                 sourceFov.angleUp,
                 sourceFov.angleDown},
-            kScopeOverlayDistanceMeters);
+            stereo::kEyeFillingScopeOverlayDistanceMeters);
         if (!quadSize.has_value())
         {
             return false;
@@ -149,7 +147,8 @@ bool BuildOpenXREyeFillingScopeLayers(
 
         XrPosef eyeOffset = {};
         eyeOffset.orientation.w = 1.0F;
-        eyeOffset.position.z = -kScopeOverlayDistanceMeters;
+        eyeOffset.position.z =
+            -stereo::kEyeFillingScopeOverlayDistanceMeters;
         XrCompositionLayerQuad& layer = result[eye];
         layer.type = XR_TYPE_COMPOSITION_LAYER_QUAD;
         layer.layerFlags =

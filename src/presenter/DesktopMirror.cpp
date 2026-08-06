@@ -1,6 +1,7 @@
 #include "presenter/DesktopMirror.h"
 
 #include "stereo/QuickMenuMirrorMath.h"
+#include "stereo/ScopeViewMath.h"
 
 #include <d3dcompiler.h>
 
@@ -132,6 +133,20 @@ bfvr::stereo::Pose ToStereoPose(
             source.orientationW}};
 }
 
+bfvr::OpenXRPresentationPose ToPresentationPose(
+    const bfvr::stereo::Pose& source) noexcept
+{
+    bfvr::OpenXRPresentationPose result = {};
+    result.positionX = source.position.x;
+    result.positionY = source.position.y;
+    result.positionZ = source.position.z;
+    result.orientationX = source.orientation.x;
+    result.orientationY = source.orientation.y;
+    result.orientationZ = source.orientation.z;
+    result.orientationW = source.orientation.w;
+    return result;
+}
+
 bool IsSrgbFormat(DXGI_FORMAT format) noexcept
 {
     return format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB ||
@@ -231,6 +246,7 @@ void DesktopMirror::PumpMessages()
 void DesktopMirror::Render(
     const OpenXRPresentationTextures& textures,
     const OpenXRPresentationView* rightEyeView,
+    OpenXRUiPresentationMode uiPresentationMode,
     const OpenXRQuickMenuMirrorState* quickMenu)
 {
     if (!initialized_ || permanentlyDisabled_ || textures.rightWorld == nullptr ||
@@ -287,11 +303,58 @@ void DesktopMirror::Render(
     context_->PSSetSamplers(0, 1, &sampler_);
     context_->UpdateSubresource(cropConfiguration_, 0, nullptr, &crop, 0, 0);
     context_->PSSetConstantBuffers(0, 1, &cropConfiguration_);
-    const std::array<ID3D11ShaderResourceView*, 2> views = {worldView_, uiView_};
+    const bool eyeFillingScope =
+        uiPresentationMode == OpenXRUiPresentationMode::EyeFillingScope &&
+        rightEyeView != nullptr;
+    // In ordinary modes the Ref2 layer is texture-aligned with the world.
+    // A scope is different: the headset submits it as an eye-exclusive quad
+    // centred on each eye's optical axis. Defer that UI draw so the desktop
+    // path can reproduce the right-eye compositor placement below.
+    const std::array<ID3D11ShaderResourceView*, 2> views = {
+        worldView_, eyeFillingScope ? nullptr : uiView_};
     context_->PSSetShaderResources(0, static_cast<UINT>(views.size()), views.data());
     context_->Draw(3, 0);
     const std::array<ID3D11ShaderResourceView*, 2> cleared = {nullptr, nullptr};
     context_->PSSetShaderResources(0, static_cast<UINT>(cleared.size()), cleared.data());
+
+    if (eyeFillingScope)
+    {
+        const bfvr::stereo::ScopeOverlayFov fov = {
+            rightEyeView->fov.angleLeft,
+            rightEyeView->fov.angleRight,
+            rightEyeView->fov.angleUp,
+            rightEyeView->fov.angleDown};
+        const auto scopeQuad =
+            bfvr::stereo::MakeEyeFillingScopeOverlayQuad(
+                ToStereoPose(rightEyeView->pose),
+                fov);
+        const float blendFactor[4] = {};
+        context_->OMSetBlendState(
+            quickMenuBlendState_,
+            blendFactor,
+            0xFFFFFFFFU);
+        const bool scopeDrawn = scopeQuad.has_value() &&
+            DrawQuickMenuQuad(
+                ToPresentationPose(scopeQuad->pose),
+                scopeQuad->widthMeters,
+                scopeQuad->heightMeters,
+                uiView_,
+                true,
+                *rightEyeView,
+                crop.sourceScale,
+                crop.sourceOffset);
+        context_->OMSetBlendState(nullptr, blendFactor, 0xFFFFFFFFU);
+        if (scopeDrawn && !firstScopeMirroredLogged_)
+        {
+            firstScopeMirroredLogged_ = true;
+            WriteLog(L"Desktop mirror composited its first scope Ref2 layer through the physical right-eye pose/FOV, matching the eye-exclusive headset quad instead of texture-centre alignment.");
+        }
+        else if (!scopeDrawn && !scopeMirrorFailureReported_)
+        {
+            scopeMirrorFailureReported_ = true;
+            WriteLog(L"Desktop mirror could not project the right-eye scope Ref2 layer; the right-eye world preview and headset scope remain active.");
+        }
+    }
 
     if (rightEyeView != nullptr && quickMenu != nullptr &&
         quickMenu->visible && quickMenu->menuTexture != nullptr &&
@@ -423,6 +486,8 @@ void DesktopMirror::Shutdown()
     permanentlyDisabled_ = false;
     quickMenuMirrorFailureReported_ = false;
     firstQuickMenuMirroredLogged_ = false;
+    scopeMirrorFailureReported_ = false;
+    firstScopeMirroredLogged_ = false;
     if (context_ != nullptr)
     {
         context_->Release();

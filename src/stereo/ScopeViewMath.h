@@ -21,6 +21,15 @@ struct ScopeOverlayQuadSize
     float heightMeters = 0.0F;
 };
 
+struct ScopeOverlayQuad
+{
+    Pose pose = {};
+    float widthMeters = 0.0F;
+    float heightMeters = 0.0F;
+};
+
+inline constexpr float kEyeFillingScopeOverlayDistanceMeters = 1.0F;
+
 enum class ScopeAimSource
 {
     None,
@@ -105,6 +114,17 @@ enum class ScopeAimSource
 ComputeEyeFillingScopeOverlayQuadSize(
     const ScopeOverlayFov& fov,
     float distanceMeters,
+    float overscanScale = 1.02F) noexcept;
+
+// Reconstructs the eye-exclusive scope quad in the eye's LOCAL coordinate
+// space. The desktop mirror uses this same placement instead of sampling the
+// Ref2 texture at projection-image coordinates, whose centre is not generally
+// the optical axis of an asymmetric OpenXR eye FOV.
+[[nodiscard]] std::optional<ScopeOverlayQuad>
+MakeEyeFillingScopeOverlayQuad(
+    const Pose& eyePose,
+    const ScopeOverlayFov& fov,
+    float distanceMeters = kEyeFillingScopeOverlayDistanceMeters,
     float overscanScale = 1.02F) noexcept;
 
 } // namespace bfvr::stereo

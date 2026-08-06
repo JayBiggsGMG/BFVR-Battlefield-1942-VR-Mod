@@ -758,6 +758,7 @@ int RunPresenter(
         desktopMirror.Render(
             consumer.GetLocalTextures(),
             rightEye,
+            acceptedUiPresentationMode,
             quickMenuVisible ? &quickMenu : nullptr);
         totalDesktopMirrorQpcTicks +=
             ReadPerformanceCounter() - mirrorStarted;

@@ -335,4 +335,77 @@ ComputeEyeFillingScopeOverlayQuadSize(
         : std::nullopt;
 }
 
+std::optional<ScopeOverlayQuad> MakeEyeFillingScopeOverlayQuad(
+    const Pose& eyePose,
+    const ScopeOverlayFov& fov,
+    float distanceMeters,
+    float overscanScale) noexcept
+{
+    if (!std::isfinite(eyePose.position.x) ||
+        !std::isfinite(eyePose.position.y) ||
+        !std::isfinite(eyePose.position.z))
+    {
+        return std::nullopt;
+    }
+    const float lengthSquared =
+        eyePose.orientation.x * eyePose.orientation.x +
+        eyePose.orientation.y * eyePose.orientation.y +
+        eyePose.orientation.z * eyePose.orientation.z +
+        eyePose.orientation.w * eyePose.orientation.w;
+    if (!std::isfinite(lengthSquared) || lengthSquared < 0.25F ||
+        lengthSquared > 2.25F)
+    {
+        return std::nullopt;
+    }
+    const auto size = ComputeEyeFillingScopeOverlayQuadSize(
+        fov,
+        distanceMeters,
+        overscanScale);
+    if (!size.has_value())
+    {
+        return std::nullopt;
+    }
+
+    const float inverseLength = 1.0F / std::sqrt(lengthSquared);
+    const Quaternion orientation = {
+        eyePose.orientation.x * inverseLength,
+        eyePose.orientation.y * inverseLength,
+        eyePose.orientation.z * inverseLength,
+        eyePose.orientation.w * inverseLength};
+    const Vec3 axis = {
+        orientation.x,
+        orientation.y,
+        orientation.z};
+    const Vec3 forward = {0.0F, 0.0F, -distanceMeters};
+    const Vec3 cross = {
+        axis.y * forward.z - axis.z * forward.y,
+        axis.z * forward.x - axis.x * forward.z,
+        axis.x * forward.y - axis.y * forward.x};
+    const Vec3 doubledCross = {
+        cross.x * 2.0F,
+        cross.y * 2.0F,
+        cross.z * 2.0F};
+    const Vec3 secondCross = {
+        axis.y * doubledCross.z - axis.z * doubledCross.y,
+        axis.z * doubledCross.x - axis.x * doubledCross.z,
+        axis.x * doubledCross.y - axis.y * doubledCross.x};
+    const Vec3 offset = {
+        forward.x + doubledCross.x * orientation.w + secondCross.x,
+        forward.y + doubledCross.y * orientation.w + secondCross.y,
+        forward.z + doubledCross.z * orientation.w + secondCross.z};
+    ScopeOverlayQuad result = {};
+    result.pose.position = {
+        eyePose.position.x + offset.x,
+        eyePose.position.y + offset.y,
+        eyePose.position.z + offset.z};
+    result.pose.orientation = orientation;
+    result.widthMeters = size->widthMeters;
+    result.heightMeters = size->heightMeters;
+    return std::isfinite(result.pose.position.x) &&
+            std::isfinite(result.pose.position.y) &&
+            std::isfinite(result.pose.position.z)
+        ? std::optional<ScopeOverlayQuad>(result)
+        : std::nullopt;
+}
+
 } // namespace bfvr::stereo

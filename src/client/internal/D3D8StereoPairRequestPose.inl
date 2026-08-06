@@ -22,6 +22,8 @@ bool ReadKeepOriginalFlatBackbuffer()
 void PrepareRuntimeRenderRequestPose()
 {
     const bool nativeMenuActive = bfvr::IsMenuPointerOverlayActive();
+    bfvr::stereo::Pose rawMenuWorldAnchor = {};
+    bool rawMenuWorldAnchorValid = false;
     g_frameUiPlacement = {};
     g_frameUiPlacement.headLocked = true;
     const bfvr::MainMenuOverlayInteractionState overlayState =
@@ -58,7 +60,8 @@ void PrepareRuntimeRenderRequestPose()
             g_frameUiPlacement.worldAnchor.positionX = anchor.position.x;
             g_frameUiPlacement.worldAnchor.positionY = anchor.position.y;
             g_frameUiPlacement.worldAnchor.positionZ = anchor.position.z;
-            bfvr::PublishActiveMenuWorldAnchor(anchor);
+            rawMenuWorldAnchor = anchor;
+            rawMenuWorldAnchorValid = true;
         }
         else
         {
@@ -164,6 +167,35 @@ void PrepareRuntimeRenderRequestPose()
     }
     const bfvr::D3D8RuntimeView rebasedHead =
         g_trackingAnchor.RebaseView(currentHead);
+    if (rawMenuWorldAnchorValid)
+    {
+        // The x64 compositor consumes the raw LOCAL anchor above. The x86
+        // native-menu pointer consumes controller poses after the tracking
+        // anchor has rebased them for gameplay, so publish a matching rebased
+        // copy only to that mapper. Mixing the raw panel anchor with rebased
+        // controller poses produces the intermittent height/recenter offset
+        // introduced with the locomotion and play-mode settings.
+        bfvr::D3D8RuntimeView menuAnchorView = {};
+        menuAnchorView.positionX = rawMenuWorldAnchor.position.x;
+        menuAnchorView.positionY = rawMenuWorldAnchor.position.y;
+        menuAnchorView.positionZ = rawMenuWorldAnchor.position.z;
+        menuAnchorView.orientationX = rawMenuWorldAnchor.orientation.x;
+        menuAnchorView.orientationY = rawMenuWorldAnchor.orientation.y;
+        menuAnchorView.orientationZ = rawMenuWorldAnchor.orientation.z;
+        menuAnchorView.orientationW = rawMenuWorldAnchor.orientation.w;
+        const bfvr::D3D8RuntimeView rebasedMenuAnchor =
+            g_trackingAnchor.RebaseView(menuAnchorView);
+        bfvr::PublishActiveMenuWorldAnchor({
+            {
+                rebasedMenuAnchor.positionX,
+                rebasedMenuAnchor.positionY,
+                rebasedMenuAnchor.positionZ},
+            {
+                rebasedMenuAnchor.orientationX,
+                rebasedMenuAnchor.orientationY,
+                rebasedMenuAnchor.orientationZ,
+                rebasedMenuAnchor.orientationW}});
+    }
     if (g_runtimeRenderRequest.controllerInput.valid)
     {
         bfvr::PublishAcceptedControllerInput(

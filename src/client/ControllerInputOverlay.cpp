@@ -5,6 +5,7 @@
 #include "presenter/SharedPresentationProtocol.h"
 #include "settings/UserSettings.h"
 #include "stereo/DirectionalLocomotion.h"
+#include "stereo/SurfaceVehicleDriveMath.h"
 #include "stereo/VehicleMotionAimMath.h"
 
 #include <MinHook.h>
@@ -1147,42 +1148,35 @@ private:
                         bfvr::shared::kControllerHandFlagThumbstickActive) != 0)
                 {
                     // Ground and sea engines bind c_PIYaw as steering and
-                    // c_PIThrottle as gas/reverse. The proven multiplayer
-                    // infantry route establishes that these key-bound native
-                    // axes require full directional values; retain only the
-                    // controller deadzone and submit keyboard-equivalent
-                    // +/-1 values for reliable land/sea driving.
-                    const float steering =
-                        ApplyThumbstickDeadzone(left.thumbstickX);
-                    const float throttle =
-                        ApplyThumbstickDeadzone(left.thumbstickY);
-                    const float submittedSteering = steering == 0.0F
-                        ? 0.0F
-                        : std::copysign(1.0F, steering);
-                    const float submittedThrottle = throttle == 0.0F
-                        ? 0.0F
-                        : std::copysign(1.0F, throttle);
+                    // c_PIThrottle as gas/reverse. Preserve the proven full
+                    // throttle command, but widen steering into a smooth
+                    // curve: 11/1 o'clock is gentle and 10/2 o'clock reaches
+                    // full steering without releasing full gas.
+                    const bfvr::stereo::SurfaceVehicleDriveInput drive =
+                        bfvr::stereo::MapSurfaceVehicleDrive(
+                            left.thumbstickX,
+                            left.thumbstickY);
                     AddAxisInput(
                         destination,
                         kLogicalInputYaw,
-                        submittedSteering);
+                        drive.steering);
                     AddAxisInput(
                         destination,
                         kLogicalInputThrottle,
-                        submittedThrottle);
-                    if ((submittedSteering != 0.0F ||
-                         submittedThrottle != 0.0F) &&
+                        drive.throttle);
+                    if ((drive.steering != 0.0F ||
+                         drive.throttle != 0.0F) &&
                         InterlockedCompareExchange(
                             &firstSurfaceDriveInputLogged,
                             1,
                             0) == 0)
                     {
                         WriteLog(
-                            L"Surface vehicle controller drive submitted its first non-zero keyboard-equivalent axes before PlayerAction encoding: rawStick=(%.3f,%.3f) yaw/steer=%.1f throttle=%.1f multiplayerRoute=%d.",
+                            L"Surface vehicle controller drive submitted its first non-zero curved axes before PlayerAction encoding: rawStick=(%.3f,%.3f) yaw/steer=%.3f throttle=%.1f; steering reaches full at 10/2 o'clock while retaining full throttle; multiplayerRoute=%d.",
                             left.thumbstickX,
                             left.thumbstickY,
-                            submittedSteering,
-                            submittedThrottle,
+                            drive.steering,
+                            drive.throttle,
                             multiplayerRoute ? 1 : 0);
                     }
                 }
@@ -1264,6 +1258,14 @@ private:
         // face-button submissions remain absent from the native frame.
         if (quickMenuHeld)
         {
+            // Crouch toggle is a persistent gameplay state, not a face-button
+            // action. Continue submitting it while A owns the Quick Menu;
+            // otherwise the early return looks like a crouch release and the
+            // soldier stands until A is released.
+            SetHeldInput(
+                destination,
+                kLogicalInputCrouch,
+                crouchToggled);
             triggerHeld = false;
             leftTriggerHeld = false;
             rightSqueezeHeld = false;

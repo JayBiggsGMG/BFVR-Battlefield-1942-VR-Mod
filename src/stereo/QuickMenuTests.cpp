@@ -1,6 +1,7 @@
 #include "client/QuickMenuArt.h"
 #include "stereo/QuickMenuInteraction.h"
 #include "stereo/QuickMenuMirrorMath.h"
+#include "stereo/ScopeViewMath.h"
 
 #include <windows.h>
 
@@ -172,6 +173,45 @@ bool TestMirrorProjection()
             vertices) ||
         !NearlyEqual(normalizedY(vertices[0]), -1.0F) ||
         !NearlyEqual(normalizedY(vertices[1]), 1.0F))
+    {
+        return false;
+    }
+
+    // Scope UI is an eye-centred compositor quad, not a texture-aligned HUD.
+    // With an asymmetric right-eye FOV its centre must land on the optical
+    // axis, which is deliberately not the projection texture's 0.5 centre.
+    eye.angleLeft = -0.60F;
+    eye.angleRight = 0.80F;
+    eye.angleUp = 0.70F;
+    eye.angleDown = -0.65F;
+    const auto scopeQuad =
+        bfvr::stereo::MakeEyeFillingScopeOverlayQuad(
+            eye.pose,
+            {
+                eye.angleLeft,
+                eye.angleRight,
+                eye.angleUp,
+                eye.angleDown});
+    if (!scopeQuad.has_value() ||
+        !bfvr::stereo::ProjectQuickMenuQuadToMirror(
+            scopeQuad->pose,
+            scopeQuad->widthMeters,
+            scopeQuad->heightMeters,
+            eye,
+            {},
+            vertices))
+    {
+        return false;
+    }
+    const float tangentLeft = std::tan(eye.angleLeft);
+    const float tangentRight = std::tan(eye.angleRight);
+    const float expectedOpticalCentreX =
+        2.0F * (-tangentLeft) / (tangentRight - tangentLeft) - 1.0F;
+    const float projectedScopeCentreX = 0.25F * (
+        normalizedX(vertices[0]) + normalizedX(vertices[1]) +
+        normalizedX(vertices[2]) + normalizedX(vertices[3]));
+    if (NearlyEqual(expectedOpticalCentreX, 0.0F, 0.001F) ||
+        !NearlyEqual(projectedScopeCentreX, expectedOpticalCentreX))
     {
         return false;
     }

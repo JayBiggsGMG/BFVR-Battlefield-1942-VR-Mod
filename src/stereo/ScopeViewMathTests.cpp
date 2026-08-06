@@ -320,6 +320,24 @@ bool TestInvalidEyeFillingScopeQuadFailsClosed() noexcept
                 invalid,
                 1.0F).has_value();
 }
+
+bool TestEyeFillingScopeQuadFollowsEyePose() noexcept
+{
+    const float halfYaw = 0.785398163F * 0.5F;
+    const bfvr::stereo::Pose eye = {
+        {2.0F, 3.0F, 4.0F},
+        {0.0F, std::sin(halfYaw), 0.0F, std::cos(halfYaw)}};
+    const auto quad = bfvr::stereo::MakeEyeFillingScopeOverlayQuad(
+        eye,
+        {-0.70F, 0.80F, 0.75F, -0.65F});
+    return quad.has_value() &&
+        NearlyEqual(quad->pose.position.x, 1.2928932F) &&
+        NearlyEqual(quad->pose.position.y, 3.0F) &&
+        NearlyEqual(quad->pose.position.z, 3.2928932F) &&
+        NearlyEqual(quad->pose.orientation.y, eye.orientation.y) &&
+        NearlyEqual(quad->pose.orientation.w, eye.orientation.w) &&
+        quad->widthMeters > 0.0F && quad->heightMeters > 0.0F;
+}
 } // namespace
 
 int main()
@@ -334,7 +352,8 @@ int main()
         !TestProjectionScalePreservesCentreAndDepth() ||
         !TestInvalidCameraAndProjectionFailClosed() ||
         !TestEyeFillingScopeQuadCoversAsymmetricFov() ||
-        !TestInvalidEyeFillingScopeQuadFailsClosed())
+        !TestInvalidEyeFillingScopeQuadFailsClosed() ||
+        !TestEyeFillingScopeQuadFollowsEyePose())
     {
         std::fprintf(stderr, "Scope-view math tests failed.\n");
         return 1;

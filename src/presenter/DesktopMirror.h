@@ -31,6 +31,8 @@ public:
     void Render(
         const OpenXRPresentationTextures& textures,
         const OpenXRPresentationView* rightEyeView = nullptr,
+        OpenXRUiPresentationMode uiPresentationMode =
+            OpenXRUiPresentationMode::Standard,
         const OpenXRQuickMenuMirrorState* quickMenu = nullptr);
     void Shutdown();
 
@@ -95,5 +97,7 @@ private:
     bool permanentlyDisabled_ = false;
     bool quickMenuMirrorFailureReported_ = false;
     bool firstQuickMenuMirroredLogged_ = false;
+    bool scopeMirrorFailureReported_ = false;
+    bool firstScopeMirroredLogged_ = false;
 };
 } // namespace bfvr
