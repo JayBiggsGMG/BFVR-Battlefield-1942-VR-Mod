@@ -8,6 +8,8 @@
 #include <openxr/openxr_platform.h>
 
 #include "openxr/OpenXRComfortVignette.h"
+#include "openxr/OpenXRControllerBindingPolicy.h"
+#include "openxr/OpenXRControllerShortcutPolicy.h"
 #include "openxr/OpenXRQuickMenu.h"
 #include "openxr/OpenXRPresentationSupport.h"
 #include "openxr/OpenXRScopeOverlayLayer.h"
@@ -241,7 +243,9 @@ public:
         const std::vector<const char*>& enabledExtensions) const
     {
         XrInstanceCreateInfo createInfo{XR_TYPE_INSTANCE_CREATE_INFO};
-        strcpy_s(createInfo.applicationInfo.applicationName, "BFVR presentation probe");
+        strcpy_s(
+            createInfo.applicationInfo.applicationName,
+            "Battlefield 1942 VR");
         createInfo.applicationInfo.applicationVersion = 1;
         strcpy_s(createInfo.applicationInfo.engineName, "BFVR");
         createInfo.applicationInfo.engineVersion = 1;
@@ -714,6 +718,34 @@ public:
         return true;
     }
 
+    XrAction ControllerAction(OpenXRControllerAction action) const noexcept
+    {
+        switch (action)
+        {
+        case OpenXRControllerAction::AimPose:
+            return controllerAimAction;
+        case OpenXRControllerAction::GripPose:
+            return controllerGripAction;
+        case OpenXRControllerAction::Trigger:
+            return controllerTriggerAction;
+        case OpenXRControllerAction::Squeeze:
+            return controllerSqueezeAction;
+        case OpenXRControllerAction::MovementTurnAxis:
+            return controllerThumbstickAction;
+        case OpenXRControllerAction::AxisClick:
+            return controllerThumbstickClickAction;
+        case OpenXRControllerAction::PrimaryFace:
+            return controllerPrimaryAction;
+        case OpenXRControllerAction::SecondaryFace:
+            return controllerSecondaryAction;
+        case OpenXRControllerAction::Menu:
+            return controllerMenuAction;
+        case OpenXRControllerAction::Haptic:
+            return controllerHapticAction;
+        }
+        return XR_NULL_HANDLE;
+    }
+
     void SuggestControllerBindings(
         const char* interactionProfile,
         const std::vector<XrActionSuggestedBinding>& bindings)
@@ -749,6 +781,39 @@ public:
                 interactionProfile,
                 DescribeOpenXRResult(result),
                 static_cast<long>(result));
+        }
+    }
+
+    void SuggestControllerBindingProfiles()
+    {
+        for (const OpenXRControllerProfileBindings& profile :
+             OpenXRControllerBindingProfiles())
+        {
+            std::vector<XrActionSuggestedBinding> bindings;
+            bindings.reserve(profile.bindings.size());
+            for (const OpenXRControllerBindingSeed& seed : profile.bindings)
+            {
+                const XrAction action = ControllerAction(seed.action);
+                const char* const hand =
+                    seed.hand == OpenXRControllerHand::Left
+                    ? "left"
+                    : "right";
+                if (action == XR_NULL_HANDLE ||
+                    seed.componentPath == nullptr)
+                {
+                    continue;
+                }
+                const std::string bindingPath =
+                    std::string("/user/hand/") + hand +
+                    seed.componentPath;
+                (void)AddSuggestedBinding(
+                    bindings,
+                    action,
+                    bindingPath.c_str());
+            }
+            SuggestControllerBindings(
+                profile.interactionProfile,
+                bindings);
         }
     }
 
@@ -861,42 +926,42 @@ public:
             CreateControllerAction(
                 controllerTriggerAction,
                 "bfvr_trigger",
-                "BFVR trigger",
+                "Trigger (left use / right fire)",
                 XR_ACTION_TYPE_FLOAT_INPUT) &&
             CreateControllerAction(
                 controllerSqueezeAction,
                 "bfvr_squeeze",
-                "BFVR squeeze",
+                "Squeeze (left support / right alt-fire)",
                 XR_ACTION_TYPE_FLOAT_INPUT) &&
             CreateControllerAction(
                 controllerThumbstickAction,
                 "bfvr_thumbstick",
-                "BFVR thumbstick",
+                "Stick/trackpad (left move / right turn-aim)",
                 XR_ACTION_TYPE_VECTOR2F_INPUT) &&
             CreateControllerAction(
                 controllerThumbstickClickAction,
                 "bfvr_thumbstick_click",
-                "BFVR thumbstick click",
+                "Stick/trackpad click (context action)",
                 XR_ACTION_TYPE_BOOLEAN_INPUT) &&
             CreateControllerAction(
                 controllerPrimaryAction,
                 "bfvr_primary",
-                "BFVR primary button",
+                "Primary face (left prone / right Quick Menu)",
                 XR_ACTION_TYPE_BOOLEAN_INPUT) &&
             CreateControllerAction(
                 controllerSecondaryAction,
                 "bfvr_secondary",
-                "BFVR secondary button",
+                "Secondary face (left scoreboard / right reload)",
                 XR_ACTION_TYPE_BOOLEAN_INPUT) &&
             CreateControllerAction(
                 controllerMenuAction,
                 "bfvr_menu",
-                "BFVR menu button",
+                "Map toggle",
                 XR_ACTION_TYPE_BOOLEAN_INPUT) &&
             CreateControllerAction(
                 controllerHapticAction,
                 "bfvr_haptic",
-                "BFVR haptic output",
+                "Controller haptics",
                 XR_ACTION_TYPE_VIBRATION_OUTPUT);
         if (!actionsCreated)
         {
@@ -904,47 +969,7 @@ public:
             return false;
         }
 
-        std::vector<XrActionSuggestedBinding> oculusBindings;
-        const char* const hands[] = {"left", "right"};
-        for (std::size_t hand = 0; hand < std::size(hands); ++hand)
-        {
-            const char* const handName = hands[hand];
-            const std::string prefix = std::string("/user/hand/") + handName;
-            AddSuggestedBinding(oculusBindings, controllerAimAction, (prefix + "/input/aim/pose").c_str());
-            AddSuggestedBinding(oculusBindings, controllerGripAction, (prefix + "/input/grip/pose").c_str());
-            AddSuggestedBinding(oculusBindings, controllerTriggerAction, (prefix + "/input/trigger/value").c_str());
-            AddSuggestedBinding(oculusBindings, controllerSqueezeAction, (prefix + "/input/squeeze/value").c_str());
-            AddSuggestedBinding(oculusBindings, controllerThumbstickAction, (prefix + "/input/thumbstick").c_str());
-            AddSuggestedBinding(oculusBindings, controllerThumbstickClickAction, (prefix + "/input/thumbstick/click").c_str());
-            AddSuggestedBinding(
-                oculusBindings,
-                controllerPrimaryAction,
-                (prefix + (hand == 0 ? "/input/x/click" : "/input/a/click")).c_str());
-            AddSuggestedBinding(
-                oculusBindings,
-                controllerSecondaryAction,
-                (prefix + (hand == 0 ? "/input/y/click" : "/input/b/click")).c_str());
-            AddSuggestedBinding(oculusBindings, controllerHapticAction, (prefix + "/output/haptic").c_str());
-        }
-        AddSuggestedBinding(
-            oculusBindings,
-            controllerMenuAction,
-            "/user/hand/left/input/menu/click");
-        SuggestControllerBindings(
-            "/interaction_profiles/oculus/touch_controller",
-            oculusBindings);
-
-        std::vector<XrActionSuggestedBinding> simpleBindings;
-        for (const char* const handName : hands)
-        {
-            const std::string prefix = std::string("/user/hand/") + handName;
-            AddSuggestedBinding(simpleBindings, controllerAimAction, (prefix + "/input/aim/pose").c_str());
-            AddSuggestedBinding(simpleBindings, controllerPrimaryAction, (prefix + "/input/select/click").c_str());
-            AddSuggestedBinding(simpleBindings, controllerHapticAction, (prefix + "/output/haptic").c_str());
-        }
-        SuggestControllerBindings(
-            "/interaction_profiles/khr/simple_controller",
-            simpleBindings);
+        SuggestControllerBindingProfiles();
 
         XrSessionActionSetsAttachInfo attachInfo{
             XR_TYPE_SESSION_ACTION_SETS_ATTACH_INFO};
@@ -1601,6 +1626,24 @@ public:
         SampleControllerInput(
             pendingFrameState.predictedDisplayTime,
             publicFrameState.controllerInput);
+        const OpenXRControllerShortcutOutput shortcuts =
+            UpdateOpenXRControllerShortcuts(
+                controllerShortcutState,
+                {
+                    publicFrameState.predictedDisplayTime,
+                    publicFrameState.controllerInput.sessionFocused,
+                    IsOpenXRMapActionPressed(
+                        publicFrameState.controllerInput.hands[0].menuPressed,
+                        publicFrameState.controllerInput.hands[1].menuPressed),
+                    publicFrameState.controllerInput.hands[1].secondaryPressed});
+        publicFrameState.mapToggleRequested =
+            shortcuts.mapToggleRequested;
+        controllerRecenterPending =
+            controllerRecenterPending || shortcuts.recenterRequested;
+        if (!publicFrameState.controllerInput.sessionFocused)
+        {
+            controllerRecenterPending = false;
+        }
         if (!pendingFrameState.shouldRender)
         {
             UpdateQuickMenuAndHoverHaptics(publicFrameState);
@@ -1647,12 +1690,25 @@ public:
                 pendingFrameState.predictedDisplayTime,
                 publicFrameState.standingHeightMeters);
         UpdateQuickMenuAndHoverHaptics(publicFrameState);
-        if (quickMenu.TakeTrackingAction() ==
-            OpenXRTrackingAction::RecenterForward)
+        const bool settingsRecenterRequested =
+            quickMenu.TakeTrackingAction() ==
+                OpenXRTrackingAction::RecenterForward;
+        if (settingsRecenterRequested || controllerRecenterPending)
         {
             const bool recentered = publicFrameState.headPoseValid &&
                 publicFrameState.headPoseTracked;
-            quickMenu.SetForwardRecenterResult(recentered);
+            if (settingsRecenterRequested)
+            {
+                quickMenu.SetForwardRecenterResult(recentered);
+            }
+            if (controllerRecenterPending)
+            {
+                WriteLog(
+                    recentered
+                        ? L"Right B 2.5-second hold requested a forward recenter."
+                        : L"Right B 2.5-second hold could not recenter because head tracking was unavailable.");
+                controllerRecenterPending = false;
+            }
             if (recentered)
             {
                 recenterForwardSequence = recenterForwardSequence == LONG_MAX
@@ -2103,6 +2159,8 @@ public:
         pendingHeadPose = {};
         pendingHeadPoseValid = false;
         recenterForwardSequence = 0;
+        controllerShortcutState = {};
+        controllerRecenterPending = false;
         lastHapticHoverTarget = 0;
         worldLockedUiPose = {};
         worldLockedUiPoseValid = false;
@@ -2156,6 +2214,8 @@ public:
     bool pendingViewsValid = false;
     bool pendingHeadPoseValid = false;
     LONG recenterForwardSequence = 0;
+    OpenXRControllerShortcutState controllerShortcutState = {};
+    bool controllerRecenterPending = false;
     std::uint64_t lastHapticHoverTarget = 0;
     bool worldLockedUiPoseValid = false;
     bool uiReferenceModeInitialized = false;

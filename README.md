@@ -45,28 +45,11 @@ It verifies the executable and profiled root-module hashes, reports unprofiled
 DLLs, and never launches, attaches to, patches, replaces, or moves game files.
 See `docs\safety-and-compatibility.md` for the coexistence policy.
 
-## Experimental HRTF audio
+## Audio compatibility
 
-BFVR now enables its folder-local DSOAL/OpenAL Soft headphone-HRTF prototype by
-default for the normal VR launcher. Set `BFVR_HRTF=0` before launch for an
-immediate original-audio opt-out. It leaves the existing game-root
-`dsound.dll`, `Sound.con`, and user OpenAL configuration untouched; startup
-accepts the alternate path only after a real DirectSound3D listener reports
-HRTF enabled, otherwise it preserves the original audio route. Tracked HMD
-motion is composed with BF1942's native listener and expires back to the native
-values after 250 ms without tracking.
-
-This has passed build, listener-math, mono-buffer-policy, ordinal-IAT, and
-standalone audio-backend tests. The first owner headset run confirmed a subtle
-audible effect and exposed head-relative menu-click/weapon-switch-style
-feedback. BFVR now centres mono 3D sounds only while its engine-observed native
-frontend menu is visible, so replacement sounds in mods are covered without
-flattening gameplay audio. Exact stock-sample fingerprints provide an
-early-start fallback and a bounded window for the stock click's shared firearm
-layers. That correction still needs a headset re-test. Use ordinary stereo
-headphones with any other virtual-surround stage disabled. See
-[docs/hrtf-audio.md](docs/hrtf-audio.md) for architecture, pinned runtime
-versions, validation evidence, and opt-out controls.
+BFVR does not replace, reroute, or otherwise modify Battlefield 1942's audio
+backend. Audio remains owned by the installed game and any user-selected audio
+patch, including fan builds that restore hardware audio or provide HRTF.
 
 ## Player-input boundary trace
 
@@ -126,12 +109,51 @@ following one-pass infantry layout for a normal local/offline play test:
   and release A to choose Escape, Enter, 1-6, or F9-F12. Releasing off-panel
   or losing focus/tracking cancels. Its authored stack is background, selected
   hover, text, then the frame as the final/top layer.
-- Right B: reload.
+- Right B: reload on press. Hold continuously for 2.5 seconds to recenter the
+  current infantry or vehicle view using the same action as VR Settings >
+  Recenter Forward; one hold produces one recenter and reload remains intact.
 - Left X / Y / grip: prone / scoreboard (hold through BF1942's paired native
   player/global HUD semantics) / proximity-gated weapon support.
   Prone and jump clear a controller-toggled crouch.
+- Map action: toggle BF1942's expanded map with one native `M` press per button
+  press. Left Menu is the default Touch and Vive binding. Index has no default
+  because it lacks an application Menu component, but SteamVR may bind the
+  named Map action to a control on either hand. The keyboard `M` key remains
+  available.
 - Both sticks: a dead-zone-remapped analogue response curve; small deflections
   move/turn gently and full deflection reaches full native axis input.
+
+### Controller profiles and SteamVR remapping
+
+BFVR publishes the named OpenXR action set `BFVR controller input`. SteamVR
+users can select the running `Battlefield 1942 VR` application in SteamVR's
+controller-binding interface, inspect the functional action names, change the
+physical inputs assigned to them, and save a personal binding. BFVR consumes
+OpenXR actions only; it does not read Index or Vive hardware directly, so a
+SteamVR remap remains authoritative.
+
+The default profile layouts are:
+
+- Meta/Oculus Touch remains unchanged: left X/Y are primary/secondary and
+  right A/B are primary/secondary. All poses, triggers, squeezes, sticks,
+  clicks, haptics, and left Menu retain their established BFVR actions.
+- Valve Index/Knuckles maps physical A/B to primary/secondary on each hand.
+  Consequently left A acts like Touch X (Prone), left B like Touch Y
+  (Scoreboard), right A like Touch A (Quick Menu), and right B like Touch B
+  (Reload; hold 2.5 seconds to recenter). Triggers, squeezes, sticks, stick
+  clicks, aim/grip poses, and haptics remain on the corresponding hand. Index
+  exposes no application Menu component, so Map has no default Index binding;
+  it can be assigned to either controller through SteamVR.
+- HTC Vive Wand uses each trackpad as the corresponding movement/turn stick
+  and its trackpad click as the corresponding stick click. Triggers, binary
+  squeeze buttons, aim/grip poses, and haptics retain their per-hand roles.
+  Left Menu toggles the map and right Menu opens the Quick Menu. The Wand has
+  no remaining default inputs for Prone, Scoreboard, or Reload; users who need
+  those actions can assign them through SteamVR's controller-binding UI.
+
+These mappings use the interaction-profile paths standardized by OpenXR. In
+particular, each runtime owns its controller-specific aim pose, so BFVR does
+not apply a Quest-derived angular correction to Index or Vive pointer rays.
 
 VR Settings page 2 includes a default-On `Comfort Vignette` toggle. While the
 local soldier or occupied vehicle translates, BFVR smoothly closes to a stable,

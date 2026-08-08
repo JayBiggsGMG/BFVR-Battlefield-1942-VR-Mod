@@ -1,5 +1,4 @@
 #include "client/D3D8StereoPairProbe.h"
-#include "audio/HrtfAudioBridge.h"
 #include "client/D3D8PresentationConfiguration.h"
 #include "client/D3D8PerformanceTiming.h"
 #include "client/D3D8RenderViewPoseHook.h"

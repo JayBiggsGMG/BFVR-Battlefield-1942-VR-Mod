@@ -46,6 +46,8 @@ if(BFVR_PRESENTER_ONLY)
     presenter/SharedTextureConsumer.cpp
     settings/UserSettings.cpp
     openxr/OpenXRComfortVignette.cpp
+    openxr/OpenXRControllerBindingPolicy.cpp
+    openxr/OpenXRControllerShortcutPolicy.cpp
     openxr/OpenXRQuickMenu.cpp
     openxr/OpenXRHapticOutput.cpp
     openxr/OpenXRPresentation.cpp
@@ -166,15 +168,6 @@ if(NOT EXISTS "${BFVR_D3D8TO9_ROOT}/source/d3d8to9.cpp")
   message(FATAL_ERROR "The pinned d3d8to9 1.15.1 source is missing from BFVR/third_party.")
 endif()
 
-set(BFVR_AUDIO_RUNTIME_DIRECTORY
-  "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/audio/win32")
-foreach(audio_runtime BFVRDSoal.dll BFVROpenALSoft.dll)
-  if(NOT EXISTS "${BFVR_AUDIO_RUNTIME_DIRECTORY}/${audio_runtime}")
-    message(FATAL_ERROR
-      "The pinned BFVR HRTF runtime is missing ${audio_runtime}.")
-  endif()
-endforeach()
-
 # MinHook is compiled into BFVRClient only for explicit bounded observer and
 # stereo-proof hooks. It never supplies a proxy D3D8 DLL or a runtime
 # dependency.
@@ -191,10 +184,6 @@ set_property(TARGET d3d8to9 PROPERTY
 target_compile_definitions(d3d8to9 PRIVATE D3D8TO9NOLOG)
 
 add_library(BFVRClient SHARED
-  audio/HrtfAudioBridge.cpp
-  audio/HrtfBufferPolicy.cpp
-  audio/HrtfListenerMath.cpp
-  audio/HrtfMenuSoundPolicy.cpp
   client/BFVRClient.cpp
   client/D3D8CallInventory.cpp
   client/ControllerInputCache.cpp
@@ -210,7 +199,6 @@ add_library(BFVRClient SHARED
   client/StartupMenuPresentation.cpp
   client/TrackedScopeAim.cpp
   client/D3D8ImportRoute.cpp
-  client/DirectSoundImportRoute.cpp
   client/D3D8PresentationConfiguration.cpp
   client/D3D8RenderViewPoseHook.cpp
   client/BFSoldierVrMotionFilter.cpp
@@ -260,11 +248,6 @@ add_library(BFVRClient SHARED
   settings/UserSettings.cpp
 )
 
-add_library(BFVROpenALHrtfRouter SHARED
-  audio/OpenALHrtfRouter.cpp
-  audio/OpenALHrtfRouter.def
-)
-
 add_library(BFVRD3D8To9FlatClient SHARED
   client/BFVRD3D8To9FlatClient.cpp
   client/D3D8ImportRoute.cpp
@@ -309,6 +292,8 @@ add_executable(BFVROpenXRProbe
   openxr/BFVROpenXRProbe.cpp
   openxr/OpenXRBootstrap.cpp
   openxr/OpenXRComfortVignette.cpp
+  openxr/OpenXRControllerBindingPolicy.cpp
+  openxr/OpenXRControllerShortcutPolicy.cpp
   openxr/OpenXRQuickMenu.cpp
   openxr/OpenXRHapticOutput.cpp
   openxr/OpenXRPresentation.cpp
@@ -396,6 +381,16 @@ add_executable(BFVROpenXRHapticsTests
   openxr/OpenXRHapticsTests.cpp
 )
 
+add_executable(BFVROpenXRControllerShortcutTests
+  openxr/OpenXRControllerShortcutPolicy.cpp
+  openxr/OpenXRControllerShortcutPolicyTests.cpp
+)
+
+add_executable(BFVROpenXRControllerBindingTests
+  openxr/OpenXRControllerBindingPolicy.cpp
+  openxr/OpenXRControllerBindingPolicyTests.cpp
+)
+
 add_executable(BFVRVehicleMotionAimMathTests
   stereo/VehicleMotionAimMathTests.cpp
 )
@@ -439,30 +434,6 @@ add_executable(BFVRRuntimeDiagnosticsTests
   client/D3D8RuntimeDiagnosticsTests.cpp
 )
 
-add_executable(BFVRHrtfListenerMathTests
-  audio/HrtfListenerMath.cpp
-  audio/HrtfListenerMathTests.cpp
-)
-
-add_executable(BFVRHrtfBufferPolicyTests
-  audio/HrtfBufferPolicy.cpp
-  audio/HrtfBufferPolicyTests.cpp
-)
-
-add_executable(BFVRHrtfMenuSoundPolicyTests
-  audio/HrtfMenuSoundPolicy.cpp
-  audio/HrtfMenuSoundPolicyTests.cpp
-)
-
-add_executable(BFVRHrtfBackendProbe
-  audio/HrtfBackendProbe.cpp
-)
-
-add_executable(BFVRDirectSoundImportRouteTests
-  client/DirectSoundImportRoute.cpp
-  client/DirectSoundImportRouteTests.cpp
-)
-
 add_executable(BFVRSharedControlChannelTests
   client/ControllerHaptics.cpp
   client/ScopedOffHandSupportPoseCache.cpp
@@ -474,7 +445,7 @@ add_executable(BFVRRfaInspect
   tools/RfaInspect.cpp
 )
 
-foreach(target BFVRClient BFVROpenALHrtfRouter BFVRD3D8To9FlatClient BFVRLoader BFVROpenXRProbe BFVRSharedTextureProducerProbe BFVRD3D8To9SharedSurfaceProbe BFVRAmbientOcclusionDepthProbe BFVRStereoMath BFVRStereoMathTests BFVRWaterReflectionTextureBasisTests BFVRWeaponFireAimMathTests BFVROffHandSupportPolicyTests BFVRArmPoleVectorMathTests BFVRMainMenuOverlayTests BFVRQuickMenuTests BFVRSettingsMenuTests BFVRUserSettingsTests BFVROpenXRHapticsTests BFVRVehicleMotionAimMathTests BFVRDirectionalLocomotionTests BFVRComfortVignetteTests BFVRSurfaceVehicleDriveMathTests BFVRTrackingAnchorTests BFVRMountedCameraMathTests BFVRScopeViewMathTests BFVROpenXRScopeOverlayLayerTests BFVRWorldCrosshairMathTests BFVRRuntimeDiagnosticsTests BFVRHrtfListenerMathTests BFVRHrtfBufferPolicyTests BFVRHrtfMenuSoundPolicyTests BFVRHrtfBackendProbe BFVRDirectSoundImportRouteTests BFVRSharedControlChannelTests BFVRRfaInspect)
+foreach(target BFVRClient BFVRD3D8To9FlatClient BFVRLoader BFVROpenXRProbe BFVRSharedTextureProducerProbe BFVRD3D8To9SharedSurfaceProbe BFVRAmbientOcclusionDepthProbe BFVRStereoMath BFVRStereoMathTests BFVRWaterReflectionTextureBasisTests BFVRWeaponFireAimMathTests BFVROffHandSupportPolicyTests BFVRArmPoleVectorMathTests BFVRMainMenuOverlayTests BFVRQuickMenuTests BFVRSettingsMenuTests BFVRUserSettingsTests BFVROpenXRHapticsTests BFVROpenXRControllerShortcutTests BFVROpenXRControllerBindingTests BFVRVehicleMotionAimMathTests BFVRDirectionalLocomotionTests BFVRComfortVignetteTests BFVRSurfaceVehicleDriveMathTests BFVRTrackingAnchorTests BFVRMountedCameraMathTests BFVRScopeViewMathTests BFVROpenXRScopeOverlayLayerTests BFVRWorldCrosshairMathTests BFVRRuntimeDiagnosticsTests BFVRSharedControlChannelTests BFVRRfaInspect)
   target_compile_definitions(${target} PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
   set_property(TARGET ${target} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
   if(MSVC)
@@ -499,17 +470,6 @@ target_include_directories(BFVRD3D8To9SharedSurfaceProbe PRIVATE
 target_include_directories(BFVRAmbientOcclusionDepthProbe PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}"
   "${BFVR_D3D8TO9_ROOT}/source")
-target_include_directories(BFVROpenALHrtfRouter PRIVATE
-  "${CMAKE_CURRENT_SOURCE_DIR}")
-target_include_directories(BFVRHrtfBackendProbe PRIVATE
-  "${CMAKE_CURRENT_SOURCE_DIR}")
-target_include_directories(BFVRHrtfBufferPolicyTests PRIVATE
-  "${CMAKE_CURRENT_SOURCE_DIR}")
-target_include_directories(BFVRHrtfMenuSoundPolicyTests PRIVATE
-  "${CMAKE_CURRENT_SOURCE_DIR}")
-target_include_directories(BFVRDirectSoundImportRouteTests PRIVATE
-  "${CMAKE_CURRENT_SOURCE_DIR}")
-
 target_link_libraries(BFVRClient PRIVATE minhook BFVRStereoMath)
 target_include_directories(BFVRD3D8To9FlatClient PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}")
@@ -534,8 +494,6 @@ target_link_libraries(BFVRMountedCameraMathTests PRIVATE BFVRStereoMath)
 target_link_libraries(BFVRScopeViewMathTests PRIVATE BFVRStereoMath)
 target_link_libraries(BFVROpenXRScopeOverlayLayerTests PRIVATE BFVRStereoMath)
 target_link_libraries(BFVRWorldCrosshairMathTests PRIVATE BFVRStereoMath)
-target_link_libraries(BFVRHrtfListenerMathTests PRIVATE BFVRStereoMath)
-target_link_libraries(BFVRDirectSoundImportRouteTests PRIVATE dsound)
 target_include_directories(BFVRMainMenuOverlayTests PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}")
 target_include_directories(BFVRQuickMenuTests PRIVATE
@@ -547,6 +505,10 @@ target_include_directories(BFVRUserSettingsTests PRIVATE
 target_include_directories(BFVROpenXRHapticsTests PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}"
   "${BFVR_OPENXR_INCLUDE_DIRECTORY}")
+target_include_directories(BFVROpenXRControllerShortcutTests PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}")
+target_include_directories(BFVROpenXRControllerBindingTests PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}")
 target_include_directories(BFVRRuntimeDiagnosticsTests PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}")
 target_include_directories(BFVRSharedControlChannelTests PRIVATE
@@ -589,6 +551,12 @@ if(BUILD_TESTING)
     NAME BFVROpenXRHapticsTests
     COMMAND BFVROpenXRHapticsTests)
   add_test(
+    NAME BFVROpenXRControllerShortcutTests
+    COMMAND BFVROpenXRControllerShortcutTests)
+  add_test(
+    NAME BFVROpenXRControllerBindingTests
+    COMMAND BFVROpenXRControllerBindingTests)
+  add_test(
     NAME BFVRVehicleMotionAimMathTests
     COMMAND BFVRVehicleMotionAimMathTests)
   add_test(
@@ -618,18 +586,6 @@ if(BUILD_TESTING)
   add_test(
     NAME BFVRRuntimeDiagnosticsTests
     COMMAND BFVRRuntimeDiagnosticsTests)
-  add_test(
-    NAME BFVRHrtfListenerMathTests
-    COMMAND BFVRHrtfListenerMathTests)
-  add_test(
-    NAME BFVRHrtfBufferPolicyTests
-    COMMAND BFVRHrtfBufferPolicyTests)
-  add_test(
-    NAME BFVRHrtfMenuSoundPolicyTests
-    COMMAND BFVRHrtfMenuSoundPolicyTests)
-  add_test(
-    NAME BFVRDirectSoundImportRouteTests
-    COMMAND BFVRDirectSoundImportRouteTests)
   add_test(
     NAME BFVRSharedControlChannelTests
     COMMAND BFVRSharedControlChannelTests)
@@ -687,37 +643,10 @@ add_custom_command(TARGET BFVRClient POST_BUILD
     "${CMAKE_CURRENT_SOURCE_DIR}/../assets/SettingsMenu"
     "$<TARGET_FILE_DIR:BFVRClient>/assets/SettingsMenu")
 
-add_dependencies(BFVRClient BFVROpenALHrtfRouter)
-add_custom_command(TARGET BFVRClient POST_BUILD
-  COMMAND ${CMAKE_COMMAND} -E make_directory
-    "$<TARGET_FILE_DIR:BFVRClient>/runtime/audio/win32"
-  COMMAND ${CMAKE_COMMAND} -E copy_if_different
-    "${BFVR_AUDIO_RUNTIME_DIRECTORY}/BFVRDSoal.dll"
-    "${BFVR_AUDIO_RUNTIME_DIRECTORY}/BFVROpenALSoft.dll"
-    "${BFVR_AUDIO_RUNTIME_DIRECTORY}/alsoft-hrtf-reference.ini"
-    "$<TARGET_FILE_DIR:BFVRClient>/runtime/audio/win32"
-  COMMAND ${CMAKE_COMMAND} -E copy_if_different
-    "$<TARGET_FILE:BFVROpenALHrtfRouter>"
-    "$<TARGET_FILE_DIR:BFVRClient>/runtime/audio/win32/dsoal-aldrv.dll")
-
-add_dependencies(BFVRHrtfBackendProbe BFVROpenALHrtfRouter)
-add_custom_command(TARGET BFVRHrtfBackendProbe POST_BUILD
-  COMMAND ${CMAKE_COMMAND} -E make_directory
-    "$<TARGET_FILE_DIR:BFVRHrtfBackendProbe>/runtime/audio/win32"
-  COMMAND ${CMAKE_COMMAND} -E copy_if_different
-    "${BFVR_AUDIO_RUNTIME_DIRECTORY}/BFVRDSoal.dll"
-    "${BFVR_AUDIO_RUNTIME_DIRECTORY}/BFVROpenALSoft.dll"
-    "$<TARGET_FILE_DIR:BFVRHrtfBackendProbe>/runtime/audio/win32"
-  COMMAND ${CMAKE_COMMAND} -E copy_if_different
-    "$<TARGET_FILE:BFVROpenALHrtfRouter>"
-    "$<TARGET_FILE_DIR:BFVRHrtfBackendProbe>/runtime/audio/win32/dsoal-aldrv.dll")
-
 target_include_directories(BFVRClient PRIVATE
   "${BFVR_D3D8TO9_ROOT}/source")
 
 set_target_properties(BFVRClient PROPERTIES OUTPUT_NAME "BFVRClient")
-set_target_properties(BFVROpenALHrtfRouter PROPERTIES
-  OUTPUT_NAME "dsoal-aldrv")
 set_target_properties(BFVRD3D8To9FlatClient PROPERTIES
   OUTPUT_NAME "BFVRD3D8To9FlatClient")
 set_target_properties(BFVRLoader PROPERTIES OUTPUT_NAME "BFVRLoader")

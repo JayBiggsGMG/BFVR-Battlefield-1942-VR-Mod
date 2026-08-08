@@ -114,6 +114,7 @@ struct OpenXRPresentationFrameState
     bool headPoseValid = false;
     bool headPoseTracked = false;
     LONG recenterForwardSequence = 0;
+    bool mapToggleRequested = false;
     OpenXRPresentationPose headPose = {};
     bool standingHeightValid = false;
     float standingHeightMeters = 0.0F;

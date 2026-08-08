@@ -1614,10 +1614,10 @@ private:
         }
         nextUserSettingsPollAt = now + kUserSettingsPollIntervalMs;
         auto& runtime = bfvr::settings::ProcessUserSettingsRuntime();
-        if (!runtime.ReloadIfChanged())
-        {
-            return;
-        }
+        // Another consumer in this process (notably tracking) may have
+        // already observed the file change and refreshed the shared runtime.
+        // Always compare its current values with this overlay's local cache.
+        (void)runtime.ReloadIfChanged();
         const bfvr::settings::UserSettingsValues updated =
             bfvr::settings::DecodeUserSettings(runtime.Current());
         if (updated == userSettings)

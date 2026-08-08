@@ -218,13 +218,12 @@ UINT QuickMenuVirtualKey(
     }
 }
 
-bool SendQuickMenuKeyPress(
+bool SendForegroundKeyPress(
     DWORD gameProcessId,
-    bfvr::stereo::QuickMenuSelection selection,
+    UINT virtualKey,
     DWORD& errorCode) noexcept
 {
     errorCode = ERROR_SUCCESS;
-    const UINT virtualKey = QuickMenuVirtualKey(selection);
     const HWND foregroundWindow = GetForegroundWindow();
     DWORD foregroundProcessId = 0;
     if (virtualKey == 0 || foregroundWindow == nullptr ||
@@ -262,6 +261,17 @@ bool SendQuickMenuKeyPress(
         return false;
     }
     return true;
+}
+
+bool SendQuickMenuKeyPress(
+    DWORD gameProcessId,
+    bfvr::stereo::QuickMenuSelection selection,
+    DWORD& errorCode) noexcept
+{
+    return SendForegroundKeyPress(
+        gameProcessId,
+        QuickMenuVirtualKey(selection),
+        errorCode);
 }
 
 void PublishControllerSample(
@@ -821,6 +831,35 @@ int RunPresenter(
                 consumedNativeMenuHoverSequence,
                 bfvr::OpenXRHapticEvent::Hover,
                 bfvr::kOpenXRHapticHandRight);
+            if (frame.mapToggleRequested)
+            {
+                DWORD errorCode = ERROR_SUCCESS;
+                const bool sent = runtimeTimedProducer &&
+                    SendForegroundKeyPress(
+                        block->producerProcessId,
+                        'M',
+                        errorCode);
+                if (sent)
+                {
+                    fwprintf(
+                        g_output,
+                        L"[PRESENTER] OpenXR Map action pressed and sent one foreground BF1942 M scan-code down/up pair for the native map toggle.\n");
+                }
+                else if (!runtimeTimedProducer)
+                {
+                    fwprintf(
+                        g_output,
+                        L"[PRESENTER] Offline transport ignored the OpenXR Map action.\n");
+                }
+                else
+                {
+                    fwprintf(
+                        g_output,
+                        L"[PRESENTER] OpenXR Map action pressed but the M toggle was safely suppressed because BF1942 was not foreground or SendInput failed (error %lu).\n",
+                        static_cast<unsigned long>(errorCode));
+                }
+                fflush(g_output);
+            }
         }
         dispatchQuickMenuCommand();
         totalOpenXrBeginQpcTicks +=
