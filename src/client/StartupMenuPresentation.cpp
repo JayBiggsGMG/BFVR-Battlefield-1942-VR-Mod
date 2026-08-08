@@ -183,7 +183,11 @@ void StartupMenuPresentation::Pump()
         stereo::ResetUiMenuAnchor(menuAnchorTracker_);
         ClearActiveMenuWorldAnchor();
     }
-    if (bridge_.PublishFrame(request_, frame, uiPlacement))
+    if (bridge_.PublishFrame(
+            request_,
+            frame,
+            uiPlacement,
+            D3D8RuntimeMovementFrame{}))
     {
         bridge_.WaitForPresentation(request_.sequence, 1000);
     }

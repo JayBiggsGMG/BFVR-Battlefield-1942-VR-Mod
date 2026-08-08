@@ -2,6 +2,8 @@
 #include "presenter/DesktopMirror.h"
 #include "presenter/SharedControlChannel.h"
 #include "presenter/SharedTextureConsumer.h"
+#include "settings/UserSettings.h"
+#include "stereo/ComfortVignette.h"
 
 #include <windows.h>
 
@@ -15,6 +17,7 @@ namespace
 {
 FILE* g_output = stdout;
 constexpr DWORD kRuntimeTimedSourceGraceMs = 100;
+constexpr ULONGLONG kComfortVignetteMotionFreshMs = 150;
 
 std::int64_t ReadPerformanceCounter() noexcept
 {
@@ -534,6 +537,11 @@ int RunPresenter(
     bool nativeMenuHoverActive = false;
     bool desktopMirrorSourceDirty = false;
     bool quickMenuWasVisibleInMirror = false;
+    bfvr::stereo::ComfortVignetteMotionState comfortMotionState = {};
+    float comfortVignetteMotionTarget = 0.0F;
+    ULONGLONG lastComfortMotionSampleAt = 0;
+    ULONGLONG nextComfortSettingsPollAt = 0;
+    bool comfortVignetteEnabled = true;
     auto consumeSequence = [&](LONG availableSequence)
     {
         // The producer publishes these pixels/metadata before frameSequence
@@ -619,6 +627,27 @@ int RunPresenter(
             acceptedUiWorldAnchor.positionY = source.positionY;
             acceptedUiWorldAnchor.positionZ = source.positionZ;
         }
+        const bool movementOriginValid = InterlockedCompareExchange(
+            &block->frameMovementOriginValid,
+            0,
+            0) != 0;
+        const std::uint64_t movementContextToken =
+            static_cast<std::uint64_t>(
+                block->frameMovementContextTokenLow) |
+            (static_cast<std::uint64_t>(
+                block->frameMovementContextTokenHigh) << 32U);
+        comfortVignetteMotionTarget =
+            bfvr::stereo::UpdateComfortVignetteMotionTarget(
+                comfortMotionState,
+                {
+                    movementOriginValid,
+                    movementContextToken,
+                    block->renderRequest.predictedDisplayTime,
+                    {
+                        block->frameMovementOriginX,
+                        block->frameMovementOriginY,
+                        block->frameMovementOriginZ}});
+        lastComfortMotionSampleAt = GetTickCount64();
         consumedSequence = availableSequence;
         // ConsumeFrame waits for the legacy D3D9 source reads to complete.
         // Acknowledge only after pairing the frame with its UI metadata; the
@@ -729,6 +758,24 @@ int RunPresenter(
     const auto beginFrame = [&](bfvr::OpenXRPresentationFrameState& frame)
     {
         const std::int64_t beginStarted = ReadPerformanceCounter();
+        const ULONGLONG now = GetTickCount64();
+        if (now >= nextComfortSettingsPollAt)
+        {
+            auto& userSettingsRuntime =
+                bfvr::settings::ProcessUserSettingsRuntime();
+            (void)userSettingsRuntime.ReloadIfChanged();
+            comfortVignetteEnabled = userSettingsRuntime.IsReady() &&
+                bfvr::settings::DecodeUserSettings(
+                    userSettingsRuntime.Current()).comfortVignetteEnabled;
+            nextComfortSettingsPollAt = now + 250;
+        }
+        const bool motionFresh = lastComfortMotionSampleAt != 0 &&
+            now - lastComfortMotionSampleAt <=
+                kComfortVignetteMotionFreshMs;
+        presentation.SetComfortVignetteTarget(
+            comfortVignetteEnabled && motionFresh
+                ? comfortVignetteMotionTarget
+                : 0.0F);
         presentation.SetMountedCameraDecoupled(
             InterlockedCompareExchange(
                 &block->mountedCameraDecoupled,

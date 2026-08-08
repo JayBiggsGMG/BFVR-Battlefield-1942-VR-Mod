@@ -23,6 +23,8 @@ constexpr std::string_view kVrHeightAdjustmentKey =
     "manual_height_adjustment_centimeters";
 constexpr std::string_view kStandingEyeHeightKey =
     "standing_eye_height_centimeters";
+constexpr std::string_view kComfortVignetteEnabledKey =
+    "comfort_vignette_enabled";
 constexpr std::string_view kInvertFlightPitchKey = "invert_flight_pitch";
 constexpr std::string_view kInvertTurretPitchKey = "invert_turret_pitch";
 constexpr std::string_view kInvertTurretYawKey = "invert_turret_yaw";
@@ -441,6 +443,15 @@ UserSettingsSchema SeededUserSettingsSchema()
             IsStandingEyeHeight
         },
         {
+            std::string(kComfortVignetteEnabledKey),
+            "true",
+            {
+                "Enables a movement-only VR comfort vignette. BFVR filters translation of the local infantry or occupied vehicle control object into a stable moving/stopped state, then eases a soft black peripheral aperture in and out. Physical head movement, head look, artificial turning, turret aim, and vehicle rotation in place do not activate it.",
+                "The effect is composited above the stereo world but below Ref2 HUD, scope, Quick Menu, VR Settings, and other overlays, so interface elements remain clear. Accepted values: true or false. Applied after VR Settings > Save without a restart."
+            },
+            IsBoolean
+        },
+        {
             std::string(kInvertFlightPitchKey),
             "false",
             {
@@ -632,6 +643,9 @@ UserSettingsValues DecodeUserSettings(const UserSettings& settings) noexcept
     result.controllerHapticsEnabled = readBoolean(
         kControllerHapticsEnabledKey,
         true);
+    result.comfortVignetteEnabled = readBoolean(
+        kComfortVignetteEnabledKey,
+        true);
     const auto readGripStyle = [&settings]() {
         const auto found = settings.values.find(
             std::string(kOffHandGripStyleKey));
@@ -760,6 +774,8 @@ void EncodeUserSettings(
         values.invertTurretYaw ? "true" : "false";
     settings.values[std::string(kControllerHapticsEnabledKey)] =
         values.controllerHapticsEnabled ? "true" : "false";
+    settings.values[std::string(kComfortVignetteEnabledKey)] =
+        values.comfortVignetteEnabled ? "true" : "false";
     settings.values[std::string(kOffHandGripStyleKey)] =
         values.offHandGripStyle == OffHandGripStyle::Toggle
         ? "toggle"

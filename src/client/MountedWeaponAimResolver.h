@@ -18,6 +18,12 @@ struct LocalPlayerControlContext
     bool alive = false;
 };
 
+struct LocalPlayerMotionPose
+{
+    const void* controlObject = nullptr;
+    stereo::Vec3 worldPosition = {};
+};
+
 // Resolves the occupied PlayerControlObject's first native weapon and samples
 // the same nominal FireArms transformation selected by the firing path.
 [[nodiscard]] bool InitializeMountedWeaponAimResolver(
@@ -40,5 +46,12 @@ void ShutdownMountedWeaponAimResolver() noexcept;
 // boundary in both offline and multiplayer play; no object state is changed.
 [[nodiscard]] bool ReadLocalPlayerControlContext(
     LocalPlayerControlContext& context) noexcept;
+
+// Samples only the world-space origin of the local infantry/occupied control
+// object through the repeatedly established +0x3C transformation getter.
+// Its orientation is intentionally discarded so look, aim, and rotation in
+// place cannot drive the comfort vignette.
+[[nodiscard]] bool ReadLocalPlayerMotionPose(
+    LocalPlayerMotionPose& motionPose) noexcept;
 
 } // namespace bfvr

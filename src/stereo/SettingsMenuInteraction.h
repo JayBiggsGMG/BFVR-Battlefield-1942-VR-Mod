@@ -43,6 +43,7 @@ enum class SettingsMenuSelection : std::uint32_t
     VrHeightAdjustment,
     AutoCalibrateStandingHeight,
     RecenterForward,
+    ComfortVignetteEnabled,
     OffHandGripPrevious,
     OffHandGripNext,
     HandCrosshairPrevious,
@@ -107,8 +108,8 @@ constexpr float kSettingsMenuSliderRightPixels = 816.0F;
 constexpr float kSettingsMenuNumberBoxLeftPixels = 832.0F;
 constexpr std::array<float, 4> kSettingsMenuVrPageOneRowCentersPixels = {
     165.0F, 315.0F, 465.0F, 650.0F};
-constexpr std::array<float, 3> kSettingsMenuVrPageTwoRowCentersPixels = {
-    245.0F, 465.0F, 660.0F};
+constexpr std::array<float, 4> kSettingsMenuVrPageTwoRowCentersPixels = {
+    135.0F, 300.0F, 515.0F, 700.0F};
 constexpr std::array<float, 3> kSettingsMenuControlsSelectorRowCentersPixels = {
     165.0F, 330.0F, 420.0F};
 constexpr std::array<float, 4> kSettingsMenuControlsToggleRowCentersPixels = {

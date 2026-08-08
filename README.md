@@ -133,6 +133,16 @@ following one-pass infantry layout for a normal local/offline play test:
 - Both sticks: a dead-zone-remapped analogue response curve; small deflections
   move/turn gently and full deflection reaches full native axis input.
 
+VR Settings page 2 includes a default-On `Comfort Vignette` toggle. While the
+local soldier or occupied vehicle translates, BFVR smoothly closes to a stable,
+feathered black peripheral aperture and restores the full view after movement
+stops. A filtered movement-state trigger prevents quantized game transforms
+from making the aperture pulse between simulation updates. Head movement,
+artificial turning, turret aiming, and a
+vehicle rotating in place do not trigger it. The effect is procedural—there is
+no vignette image asset—and OpenXR composites it over the world but under the
+native HUD, scope texture, Quick Menu, Settings, and other overlays.
+
 When the local player controls a non-default vehicle or mounted
 `PlayerControlObject`, BFVR switches only the stick axes while retaining the
 buttons above:
@@ -369,7 +379,10 @@ presenter-selected adapter and verify exact copied pixels:
 
 For the headset smoke test, substitute `BFVRPresenter.exe` and omit
 `--transport-only`. `--ui-cylinder` selects the cylinder layer; the default is
-the quad layer.
+the quad layer. Add `--runtime-timed --comfort-vignette-motion` to publish a
+bounded synthetic translation through the normal protocol and verify the
+procedural vignette initializes, renders, and submits without launching the
+game; the presenter log records its first eased layer strength.
 
 The translated D3D8 path has a second transport control for D3D9Ex legacy
 shared handles. Build both architectures, place the x64 consumer/presenter

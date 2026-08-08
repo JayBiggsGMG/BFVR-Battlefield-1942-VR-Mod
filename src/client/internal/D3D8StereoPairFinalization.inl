@@ -67,6 +67,17 @@ bool FinalizeFrameTargets(void* device)
         }
         g_frameUiPlacement.mountedCameraDecoupled =
             g_renderViewPoseHook.IsMountedCameraDecoupled();
+        bfvr::D3D8RuntimeMovementFrame movementFrame = {};
+        bfvr::LocalPlayerMotionPose localMotion = {};
+        if (bfvr::ReadLocalPlayerMotionPose(localMotion))
+        {
+            movementFrame.valid = true;
+            movementFrame.contextToken = reinterpret_cast<std::uintptr_t>(
+                localMotion.controlObject);
+            movementFrame.worldPositionX = localMotion.worldPosition.x;
+            movementFrame.worldPositionY = localMotion.worldPosition.y;
+            movementFrame.worldPositionZ = localMotion.worldPosition.z;
+        }
         g_presentationFramePublished =
             bfvr::d3d8probe::TransferStereoFrameToSharedPresentation(
                 g_readbackApi,
@@ -78,6 +89,7 @@ bool FinalizeFrameTargets(void* device)
                 g_runtimeRenderRequest,
                 analyzePixels,
                 g_frameUiPlacement,
+                movementFrame,
                 depthFrame);
     }
     else

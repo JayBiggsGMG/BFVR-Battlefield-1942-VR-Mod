@@ -233,7 +233,7 @@ bool TestProductionSeedAndTypedValues(const std::wstring& directory)
     }
     const auto defaults = store.Defaults();
     const auto decodedDefaults = bfvr::settings::DecodeUserSettings(defaults);
-    if (defaults.values.size() != 22 ||
+    if (defaults.values.size() != 23 ||
         decodedDefaults.playMode != bfvr::settings::PlayMode::Seated ||
         decodedDefaults.artificialTurnMode !=
             bfvr::settings::ArtificialTurnMode::Smooth ||
@@ -242,6 +242,7 @@ bool TestProductionSeedAndTypedValues(const std::wstring& directory)
             bfvr::settings::MovementDirection::Character ||
         decodedDefaults.vrHeightAdjustmentCentimeters != 0 ||
         decodedDefaults.standingEyeHeightCentimeters != 170 ||
+        !decodedDefaults.comfortVignetteEnabled ||
         decodedDefaults.infantryTurnSpeedPercent != 100 ||
         decodedDefaults.invertFlightPitch ||
         decodedDefaults.invertTurretPitch ||
@@ -291,6 +292,7 @@ bool TestProductionSeedAndTypedValues(const std::wstring& directory)
         bfvr::settings::MovementDirection::OffHandController;
     changed.vrHeightAdjustmentCentimeters = 12;
     changed.standingEyeHeightCentimeters = 182;
+    changed.comfortVignetteEnabled = false;
     changed.invertFlightPitch = true;
     changed.invertTurretPitch = true;
     changed.invertTurretYaw = true;
@@ -333,6 +335,10 @@ bool TestProductionSeedAndTypedValues(const std::wstring& directory)
         contents.find("manual_height_adjustment_centimeters = 12") !=
             std::string::npos &&
         contents.find("standing_eye_height_centimeters = 182") !=
+            std::string::npos &&
+        contents.find("comfort_vignette_enabled = false") !=
+            std::string::npos &&
+        contents.find("HUD, scope, Quick Menu, VR Settings") !=
             std::string::npos &&
         contents.find("does not affect vehicles, aircraft, turrets") !=
             std::string::npos &&

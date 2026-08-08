@@ -90,6 +90,7 @@ struct UserSettingsValues
         kDefaultVrHeightAdjustmentCentimeters;
     std::uint32_t standingEyeHeightCentimeters =
         kDefaultStandingEyeHeightCentimeters;
+    bool comfortVignetteEnabled = true;
     bool invertFlightPitch = false;
     bool invertTurretPitch = false;
     bool invertTurretYaw = false;

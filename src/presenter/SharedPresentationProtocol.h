@@ -11,7 +11,7 @@ namespace bfvr::shared
 using SharedTextureLogCallback = void (*)(void* context, const wchar_t* message);
 
 constexpr DWORD kProtocolMagic = 0x52564642; // "BFVR"
-constexpr DWORD kProtocolVersion = 19;
+constexpr DWORD kProtocolVersion = 20;
 constexpr std::size_t kTextureCount = 3;
 constexpr std::size_t kDepthTextureCount = 2;
 constexpr std::size_t kSharedNameCapacity = 128;
@@ -262,6 +262,18 @@ struct ControlBlock
     // seat-local state into the utility strip; it never assumes a toggle was
     // accepted merely because the user released the UI button.
     volatile LONG mountedCameraDecoupled = 0;
+    // Published before frameSequence from the local infantry/occupied control
+    // object's world transform. Orientation is not transported: this metadata
+    // can drive a movement comfort vignette without reacting to head look,
+    // artificial turning, turret aim, or vehicle rotation in place. The opaque
+    // token lets x64 re-baseline instead of treating seat/respawn changes as
+    // extreme velocity.
+    volatile LONG frameMovementOriginValid = 0;
+    DWORD frameMovementContextTokenLow = 0;
+    DWORD frameMovementContextTokenHigh = 0;
+    float frameMovementOriginX = 0.0F;
+    float frameMovementOriginY = 0.0F;
+    float frameMovementOriginZ = 0.0F;
     // Optional AO depth transport is additive to the three established color
     // slots. The producer publishes descriptors before TexturesReady and
     // publishes the per-frame matrix payload before frameSequence.

@@ -888,7 +888,8 @@ public:
     bool PublishFrame(
         const D3D8RuntimeRenderRequest& request,
         const std::array<D3D8SharedFramePixels, 3>& frame,
-        const D3D8RuntimeUiPlacement& uiPlacement)
+        const D3D8RuntimeUiPlacement& uiPlacement,
+        const D3D8RuntimeMovementFrame& movementFrame)
     {
         if (!initialized || block == nullptr || request.sequence <= 0)
         {
@@ -908,6 +909,7 @@ public:
             return false;
         }
         PublishUiPlacement(uiPlacement);
+        PublishMovementFrame(movementFrame);
         InterlockedIncrement(&block->producedFrameCount);
         MemoryBarrier();
         InterlockedExchange(&block->frameSequence, request.sequence);
@@ -921,6 +923,7 @@ public:
         const D3D8RuntimeRenderRequest& request,
         DWORD timeoutMs,
         const D3D8RuntimeUiPlacement& uiPlacement,
+        const D3D8RuntimeMovementFrame& movementFrame,
         const D3D8RuntimeDepthFrame& depthFrame,
         const std::array<void*, shared::kDepthTextureCount>& depthSurfaces,
         const std::array<void*, shared::kDepthTextureCount>&
@@ -1001,6 +1004,7 @@ public:
             return false;
         }
         PublishUiPlacement(uiPlacement);
+        PublishMovementFrame(movementFrame);
         InterlockedIncrement(&block->producedFrameCount);
         MemoryBarrier();
         InterlockedExchange(&block->frameSequence, request.sequence);
@@ -1300,6 +1304,34 @@ public:
             placement.mountedCameraDecoupled ? 1 : 0);
     }
 
+    void PublishMovementFrame(const D3D8RuntimeMovementFrame& movement)
+    {
+        if (block == nullptr)
+        {
+            return;
+        }
+        const bool valid = movement.valid && movement.contextToken != 0 &&
+            std::isfinite(movement.worldPositionX) &&
+            std::isfinite(movement.worldPositionY) &&
+            std::isfinite(movement.worldPositionZ);
+        if (valid)
+        {
+            const std::uint64_t token = static_cast<std::uint64_t>(
+                movement.contextToken);
+            block->frameMovementContextTokenLow =
+                static_cast<DWORD>(token);
+            block->frameMovementContextTokenHigh =
+                static_cast<DWORD>(token >> 32U);
+            block->frameMovementOriginX = movement.worldPositionX;
+            block->frameMovementOriginY = movement.worldPositionY;
+            block->frameMovementOriginZ = movement.worldPositionZ;
+            MemoryBarrier();
+        }
+        InterlockedExchange(
+            &block->frameMovementOriginValid,
+            valid ? 1 : 0);
+    }
+
     void ReportDepthExportTimings()
     {
         if (depthTimingReported)
@@ -1424,10 +1456,11 @@ bool D3D8SharedPresentationBridge::RequestRender(
 bool D3D8SharedPresentationBridge::PublishFrame(
     const D3D8RuntimeRenderRequest& request,
     const std::array<D3D8SharedFramePixels, 3>& frame,
-    const D3D8RuntimeUiPlacement& uiPlacement)
+    const D3D8RuntimeUiPlacement& uiPlacement,
+    const D3D8RuntimeMovementFrame& movementFrame)
 {
     return impl_ != nullptr &&
-        impl_->PublishFrame(request, frame, uiPlacement);
+        impl_->PublishFrame(request, frame, uiPlacement, movementFrame);
 }
 
 bool D3D8SharedPresentationBridge::PublishGpuFrame(
@@ -1435,6 +1468,7 @@ bool D3D8SharedPresentationBridge::PublishGpuFrame(
     const D3D8RuntimeRenderRequest& request,
     DWORD timeoutMs,
     const D3D8RuntimeUiPlacement& uiPlacement,
+    const D3D8RuntimeMovementFrame& movementFrame,
     const D3D8RuntimeDepthFrame& depthFrame,
     const std::array<void*, shared::kDepthTextureCount>& depthSurfaces,
     const std::array<void*, shared::kDepthTextureCount>& depthExportSurfaces)
@@ -1445,6 +1479,7 @@ bool D3D8SharedPresentationBridge::PublishGpuFrame(
             request,
             timeoutMs,
             uiPlacement,
+            movementFrame,
             depthFrame,
             depthSurfaces,
             depthExportSurfaces);

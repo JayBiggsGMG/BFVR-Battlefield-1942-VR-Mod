@@ -125,6 +125,53 @@ bool ReadLocalPlayerControlContext(
     }
 }
 
+bool ReadLocalPlayerMotionPose(LocalPlayerMotionPose& motionPose) noexcept
+{
+    motionPose = {};
+    LocalPlayerControlContext context = {};
+    if (!ReadLocalPlayerControlContext(context) ||
+        context.currentControlObject == nullptr)
+    {
+        return false;
+    }
+    __try
+    {
+        void* const object = const_cast<void*>(context.currentControlObject);
+        void* const vtable = *reinterpret_cast<void* const*>(object);
+        void* const target = vtable == nullptr
+            ? nullptr
+            : *reinterpret_cast<void* const*>(
+                static_cast<const std::byte*>(vtable) +
+                kGetTransformationVtableOffset);
+        const auto getTransformation =
+            reinterpret_cast<GetTransformationFn>(target);
+        const stereo::Matrix4* const world = getTransformation == nullptr
+            ? nullptr
+            : getTransformation(object);
+        if (world == nullptr || !IsFinite(*world))
+        {
+            return false;
+        }
+        const stereo::Vec3 position = {
+            world->values[3][0],
+            world->values[3][1],
+            world->values[3][2]};
+        if (!std::isfinite(position.x) || !std::isfinite(position.y) ||
+            !std::isfinite(position.z))
+        {
+            return false;
+        }
+        motionPose.controlObject = context.currentControlObject;
+        motionPose.worldPosition = position;
+        return true;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        motionPose = {};
+        return false;
+    }
+}
+
 bool InitializeMountedWeaponAimResolver(
     void* gameImage,
     void (*appendLog)(const wchar_t* message)) noexcept

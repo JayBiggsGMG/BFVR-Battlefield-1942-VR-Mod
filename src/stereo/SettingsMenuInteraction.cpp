@@ -188,21 +188,28 @@ SettingsMenuSelection SettingsMenuSelectionAt(
     if (tab == SettingsMenuTab::VrSettings && page == 1)
     {
         if (pixelX >= kSettingsMenuControlColumnPixels &&
-            pixelX <= kSettingsMenuSliderRightPixels &&
+            pixelX <= kSettingsMenuControlColumnPixels + 72.0F &&
             pixelY >= kSettingsMenuVrPageTwoRowCentersPixels[0] - 38.0F &&
             pixelY <= kSettingsMenuVrPageTwoRowCentersPixels[0] + 38.0F)
+        {
+            return SettingsMenuSelection::ComfortVignetteEnabled;
+        }
+        if (pixelX >= kSettingsMenuControlColumnPixels &&
+            pixelX <= kSettingsMenuSliderRightPixels &&
+            pixelY >= kSettingsMenuVrPageTwoRowCentersPixels[1] - 38.0F &&
+            pixelY <= kSettingsMenuVrPageTwoRowCentersPixels[1] + 38.0F)
         {
             return SettingsMenuSelection::VrHeightAdjustment;
         }
         if (pixelX >= 350.0F && pixelX <= 930.0F &&
-            pixelY >= kSettingsMenuVrPageTwoRowCentersPixels[1] - 42.0F &&
-            pixelY <= kSettingsMenuVrPageTwoRowCentersPixels[1] + 42.0F)
+            pixelY >= kSettingsMenuVrPageTwoRowCentersPixels[2] - 42.0F &&
+            pixelY <= kSettingsMenuVrPageTwoRowCentersPixels[2] + 42.0F)
         {
             return SettingsMenuSelection::AutoCalibrateStandingHeight;
         }
         if (pixelX >= 350.0F && pixelX <= 930.0F &&
-            pixelY >= kSettingsMenuVrPageTwoRowCentersPixels[2] - 42.0F &&
-            pixelY <= kSettingsMenuVrPageTwoRowCentersPixels[2] + 42.0F)
+            pixelY >= kSettingsMenuVrPageTwoRowCentersPixels[3] - 42.0F &&
+            pixelY <= kSettingsMenuVrPageTwoRowCentersPixels[3] + 42.0F)
         {
             return SettingsMenuSelection::RecenterForward;
         }
@@ -316,6 +323,8 @@ const wchar_t* SettingsMenuSelectionName(
     case SettingsMenuSelection::AutoCalibrateStandingHeight:
         return L"Auto-Calibrate Standing Height";
     case SettingsMenuSelection::RecenterForward: return L"Recenter Forward";
+    case SettingsMenuSelection::ComfortVignetteEnabled:
+        return L"Comfort Vignette";
     case SettingsMenuSelection::OffHandGripPrevious:
         return L"previous Off-hand Grip Style";
     case SettingsMenuSelection::OffHandGripNext:
@@ -764,6 +773,11 @@ void SettingsMenuInteraction::Activate(
     case SettingsMenuSelection::RecenterForward:
         command_ = SettingsMenuCommand::RecenterForward;
         status_ = SettingsMenuStatus::ForwardRecentered;
+        break;
+    case SettingsMenuSelection::ComfortVignetteEnabled:
+        values_.comfortVignetteEnabled = !values_.comfortVignetteEnabled;
+        valuesChanged_ = true;
+        status_ = SettingsMenuStatus::SettingsNotSaved;
         break;
     case SettingsMenuSelection::OffHandGripPrevious:
     case SettingsMenuSelection::OffHandGripNext:

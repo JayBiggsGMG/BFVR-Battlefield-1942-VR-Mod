@@ -1,19 +1,17 @@
 #include "openxr/OpenXRPresentation.h"
 #include "openxr/OpenXRHapticOutput.h"
-
 #include <windows.h>
-
 #include <dxgi1_2.h>
 #define XR_NO_PROTOTYPES
 #define XR_USE_GRAPHICS_API_D3D11
 #include <openxr/openxr.h>
 #include <openxr/openxr_platform.h>
 
+#include "openxr/OpenXRComfortVignette.h"
 #include "openxr/OpenXRQuickMenu.h"
 #include "openxr/OpenXRPresentationSupport.h"
 #include "openxr/OpenXRScopeOverlayLayer.h"
 #include "openxr/OpenXRTrackingBasis.h"
-
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -90,14 +88,12 @@ public:
         PFN_xrGetCurrentInteractionProfile getCurrentInteractionProfile = nullptr;
         PFN_xrApplyHapticFeedback applyHapticFeedback = nullptr;
     };
-
     void WriteLog(const wchar_t* format, ...) const
     {
         if (logCallback == nullptr)
         {
             return;
         }
-
         wchar_t message[1024] = {};
         va_list arguments;
         va_start(arguments, format);
@@ -105,7 +101,6 @@ public:
         va_end(arguments);
         logCallback(logContext, message);
     }
-
     template <typename T>
     bool ResolveGlobal(const char* name, T& function)
     {
@@ -113,7 +108,6 @@ public:
         {
             return false;
         }
-
         PFN_xrVoidFunction rawFunction = nullptr;
         const XrResult result = api.getInstanceProcAddr(XR_NULL_HANDLE, name, &rawFunction);
         if (XR_FAILED(result) || rawFunction == nullptr)
@@ -125,11 +119,9 @@ public:
                 static_cast<long>(result));
             return false;
         }
-
         function = reinterpret_cast<T>(rawFunction);
         return true;
     }
-
     template <typename T>
     bool ResolveInstance(const char* name, T& function)
     {
@@ -137,7 +129,6 @@ public:
         {
             return false;
         }
-
         PFN_xrVoidFunction rawFunction = nullptr;
         const XrResult result = api.getInstanceProcAddr(instance, name, &rawFunction);
         if (XR_FAILED(result) || rawFunction == nullptr)
@@ -149,7 +140,6 @@ public:
                 static_cast<long>(result));
             return false;
         }
-
         function = reinterpret_cast<T>(rawFunction);
         return true;
     }
@@ -1745,7 +1735,7 @@ public:
         XrCompositionLayerQuad quadLayer{XR_TYPE_COMPOSITION_LAYER_QUAD};
         std::array<XrCompositionLayerQuad, 2> scopeQuadLayers = {};
         XrCompositionLayerCylinderKHR cylinderLayer{XR_TYPE_COMPOSITION_LAYER_CYLINDER_KHR};
-        std::array<const XrCompositionLayerBaseHeader*, 6> layers = {};
+        std::array<const XrCompositionLayerBaseHeader*, 8> layers = {};
         uint32_t layerCount = 0;
         bool copiedImages = false;
         if (pendingFrameState.shouldRender && pendingViewsValid)
@@ -1772,6 +1762,21 @@ public:
                         static_cast<int32_t>(eyeSwapchains[eye].height);
                 }
                 layers[layerCount++] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&projectionLayer);
+
+                // Darken only the stereo world; all HUD/menu layers follow.
+                if (pendingHeadPoseValid)
+                {
+                    const float deltaSeconds = pendingFrameState.predictedDisplayPeriod > 0
+                        ? static_cast<float>(
+                            pendingFrameState.predictedDisplayPeriod) * 1.0e-9F
+                        : 1.0F / 90.0F;
+                    layerCount += static_cast<std::uint32_t>(
+                        comfortVignette.AppendLayers(
+                            comfortVignetteTarget, deltaSeconds, viewSpace,
+                            pendingHeadPose, pendingViews,
+                            layers.data() + layerCount,
+                            layers.size() - layerCount));
+                }
 
                 bool submittedEyeFillingScope = false;
                 if (uiPresentationMode ==
@@ -2046,6 +2051,7 @@ public:
         }
         StopSessionForShutdown();
 
+        comfortVignette.Shutdown();
         quickMenu.Shutdown();
         DestroyControllerInput();
 
@@ -2101,6 +2107,7 @@ public:
         worldLockedUiPose = {};
         worldLockedUiPoseValid = false;
         uiReferenceModeInitialized = false;
+        comfortVignetteTarget = 0.0F;
         textureRequirements = {};
     }
 
@@ -2133,6 +2140,7 @@ public:
     std::array<Swapchain, 2> eyeSwapchains = {};
     Swapchain uiSwapchain = {};
     OpenXRQuickMenu quickMenu = {};
+    OpenXRComfortVignette comfortVignette = {};
     OpenXRTrackingBasis trackingBasis = {};
     OpenXRPresentationConfiguration configuration = {};
     OpenXRUiLayerMode activeUiLayerMode = OpenXRUiLayerMode::Quad;
@@ -2159,14 +2167,14 @@ public:
         OpenXRUiReferenceMode::WorldLocked;
     bool lastEyeFillingScopePresented = false;
     bool scopePresentationInitialized = false;
+    float comfortVignetteTarget = 0.0F;
     XrSessionState sessionState = XR_SESSION_STATE_UNKNOWN;
     XrResult lastControllerSyncResult = XR_SUCCESS;
 };
 
 OpenXRPresentation::OpenXRPresentation()
     : impl_(std::make_unique<Impl>())
-{
-}
+{}
 
 OpenXRPresentation::~OpenXRPresentation()
 {
@@ -2367,6 +2375,17 @@ bool OpenXRPresentation::Initialize(
         impl_->WriteLog(
             L"Quick Menu resources are unavailable; OpenXR world/HUD presentation remains active and right A still submits no native jump/action input.");
     }
+    const OpenXRComfortVignetteApi comfortVignetteApi = {
+        impl_->api.createSwapchain, impl_->api.destroySwapchain,
+        impl_->api.enumerateSwapchainImages, impl_->api.acquireSwapchainImage,
+        impl_->api.waitSwapchainImage, impl_->api.releaseSwapchainImage};
+    if (!impl_->comfortVignette.Initialize(
+            impl_->session, impl_->swapchainFormat, impl_->device,
+            impl_->context, comfortVignetteApi, logCallback, logContext))
+    {
+        impl_->WriteLog(
+            L"Comfort-vignette resources are unavailable; world/HUD presentation remains active without the optional effect.");
+    }
     impl_->initialized = true;
     impl_->WriteLog(L"OpenXR presentation initialized; awaiting session READY before it submits frames.");
     return true;
@@ -2376,7 +2395,6 @@ bool OpenXRPresentation::PollEvents()
 {
     return impl_ != nullptr && impl_->PollEvents();
 }
-
 bool OpenXRPresentation::SubmitFrame(
     const OpenXRPresentationTextures& textures,
     OpenXRUiReferenceMode uiReferenceMode,
@@ -2390,12 +2408,10 @@ bool OpenXRPresentation::SubmitFrame(
             worldUiAnchor,
             uiPresentationMode);
 }
-
 bool OpenXRPresentation::BeginFrame(OpenXRPresentationFrameState& frameState)
 {
     return impl_ != nullptr && impl_->BeginFrame(frameState);
 }
-
 bool OpenXRPresentation::EndFrame(
     const OpenXRPresentationTextures& textures,
     OpenXRUiReferenceMode uiReferenceMode,
@@ -2409,7 +2425,6 @@ bool OpenXRPresentation::EndFrame(
             worldUiAnchor,
             uiPresentationMode);
 }
-
 stereo::QuickMenuSelection
 OpenXRPresentation::TakeQuickMenuSelection() noexcept
 {
@@ -2417,7 +2432,6 @@ OpenXRPresentation::TakeQuickMenuSelection() noexcept
         ? stereo::QuickMenuSelection::None
         : impl_->quickMenu.TakeReleasedSelection();
 }
-
 void OpenXRPresentation::OpenSettingsMenu() noexcept
 {
     if (impl_ != nullptr)
@@ -2425,7 +2439,6 @@ void OpenXRPresentation::OpenSettingsMenu() noexcept
         impl_->quickMenu.OpenSettingsMenu();
     }
 }
-
 void OpenXRPresentation::SetMountedCameraDecoupled(
     bool decoupled) noexcept
 {
@@ -2434,46 +2447,47 @@ void OpenXRPresentation::SetMountedCameraDecoupled(
         impl_->quickMenu.SetMountedCameraDecoupled(decoupled);
     }
 }
-
+void OpenXRPresentation::SetComfortVignetteTarget(float strength) noexcept
+{
+    if (impl_ != nullptr)
+    {
+        impl_->comfortVignetteTarget = std::isfinite(strength)
+            ? std::clamp(strength, 0.0F, 1.0F)
+            : 0.0F;
+    }
+}
 bool OpenXRPresentation::ApplyHapticFeedback(
     const OpenXRHapticEvent event,
     const std::uint32_t handMask) noexcept
 {
     return impl_ != nullptr && impl_->ApplyHapticFeedback(event, handMask);
 }
-
 bool OpenXRPresentation::GetQuickMenuMirrorState(
     OpenXRQuickMenuMirrorState& state) const noexcept
 {
     state = {};
     return impl_ != nullptr && impl_->quickMenu.GetMirrorState(state);
 }
-
 bool OpenXRPresentation::IsInitialized() const noexcept
 {
     return impl_ != nullptr && impl_->initialized;
 }
-
 bool OpenXRPresentation::IsSessionRunning() const noexcept
 {
     return impl_ != nullptr && impl_->sessionRunning;
 }
-
 OpenXRPresentationTextureRequirements OpenXRPresentation::GetTextureRequirements() const noexcept
 {
     return impl_ == nullptr ? OpenXRPresentationTextureRequirements{} : impl_->textureRequirements;
 }
-
 ID3D11Device* OpenXRPresentation::GetD3D11Device() const noexcept
 {
     return impl_ == nullptr ? nullptr : impl_->device;
 }
-
 ID3D11DeviceContext* OpenXRPresentation::GetD3D11Context() const noexcept
 {
     return impl_ == nullptr ? nullptr : impl_->context;
 }
-
 void OpenXRPresentation::Shutdown()
 {
     if (impl_ != nullptr)

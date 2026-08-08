@@ -18,6 +18,7 @@ bool TransferStereoFrameToSharedPresentation(
     const D3D8RuntimeRenderRequest& renderRequest,
     bool analyzePixels,
     const D3D8RuntimeUiPlacement& uiPlacement,
+    const D3D8RuntimeMovementFrame& movementFrame,
     const D3D8RuntimeDepthFrame& depthFrame)
 {
     if (presentationBridge.UsesGpuSharedTargets())
@@ -35,6 +36,7 @@ bool TransferStereoFrameToSharedPresentation(
             renderRequest,
             2000,
             uiPlacement,
+            movementFrame,
             depthFrame,
             depthSurfaces,
             depthExports);
@@ -105,7 +107,8 @@ bool TransferStereoFrameToSharedPresentation(
             presentationBridge.PublishFrame(
                 renderRequest,
                 sharedFrame,
-                uiPlacement);
+                uiPlacement,
+                movementFrame);
         frame.uploadQpcTicks =
             ReadPerformanceCounter() - uploadStarted;
     }

@@ -45,6 +45,7 @@ if(BFVR_PRESENTER_ONLY)
     presenter/SharedControlChannel.cpp
     presenter/SharedTextureConsumer.cpp
     settings/UserSettings.cpp
+    openxr/OpenXRComfortVignette.cpp
     openxr/OpenXRQuickMenu.cpp
     openxr/OpenXRHapticOutput.cpp
     openxr/OpenXRPresentation.cpp
@@ -52,6 +53,7 @@ if(BFVR_PRESENTER_ONLY)
     openxr/OpenXRScopeOverlayLayer.cpp
     openxr/OpenXRTrackingBasis.cpp
     stereo/QuickMenuInteraction.cpp
+    stereo/ComfortVignette.cpp
     stereo/QuickMenuMirrorMath.cpp
     stereo/SettingsMenuInteraction.cpp
     stereo/ScopeViewMath.cpp
@@ -271,6 +273,7 @@ add_library(BFVRD3D8To9FlatClient SHARED
 
 add_library(BFVRStereoMath STATIC
   stereo/ArmPoleVectorMath.cpp
+  stereo/ComfortVignette.cpp
   stereo/D3D8DrawPolicy.cpp
   stereo/D3D8FirstPersonArmPolicy.cpp
   stereo/D3D8FrameCompositionPolicy.cpp
@@ -305,6 +308,7 @@ add_executable(BFVROpenXRProbe
   client/SettingsMenuArt.cpp
   openxr/BFVROpenXRProbe.cpp
   openxr/OpenXRBootstrap.cpp
+  openxr/OpenXRComfortVignette.cpp
   openxr/OpenXRQuickMenu.cpp
   openxr/OpenXRHapticOutput.cpp
   openxr/OpenXRPresentation.cpp
@@ -400,6 +404,10 @@ add_executable(BFVRDirectionalLocomotionTests
   stereo/DirectionalLocomotionTests.cpp
 )
 
+add_executable(BFVRComfortVignetteTests
+  stereo/ComfortVignetteTests.cpp
+)
+
 add_executable(BFVRSurfaceVehicleDriveMathTests
   stereo/SurfaceVehicleDriveMathTests.cpp
 )
@@ -466,7 +474,7 @@ add_executable(BFVRRfaInspect
   tools/RfaInspect.cpp
 )
 
-foreach(target BFVRClient BFVROpenALHrtfRouter BFVRD3D8To9FlatClient BFVRLoader BFVROpenXRProbe BFVRSharedTextureProducerProbe BFVRD3D8To9SharedSurfaceProbe BFVRAmbientOcclusionDepthProbe BFVRStereoMath BFVRStereoMathTests BFVRWaterReflectionTextureBasisTests BFVRWeaponFireAimMathTests BFVROffHandSupportPolicyTests BFVRArmPoleVectorMathTests BFVRMainMenuOverlayTests BFVRQuickMenuTests BFVRSettingsMenuTests BFVRUserSettingsTests BFVROpenXRHapticsTests BFVRVehicleMotionAimMathTests BFVRDirectionalLocomotionTests BFVRSurfaceVehicleDriveMathTests BFVRTrackingAnchorTests BFVRMountedCameraMathTests BFVRScopeViewMathTests BFVROpenXRScopeOverlayLayerTests BFVRWorldCrosshairMathTests BFVRRuntimeDiagnosticsTests BFVRHrtfListenerMathTests BFVRHrtfBufferPolicyTests BFVRHrtfMenuSoundPolicyTests BFVRHrtfBackendProbe BFVRDirectSoundImportRouteTests BFVRSharedControlChannelTests BFVRRfaInspect)
+foreach(target BFVRClient BFVROpenALHrtfRouter BFVRD3D8To9FlatClient BFVRLoader BFVROpenXRProbe BFVRSharedTextureProducerProbe BFVRD3D8To9SharedSurfaceProbe BFVRAmbientOcclusionDepthProbe BFVRStereoMath BFVRStereoMathTests BFVRWaterReflectionTextureBasisTests BFVRWeaponFireAimMathTests BFVROffHandSupportPolicyTests BFVRArmPoleVectorMathTests BFVRMainMenuOverlayTests BFVRQuickMenuTests BFVRSettingsMenuTests BFVRUserSettingsTests BFVROpenXRHapticsTests BFVRVehicleMotionAimMathTests BFVRDirectionalLocomotionTests BFVRComfortVignetteTests BFVRSurfaceVehicleDriveMathTests BFVRTrackingAnchorTests BFVRMountedCameraMathTests BFVRScopeViewMathTests BFVROpenXRScopeOverlayLayerTests BFVRWorldCrosshairMathTests BFVRRuntimeDiagnosticsTests BFVRHrtfListenerMathTests BFVRHrtfBufferPolicyTests BFVRHrtfMenuSoundPolicyTests BFVRHrtfBackendProbe BFVRDirectSoundImportRouteTests BFVRSharedControlChannelTests BFVRRfaInspect)
   target_compile_definitions(${target} PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
   set_property(TARGET ${target} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
   if(MSVC)
@@ -479,7 +487,7 @@ target_link_libraries(BFVRClient PRIVATE
 target_link_libraries(BFVRD3D8To9FlatClient PRIVATE kernel32)
 target_link_libraries(BFVRLoader PRIVATE kernel32)
 target_link_libraries(BFVROpenXRProbe PRIVATE
-  kernel32 ole32 gdi32 windowscodecs d3d11 dxgi BFVRStereoMath)
+  kernel32 ole32 gdi32 windowscodecs d3d11 dxgi d3dcompiler BFVRStereoMath)
 target_link_libraries(BFVRSharedTextureProducerProbe PRIVATE kernel32)
 target_link_libraries(BFVRD3D8To9SharedSurfaceProbe PRIVATE kernel32 user32)
 target_link_libraries(BFVRAmbientOcclusionDepthProbe PRIVATE kernel32 user32)
@@ -519,6 +527,7 @@ target_link_libraries(BFVRSettingsMenuTests PRIVATE
   BFVRStereoMath ole32 user32 gdi32 windowscodecs)
 target_link_libraries(BFVRVehicleMotionAimMathTests PRIVATE BFVRStereoMath)
 target_link_libraries(BFVRDirectionalLocomotionTests PRIVATE BFVRStereoMath)
+target_link_libraries(BFVRComfortVignetteTests PRIVATE BFVRStereoMath)
 target_link_libraries(BFVRSurfaceVehicleDriveMathTests PRIVATE BFVRStereoMath)
 target_link_libraries(BFVRTrackingAnchorTests PRIVATE BFVRStereoMath)
 target_link_libraries(BFVRMountedCameraMathTests PRIVATE BFVRStereoMath)
@@ -585,6 +594,9 @@ if(BUILD_TESTING)
   add_test(
     NAME BFVRDirectionalLocomotionTests
     COMMAND BFVRDirectionalLocomotionTests)
+  add_test(
+    NAME BFVRComfortVignetteTests
+    COMMAND BFVRComfortVignetteTests)
   add_test(
     NAME BFVRSurfaceVehicleDriveMathTests
     COMMAND BFVRSurfaceVehicleDriveMathTests)

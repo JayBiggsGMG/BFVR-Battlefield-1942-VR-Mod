@@ -778,8 +778,10 @@ bool SettingsMenuArt::ComposeSettingsBody(
                 stereo::SettingsMenuSelection::MovementDirectionPrevious,
                 stereo::SettingsMenuSelection::MovementDirectionNext);
         }
-        const int heightY = static_cast<int>(
+        const int comfortY = static_cast<int>(
             stereo::kSettingsMenuVrPageTwoRowCentersPixels[0]);
+        const int heightY = static_cast<int>(
+            stereo::kSettingsMenuVrPageTwoRowCentersPixels[1]);
         const float normalizedHeight = static_cast<float>(
             state.values.vrHeightAdjustmentCentimeters -
             settings::kMinimumVrHeightAdjustmentCentimeters) /
@@ -801,18 +803,55 @@ bool SettingsMenuArt::ComposeSettingsBody(
                     state.hovered == selection ? 27 : 24,
                     DT_CENTER | DT_SINGLELINE | DT_VCENTER);
         };
-        return drawSliderAt(heightY, L"Manual Height Adjustment",
+        const bool comfortDrawn = DrawWhiteText(
+                destination,
+                L"Comfort Vignette",
+                82,
+                comfortY - 31,
+                440,
+                62,
+                27,
+                DT_LEFT | DT_SINGLELINE | DT_VCENTER) &&
+            CompositeLayerAt(
+                checkBox_, destination, controlLeft, comfortY - 32, 64, 64) &&
+            (!state.values.comfortVignetteEnabled || CompositeLayerAt(
+                whiteButton_,
+                destination,
+                controlLeft + 8,
+                comfortY - 24,
+                48,
+                48)) &&
+            DrawWhiteText(
+                destination,
+                state.values.comfortVignetteEnabled ? L"ON" : L"OFF",
+                controlLeft + 82,
+                comfortY - 31,
+                120,
+                62,
+                23,
+                DT_LEFT | DT_SINGLELINE | DT_VCENTER) &&
+            DrawWhiteText(
+                destination,
+                L"Movement translation only; HUD and overlays stay clear.",
+                82,
+                comfortY + 33,
+                860,
+                38,
+                18,
+                DT_LEFT | DT_SINGLELINE | DT_VCENTER);
+        return comfortDrawn &&
+            drawSliderAt(heightY, L"Manual Height Adjustment",
                    normalizedHeight, height) &&
             DrawWhiteText(destination,
                 L"Infantry only; vehicles and mounted seats use independent neutral poses.",
                 82, heightY + 42, 860, 46, 18,
                 DT_LEFT | DT_SINGLELINE | DT_VCENTER) &&
             drawAction(static_cast<int>(
-                    stereo::kSettingsMenuVrPageTwoRowCentersPixels[1]),
+                    stereo::kSettingsMenuVrPageTwoRowCentersPixels[2]),
                 L"CALIBRATE STANDING",
                 stereo::SettingsMenuSelection::AutoCalibrateStandingHeight) &&
             drawAction(static_cast<int>(
-                    stereo::kSettingsMenuVrPageTwoRowCentersPixels[2]),
+                    stereo::kSettingsMenuVrPageTwoRowCentersPixels[3]),
                 L"RECENTER FORWARD",
                 stereo::SettingsMenuSelection::RecenterForward);
     }

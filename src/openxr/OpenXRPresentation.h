@@ -235,6 +235,10 @@ public:
     // only to render the left utility button's coupled/decoupled appearance.
     void SetMountedCameraDecoupled(bool decoupled) noexcept;
 
+    // Sets a normalized translation-derived target. The renderer eases at
+    // OpenXR frame cadence and inserts the effect below HUD/menu layers.
+    void SetComfortVignetteTarget(float strength) noexcept;
+
     // Applies one controller pulse through the session's already-bound
     // vibration action. The single saved Controls toggle gates every event.
     bool ApplyHapticFeedback(

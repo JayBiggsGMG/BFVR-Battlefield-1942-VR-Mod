@@ -114,6 +114,7 @@ int RunProbe(
     bool runtimeTimed,
     bool brightWorld,
     bool backToGameOverlay,
+    bool comfortVignetteMotion,
     DWORD durationMs,
     UINT sourceWidth,
     UINT sourceHeight)
@@ -267,6 +268,19 @@ int RunProbe(
                                 ? bfvr::shared::kFrameOverlayBackToGameHovered
                                 : 0)
                         : 0);
+                if (comfortVignetteMotion)
+                {
+                    block->frameMovementContextTokenLow = 1;
+                    block->frameMovementContextTokenHigh = 0;
+                    block->frameMovementOriginX =
+                        static_cast<float>(localFrameCount) * 0.05F;
+                    block->frameMovementOriginY = 0.0F;
+                    block->frameMovementOriginZ = 0.0F;
+                    MemoryBarrier();
+                }
+                InterlockedExchange(
+                    &block->frameMovementOriginValid,
+                    comfortVignetteMotion ? 1 : 0);
                 InterlockedExchange(
                     &block->producedFrameCount,
                     static_cast<LONG>(localFrameCount));
@@ -376,6 +390,7 @@ int wmain(int argc, wchar_t** argv)
     bool runtimeTimed = false;
     bool brightWorld = false;
     bool backToGameOverlay = false;
+    bool comfortVignetteMotion = false;
     DWORD durationMs = 10000;
     UINT sourceWidth = 0;
     UINT sourceHeight = 0;
@@ -419,6 +434,10 @@ int wmain(int argc, wchar_t** argv)
         {
             backToGameOverlay = true;
         }
+        else if (wcscmp(argv[index], L"--comfort-vignette-motion") == 0)
+        {
+            comfortVignetteMotion = true;
+        }
         else if (wcscmp(argv[index], L"--source-width") == 0 && index + 1 < argc)
         {
             sourceWidth = wcstoul(argv[++index], nullptr, 10);
@@ -430,7 +449,7 @@ int wmain(int argc, wchar_t** argv)
         else
         {
             wprintf(
-                L"Usage: BFVRSharedTextureProducerProbe --presenter <x64-path> [--presenter-log <path>] [--duration-ms <1000-60000>] [--ui-cylinder] [--transport-only] [--runtime-timed] [--bright-world] [--back-to-game-overlay] [--source-width <pixels> --source-height <pixels>]\n");
+                L"Usage: BFVRSharedTextureProducerProbe --presenter <x64-path> [--presenter-log <path>] [--duration-ms <1000-60000>] [--ui-cylinder] [--transport-only] [--runtime-timed] [--bright-world] [--back-to-game-overlay] [--comfort-vignette-motion] [--source-width <pixels> --source-height <pixels>]\n");
             return 2;
         }
     }
@@ -454,6 +473,7 @@ int wmain(int argc, wchar_t** argv)
         runtimeTimed,
         brightWorld,
         backToGameOverlay,
+        comfortVignetteMotion,
         durationMs,
         sourceWidth,
         sourceHeight);

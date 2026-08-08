@@ -108,6 +108,15 @@ struct D3D8RuntimeDepthFrame
     float projections[2][16] = {};
 };
 
+struct D3D8RuntimeMovementFrame
+{
+    bool valid = false;
+    std::uintptr_t contextToken = 0;
+    float worldPositionX = 0.0F;
+    float worldPositionY = 0.0F;
+    float worldPositionZ = 0.0F;
+};
+
 class D3D8SharedPresentationBridge
 {
 public:
@@ -135,12 +144,14 @@ public:
     bool PublishFrame(
         const D3D8RuntimeRenderRequest& request,
         const std::array<D3D8SharedFramePixels, 3>& frame,
-        const D3D8RuntimeUiPlacement& uiPlacement);
+        const D3D8RuntimeUiPlacement& uiPlacement,
+        const D3D8RuntimeMovementFrame& movementFrame);
     bool PublishGpuFrame(
         void* d3d8Device,
         const D3D8RuntimeRenderRequest& request,
         DWORD timeoutMs,
         const D3D8RuntimeUiPlacement& uiPlacement,
+        const D3D8RuntimeMovementFrame& movementFrame,
         const D3D8RuntimeDepthFrame& depthFrame,
         const std::array<void*, shared::kDepthTextureCount>& depthSurfaces,
         const std::array<void*, shared::kDepthTextureCount>&

@@ -83,9 +83,13 @@ bool TestBounds()
             SettingsMenuTab::VrSettings, false, 0) ==
             SettingsMenuSelection::PlayModeNext &&
         SettingsMenuSelectionAt(
-            0.70F, 0.239F, true, false,
+            0.70F, 0.293F, true, false,
             SettingsMenuTab::VrSettings, false, 1) ==
             SettingsMenuSelection::VrHeightAdjustment &&
+        SettingsMenuSelectionAt(
+            0.57F, 0.132F, true, false,
+            SettingsMenuTab::VrSettings, false, 1) ==
+            SettingsMenuSelection::ComfortVignetteEnabled &&
         SettingsMenuSelectionAt(
             0.889F,
             0.161F,
@@ -318,8 +322,8 @@ bool TestInteractionAndPlacement()
         return false;
     }
 
-    // Page 2 keeps manual trim separate from the measured physical floor-to-
-    // eye height, while Recenter Forward remains an immediate action.
+    // Page 2 exposes the comfort toggle, keeps manual trim separate from the
+    // measured physical floor-to-eye height, and retains immediate recenter.
     state = interaction.Snapshot();
     AimAt(input, state.panelPose, state.widthMeters, 0.66F, 0.87F);
     Click(interaction, input);
@@ -328,9 +332,19 @@ bool TestInteractionAndPlacement()
     {
         return false;
     }
+    const bool originalComfortVignette = state.values.comfortVignetteEnabled;
+    AimAt(input, state.panelPose, state.widthMeters, 0.57F, 0.132F);
+    Click(interaction, input);
+    if (interaction.Snapshot().values.comfortVignetteEnabled ==
+            originalComfortVignette ||
+        !interaction.TakeValuesChanged())
+    {
+        return false;
+    }
+    state = interaction.Snapshot();
     input.standingHeightValid = true;
     input.standingHeightMeters = 1.82F;
-    AimAt(input, state.panelPose, state.widthMeters, 0.60F, 0.454F);
+    AimAt(input, state.panelPose, state.widthMeters, 0.60F, 0.503F);
     Click(interaction, input);
     if (interaction.Snapshot().values.standingEyeHeightCentimeters != 182 ||
         interaction.Snapshot().values.vrHeightAdjustmentCentimeters != 0 ||
@@ -341,7 +355,7 @@ bool TestInteractionAndPlacement()
         return false;
     }
     state = interaction.Snapshot();
-    AimAt(input, state.panelPose, state.widthMeters, 0.60F, 0.645F);
+    AimAt(input, state.panelPose, state.widthMeters, 0.60F, 0.684F);
     Click(interaction, input);
     if (interaction.TakeCommand() != SettingsMenuCommand::RecenterForward ||
         interaction.Snapshot().status !=
