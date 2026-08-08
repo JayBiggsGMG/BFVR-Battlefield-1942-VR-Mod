@@ -257,6 +257,7 @@ int wmain()
         passed = reflection.BuildEye(
             eye,
             colorView,
+            false,
             depthView,
             width,
             height,
@@ -305,6 +306,7 @@ int wmain()
         passed = reflection.BuildEye(
             0,
             colorView,
+            false,
             depthView,
             width,
             height,

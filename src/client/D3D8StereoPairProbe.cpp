@@ -8,6 +8,7 @@
 #include "client/D3D8TrackingAnchor.h"
 #include "client/D3D8RuntimeDiagnostics.h"
 #include "client/ControllerInputOverlay.h"
+#include "client/ControllerHaptics.h"
 #include "client/ControllerInputCache.h"
 #include "client/CrosshairOverlay.h"
 #include "client/D3D8WorldCrosshairRenderer.h"
@@ -136,7 +137,6 @@ constexpr DWORD kContinuousConsumptionTimeoutMs = 250;
 constexpr wchar_t kRunUntilStoppedEnvironment[] =
     L"BFVR_PRESENTATION_RUN_UNTIL_STOPPED";
 constexpr wchar_t kStereoWaterReflectionEnvironment[] = L"BFVR_STEREO_WATER_REFLECTION";
-constexpr wchar_t kWaterReflectionTextureBasisEnvironment[] = L"BFVR_WATER_REFLECTION_TEXTURE_BASIS";
 
 using PresentFn = HRESULT(WINAPI*)(
     void* device,
@@ -325,9 +325,9 @@ struct DrawStateSnapshot
     DWORD alphaBlendEnable = 0;
     DWORD fogEnable = 0;
     DWORD lighting = 0;
-    DWORD localViewer = 0;
-    bool localViewerReadable = false;
-    bool localViewerOverridden = false;
+    D3DMatrix waterSharedView = {};
+    D3DMatrix waterEyeProjection[2] = {};
+    bool waterStereoPrepared = false;
     D3DMatrix waterTexture0 = {};
     D3DMatrix waterEyeTexture0[2] = {};
     bool waterTextureBasisPrepared = false;
@@ -385,7 +385,7 @@ bool g_offlinePresentation = false;
 bool g_runUntilStopped = false;
 bool g_keepOriginalFlatBackbuffer = false;
 bool g_legacyStereoWaterReflection = false;
-bool g_waterReflectionTextureBasisEnabled = true;
+bool g_waterReflectionTextureBasisEnabled = false;
 bfvr::D3D8RuntimeDiagnosticLevel g_runtimeDiagnostics =
     bfvr::D3D8RuntimeDiagnosticLevel::Deep;
 PresentationRunRecord g_presentationRun = {};
@@ -838,8 +838,7 @@ FrameMirrorResult MirrorDrawIntoFrame(
         return FrameMirrorResult::NotMirrored;
     }
     ApplyFrameSemanticPolicy(invocation, snapshot);
-    PrepareInfiniteViewerWaterReflection(device, snapshot);
-    PrepareWaterReflectionTextureBasis(device, snapshot);
+    PrepareStereoStableWaterReflection(snapshot);
     if (snapshot.semanticClass ==
         bfvr::stereo::D3D8SemanticDrawClass::WaterSurface)
     {
@@ -891,8 +890,6 @@ FrameMirrorResult MirrorDrawIntoFrame(
         ReleaseFrameSourceReferences(snapshot);
         return FrameMirrorResult::Failed;
     }
-    const bool infiniteViewerWaterReflection =
-        ApplyInfiniteViewerWaterReflection(device, snapshot);
     preparationTimer.Stop();
 
     bfvr::d3d8probe::ScopedPerformanceAccumulator drawTimer(
@@ -949,8 +946,13 @@ FrameMirrorResult MirrorDrawIntoFrame(
     {
         for (std::size_t eye = 0; eye < 2; ++eye)
         {
-            const D3DMatrix* const replayView = eyeViews[eye];
-            const D3DMatrix* const replayProjection = eyeProjections[eye];
+            const D3DMatrix* const replayView = snapshot.waterStereoPrepared
+                ? &snapshot.waterSharedView
+                : eyeViews[eye];
+            const D3DMatrix* const replayProjection =
+                snapshot.waterStereoPrepared
+                ? &snapshot.waterEyeProjection[eye]
+                : eyeProjections[eye];
             const HRESULT targetResult = g_methods.setRenderTarget(
                 device,
                 g_frame.ownedColor[eye],
@@ -974,9 +976,7 @@ FrameMirrorResult MirrorDrawIntoFrame(
                     kD3DTransformProjection,
                     replayProjection)
                 : E_FAIL;
-            const HRESULT waterTextureResult = SUCCEEDED(projectionResult)
-                ? ApplyWaterReflectionTextureBasis(device, snapshot, eye)
-                : projectionResult;
+            const HRESULT waterTextureResult = projectionResult;
             HRESULT weaponWorldResult = waterTextureResult;
             if (SUCCEEDED(weaponWorldResult) && invocation.replayWeaponMotion)
             {
@@ -1087,10 +1087,10 @@ FrameMirrorResult MirrorDrawIntoFrame(
     bfvr::d3d8probe::CountStereoFrameSemanticDraw(
         g_frame,
         snapshot.semanticClass);
-    if (infiniteViewerWaterReflection)
+    if (snapshot.waterStereoPrepared)
     {
         InterlockedIncrement(
-            &g_frame.infiniteViewerWaterReflectionDraws);
+            &g_frame.stereoStableWaterReflectionDraws);
     }
     if (bfvr::IsDeepD3D8RuntimeDiagnostics(g_runtimeDiagnostics))
     {
@@ -1476,6 +1476,11 @@ HRESULT WINAPI HookPresent(
     const RGNDATA* dirtyRegion)
 {
     InterlockedIncrement(&g_record.activeCallbacks);
+    if (IsPresentationMode() && !g_offlinePresentation)
+    {
+        bfvr::PollControllerHapticDeath(
+            reinterpret_cast<void*>(g_gameImageBegin));
+    }
     const LONG stateAtEntry =
         InterlockedCompareExchange(&g_record.state, 0, 0);
     const std::int64_t originalPresentStarted =
@@ -2022,12 +2027,8 @@ bool InstallHooks()
     {
         AppendLog(
             !g_legacyStereoWaterReflection
-                ? L"Enabled the exact additive-water reflection repair: the pass keeps each eye's complete View/Projection geometry and temporarily uses D3DRS_LOCALVIEWER=FALSE so its fixed-function reflection coordinate is independent of eye translation. Set BFVR_STEREO_WATER_REFLECTION=1 to restore the legacy camera-relative reflection path."
+                ? L"Enabled the exact additive-water stereo repair: Battlefield's native normal map, generated light lookup, SpecularColor, SpecularStreakFactor, and LOCALVIEWER behavior remain intact. Both eyes use the current head-centre material View while per-eye View deltas are folded into Projection, preserving exact stereo clip geometry without two competing reflection viewers. Set BFVR_STEREO_WATER_REFLECTION=1 to restore the legacy per-eye camera-relative reflection path."
                 : L"BFVR_STEREO_WATER_REFLECTION=1 restored the legacy camera-relative water reflection path.");
-        AppendLog(
-            g_waterReflectionTextureBasisEnabled
-                ? L"Enabled the native water texture-basis experiment: the exact additive pass maps each replay camera-space reflection vector back into BF1942's retained logical-camera basis before applying the original D3DTS_TEXTURE0 matrix. Set BFVR_WATER_REFLECTION_TEXTURE_BASIS=0 to retain the accepted infinite-viewer repair without this experiment."
-                : L"BFVR_WATER_REFLECTION_TEXTURE_BASIS=0 disabled the native water texture-basis experiment while retaining the accepted infinite-viewer repair.");
     }
     g_readbackApi = {
         g_methods.createImageSurface,
@@ -2479,13 +2480,6 @@ void StartD3D8StereoFramePresentationProbe(
             stereoWaterReflection,
             static_cast<DWORD>(std::size(stereoWaterReflection))) == 1 &&
         stereoWaterReflection[0] == L'1';
-    wchar_t waterReflectionTextureBasis[2] = {};
-    g_waterReflectionTextureBasisEnabled = !(
-        GetEnvironmentVariableW(
-            kWaterReflectionTextureBasisEnvironment,
-            waterReflectionTextureBasis,
-            static_cast<DWORD>(std::size(waterReflectionTextureBasis))) == 1 &&
-        waterReflectionTextureBasis[0] == L'0');
     g_keepOriginalFlatBackbuffer = ReadKeepOriginalFlatBackbuffer();
     g_runtimeDiagnostics = g_runUntilStopped
         ? ReadD3D8RuntimeDiagnosticLevel()

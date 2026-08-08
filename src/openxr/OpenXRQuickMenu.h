@@ -80,6 +80,8 @@ public:
     [[nodiscard]] bool GetMirrorState(
         OpenXRQuickMenuMirrorState& state) const noexcept;
     [[nodiscard]] bool IsReady() const noexcept;
+    [[nodiscard]] std::uint64_t HapticHoverTarget() const noexcept;
+    [[nodiscard]] bool ControllerHapticsEnabled() const noexcept;
     void Shutdown();
 
 private:

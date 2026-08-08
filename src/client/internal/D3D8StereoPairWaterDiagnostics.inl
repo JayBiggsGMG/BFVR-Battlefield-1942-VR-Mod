@@ -1,44 +1,56 @@
 // Included inside D3D8StereoPairProbe.cpp after AppendLog is defined.
 
-void PrepareInfiniteViewerWaterReflection(
-    void* device,
-    DrawStateSnapshot& snapshot)
+void PrepareStereoStableWaterReflection(DrawStateSnapshot& snapshot)
 {
-    if (!bfvr::stereo::ShouldUseBF1942InfiniteViewerWaterReflection(
+    if (!bfvr::stereo::ShouldUseBF1942StereoStableWaterReflection(
             snapshot.semanticClass,
             snapshot.zWriteEnable,
             g_legacyStereoWaterReflection))
     {
         return;
     }
-    snapshot.localViewerReadable = SUCCEEDED(g_methods.getRenderState(
-        device,
-        kD3DRenderStateLocalViewer,
-        &snapshot.localViewer));
-    if (!snapshot.localViewerReadable)
+    bfvr::stereo::Matrix4 sharedView = {};
+    bfvr::stereo::Matrix4 leftView = {};
+    bfvr::stereo::Matrix4 leftProjection = {};
+    bfvr::stereo::Matrix4 rightView = {};
+    bfvr::stereo::Matrix4 rightProjection = {};
+    std::memcpy(&sharedView, &snapshot.view, sizeof(sharedView));
+    std::memcpy(&leftView, &snapshot.leftView, sizeof(leftView));
+    std::memcpy(
+        &leftProjection,
+        &snapshot.leftProjection,
+        sizeof(leftProjection));
+    std::memcpy(&rightView, &snapshot.rightView, sizeof(rightView));
+    std::memcpy(
+        &rightProjection,
+        &snapshot.rightProjection,
+        sizeof(rightProjection));
+    const auto transforms =
+        bfvr::stereo::MakeD3D8WaterReflectionStereoTransforms(
+            sharedView,
+            leftView,
+            leftProjection,
+            rightView,
+            rightProjection);
+    if (!transforms.has_value())
     {
-        InterlockedIncrement(&g_frame.renderStateReadFailures);
         InterlockedIncrement(&g_frame.waterReflectionStateFailures);
+        return;
     }
-}
 
-bool ApplyInfiniteViewerWaterReflection(
-    void* device,
-    DrawStateSnapshot& snapshot)
-{
-    if (!snapshot.localViewerReadable || snapshot.localViewer == FALSE)
-    {
-        return snapshot.localViewerReadable;
-    }
-    snapshot.localViewerOverridden = SUCCEEDED(g_methods.setRenderState(
-        device,
-        kD3DRenderStateLocalViewer,
-        FALSE));
-    if (!snapshot.localViewerOverridden)
-    {
-        InterlockedIncrement(&g_frame.waterReflectionStateFailures);
-    }
-    return snapshot.localViewerOverridden;
+    std::memcpy(
+        &snapshot.waterSharedView,
+        &transforms->sharedView,
+        sizeof(snapshot.waterSharedView));
+    std::memcpy(
+        &snapshot.waterEyeProjection[0],
+        &transforms->eyeProjections[0],
+        sizeof(snapshot.waterEyeProjection[0]));
+    std::memcpy(
+        &snapshot.waterEyeProjection[1],
+        &transforms->eyeProjections[1],
+        sizeof(snapshot.waterEyeProjection[1]));
+    snapshot.waterStereoPrepared = true;
 }
 
 void RecordWaterTextureBasisFailure(bool stateReadFailure)
@@ -57,7 +69,7 @@ void PrepareWaterReflectionTextureBasis(
 {
     if (!g_waterReflectionTextureBasisEnabled ||
         !IsPresentationMode() ||
-        !bfvr::stereo::ShouldUseBF1942InfiniteViewerWaterReflection(
+        !bfvr::stereo::ShouldUseBF1942StereoStableWaterReflection(
             snapshot.semanticClass,
             snapshot.zWriteEnable,
             g_legacyStereoWaterReflection))

@@ -233,7 +233,7 @@ bool TestProductionSeedAndTypedValues(const std::wstring& directory)
     }
     const auto defaults = store.Defaults();
     const auto decodedDefaults = bfvr::settings::DecodeUserSettings(defaults);
-    if (defaults.values.size() != 20 ||
+    if (defaults.values.size() != 22 ||
         decodedDefaults.playMode != bfvr::settings::PlayMode::Seated ||
         decodedDefaults.artificialTurnMode !=
             bfvr::settings::ArtificialTurnMode::Smooth ||
@@ -246,6 +246,7 @@ bool TestProductionSeedAndTypedValues(const std::wstring& directory)
         decodedDefaults.invertFlightPitch ||
         decodedDefaults.invertTurretPitch ||
         decodedDefaults.invertTurretYaw ||
+        !decodedDefaults.controllerHapticsEnabled ||
         decodedDefaults.offHandGripStyle !=
             bfvr::settings::OffHandGripStyle::Hold ||
         decodedDefaults.handWeaponCrosshair !=
@@ -253,6 +254,7 @@ bool TestProductionSeedAndTypedValues(const std::wstring& directory)
         decodedDefaults.mountedWeaponCrosshair !=
             bfvr::settings::WorldCrosshairMode::On ||
         !decodedDefaults.fxaaEnabled ||
+        decodedDefaults.fxaaSharpeningPercent != 25 ||
         !decodedDefaults.ambientOcclusionEnabled ||
         decodedDefaults.ambientOcclusionRadiusCentimeters != 60 ||
         decodedDefaults.ambientOcclusionStrengthPercent != 100 ||
@@ -292,12 +294,14 @@ bool TestProductionSeedAndTypedValues(const std::wstring& directory)
     changed.invertFlightPitch = true;
     changed.invertTurretPitch = true;
     changed.invertTurretYaw = true;
+    changed.controllerHapticsEnabled = false;
     changed.offHandGripStyle = bfvr::settings::OffHandGripStyle::Toggle;
     changed.handWeaponCrosshair =
         bfvr::settings::WorldCrosshairMode::HitMarkerOnly;
     changed.mountedWeaponCrosshair =
         bfvr::settings::WorldCrosshairMode::Off;
     changed.fxaaEnabled = false;
+    changed.fxaaSharpeningPercent = 80;
     changed.ambientOcclusionEnabled = false;
     changed.ambientOcclusionRadiusCentimeters = 95;
     changed.ambientOcclusionStrengthPercent = 65;
@@ -335,6 +339,10 @@ bool TestProductionSeedAndTypedValues(const std::wstring& directory)
         contents.find("invert_flight_pitch = true") != std::string::npos &&
         contents.find("including right-stick and right-grip motion aim") !=
             std::string::npos &&
+        contents.find("controller_haptics_enabled = false") !=
+            std::string::npos &&
+        contents.find("one firing impulse per accepted local weapon shot") !=
+            std::string::npos &&
         contents.find("off_hand_grip_style = toggle") != std::string::npos &&
         contents.find("Gadget crosshairs always remain enabled") !=
             std::string::npos &&
@@ -343,6 +351,9 @@ bool TestProductionSeedAndTypedValues(const std::wstring& directory)
         contents.find("mounted_weapon_3d_crosshair = off") !=
             std::string::npos &&
         contents.find("fxaa_enabled = false") != std::string::npos &&
+        contents.find("fxaa_sharpening_percent = 80") !=
+            std::string::npos &&
+        contents.find("without requiring a restart") != std::string::npos &&
         contents.find("ambient_occlusion_radius_centimeters = 95") !=
             std::string::npos &&
         contents.find("requires restarting BFVR after Save") !=

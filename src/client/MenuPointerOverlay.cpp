@@ -1,6 +1,7 @@
 #include "client/MenuPointerOverlay.h"
 
 #include "client/ControllerInputCache.h"
+#include "client/ControllerHaptics.h"
 #include "presenter/SharedPresentationProtocol.h"
 #include "stereo/MainMenuOverlayLayout.h"
 #include "stereo/MainMenuScroll.h"
@@ -22,6 +23,9 @@ namespace
 {
 
 constexpr std::ptrdiff_t kBfMenuSetGameInputRva = 0x0005DE60;
+constexpr std::ptrdiff_t kBfMenuPlayMenuHighlightRva = 0x002A52D0;
+constexpr std::ptrdiff_t kBfMenuPlayLoadMenuHighlightRva = 0x002A53F0;
+constexpr std::ptrdiff_t kBfMenuPlayHudMouseOverRva = 0x002A5480;
 constexpr std::size_t kBfMenuActiveIndexOffset = 0xFC;
 constexpr std::size_t kBfMenuRef2SystemOffset = 0x144;
 constexpr std::size_t kBfMenuMouseEnabledOffset = 0x148;
@@ -44,6 +48,25 @@ constexpr UINT kLogicalCanvasHeight = 600;
 constexpr BYTE kBfMenuSetGameInputPrefix[] = {
     0x83, 0xEC, 0x20, 0x53, 0x8B, 0xD9, 0x83, 0xBB,
     0xFC, 0x00, 0x00, 0x00, 0xFF, 0x0F, 0x84, 0xDC};
+constexpr BYTE kBfMenuPlayMenuHighlightPrefix[] = {
+    0x8B, 0xC1, 0x8B, 0x88, 0xEC, 0x06, 0x00, 0x00,
+    0x85, 0xC9, 0x74, 0x28, 0x8A, 0x90, 0xCE, 0x07,
+    0x00, 0x00, 0x84, 0xD2, 0x75, 0x1E, 0x8B, 0x90,
+    0x00, 0x01, 0x00, 0x00, 0x85, 0xD2, 0x75, 0x14,
+    0x8B, 0x01, 0x6A, 0x00, 0xFF, 0x50, 0x0C, 0x85,
+    0xC0, 0x74, 0x09, 0x8B, 0x10, 0x6A, 0x08};
+constexpr BYTE kBfMenuPlayLoadMenuHighlightPrefix[] = {
+    0x8B, 0x81, 0xEC, 0x06, 0x00, 0x00, 0x85, 0xC0,
+    0x74, 0x20, 0x8A, 0x91, 0xCE, 0x07, 0x00, 0x00,
+    0x84, 0xD2, 0x75, 0x16, 0x8B, 0x10, 0x6A, 0x00,
+    0x8B, 0xC8, 0xFF, 0x52, 0x0C, 0x85, 0xC0, 0x74,
+    0x09, 0x8B, 0x10, 0x6A, 0x08};
+constexpr BYTE kBfMenuPlayHudMouseOverPrefix[] = {
+    0x8B, 0x81, 0xEC, 0x06, 0x00, 0x00, 0x85, 0xC0,
+    0x74, 0x20, 0x8A, 0x91, 0xCE, 0x07, 0x00, 0x00,
+    0x84, 0xD2, 0x75, 0x16, 0x8B, 0x10, 0x6A, 0x00,
+    0x8B, 0xC8, 0xFF, 0x52, 0x0C, 0x85, 0xC0, 0x74,
+    0x09, 0x8B, 0x10, 0x6A, 0x03};
 volatile LONG g_nativeMenuActiveState = 0;
 volatile LONG g_mainMenuOverlayAvailable = 0;
 volatile LONG g_mainMenuOverlayVisible = 0;
@@ -158,6 +181,7 @@ class MenuPointerOverlay
 public:
     using SetGameInputFn =
         void(__thiscall*)(void* menu, float deltaTime, void* gameInput);
+    using MenuHoverFn = unsigned int(__thiscall*)(void* menu);
 
     void Start(
         void* image,
@@ -197,14 +221,38 @@ public:
         setGameInputTarget = gameImage == nullptr
             ? nullptr
             : gameImage + kBfMenuSetGameInputRva;
+        playMenuHighlightTarget = gameImage == nullptr
+            ? nullptr
+            : gameImage + kBfMenuPlayMenuHighlightRva;
+        playLoadMenuHighlightTarget = gameImage == nullptr
+            ? nullptr
+            : gameImage + kBfMenuPlayLoadMenuHighlightRva;
+        playHudMouseOverTarget = gameImage == nullptr
+            ? nullptr
+            : gameImage + kBfMenuPlayHudMouseOverRva;
         if (!HasExpectedPrefix(
                 setGameInputTarget,
                 kBfMenuSetGameInputPrefix,
-                sizeof(kBfMenuSetGameInputPrefix)))
+                sizeof(kBfMenuSetGameInputPrefix)) ||
+            !HasExpectedPrefix(
+                playMenuHighlightTarget,
+                kBfMenuPlayMenuHighlightPrefix,
+                sizeof(kBfMenuPlayMenuHighlightPrefix)) ||
+            !HasExpectedPrefix(
+                playLoadMenuHighlightTarget,
+                kBfMenuPlayLoadMenuHighlightPrefix,
+                sizeof(kBfMenuPlayLoadMenuHighlightPrefix)) ||
+            !HasExpectedPrefix(
+                playHudMouseOverTarget,
+                kBfMenuPlayHudMouseOverPrefix,
+                sizeof(kBfMenuPlayHudMouseOverPrefix)))
         {
             WriteLog(
-                L"Controller menu pointer rejected profiled target %p: the WinPC BfMenu::setGameInput prefix differs.",
-                setGameInputTarget);
+                L"Controller menu integration rejected the profiled WinPC BfMenu targets: setGameInput=%p playMenuHighLight=%p playLoadMenuHighLight=%p playHudMouseOver=%p.",
+                setGameInputTarget,
+                playMenuHighlightTarget,
+                playLoadMenuHighlightTarget,
+                playHudMouseOverTarget);
             InterlockedExchange(&started, 0);
             return;
         }
@@ -236,20 +284,62 @@ public:
             return;
         }
         hookCreated = true;
-        InterlockedExchangePointer(&active, this);
-        const MH_STATUS enableStatus = MH_EnableHook(setGameInputTarget);
-        if (enableStatus != MH_OK)
+        const MH_STATUS menuHighlightStatus = MH_CreateHook(
+            playMenuHighlightTarget,
+            reinterpret_cast<LPVOID>(&MenuPointerOverlay::PlayMenuHighlightHook),
+            reinterpret_cast<LPVOID*>(&originalPlayMenuHighlight));
+        const MH_STATUS loadHighlightStatus = MH_CreateHook(
+            playLoadMenuHighlightTarget,
+            reinterpret_cast<LPVOID>(&MenuPointerOverlay::PlayLoadMenuHighlightHook),
+            reinterpret_cast<LPVOID*>(&originalPlayLoadMenuHighlight));
+        const MH_STATUS hudMouseOverStatus = MH_CreateHook(
+            playHudMouseOverTarget,
+            reinterpret_cast<LPVOID>(&MenuPointerOverlay::PlayHudMouseOverHook),
+            reinterpret_cast<LPVOID*>(&originalPlayHudMouseOver));
+        nativeHoverHooksCreated = true;
+        if (menuHighlightStatus != MH_OK ||
+            loadHighlightStatus != MH_OK ||
+            hudMouseOverStatus != MH_OK ||
+            originalPlayMenuHighlight == nullptr ||
+            originalPlayLoadMenuHighlight == nullptr ||
+            originalPlayHudMouseOver == nullptr)
         {
             WriteLog(
-                L"Controller menu pointer could not enable its BfMenu::setGameInput hook (status=%d).",
-                static_cast<int>(enableStatus));
+                L"Controller native-menu haptics could not hook the BfMenu hover events (menu=%d load=%d HUD=%d).",
+                static_cast<int>(menuHighlightStatus),
+                static_cast<int>(loadHighlightStatus),
+                static_cast<int>(hudMouseOverStatus));
+            RemoveHook();
+            InterlockedExchange(&started, 0);
+            return;
+        }
+        InterlockedExchangePointer(&active, this);
+        const MH_STATUS enableStatus = MH_EnableHook(setGameInputTarget);
+        const MH_STATUS enableMenuHighlightStatus =
+            MH_EnableHook(playMenuHighlightTarget);
+        const MH_STATUS enableLoadHighlightStatus =
+            MH_EnableHook(playLoadMenuHighlightTarget);
+        const MH_STATUS enableHudMouseOverStatus =
+            MH_EnableHook(playHudMouseOverTarget);
+        nativeHoverHooksEnabled = true;
+        if (enableStatus != MH_OK ||
+            enableMenuHighlightStatus != MH_OK ||
+            enableLoadHighlightStatus != MH_OK ||
+            enableHudMouseOverStatus != MH_OK)
+        {
+            WriteLog(
+                L"Controller menu integration could not enable its BfMenu hooks (input=%d menu=%d load=%d HUD=%d).",
+                static_cast<int>(enableStatus),
+                static_cast<int>(enableMenuHighlightStatus),
+                static_cast<int>(enableLoadHighlightStatus),
+                static_cast<int>(enableHudMouseOverStatus));
             RemoveHook();
             InterlockedExchange(&started, 0);
             return;
         }
         hookEnabled = true;
         WriteLog(
-            L"Controller menu pointer armed at 0x0045DE60 for world-locked native menus: runtime=%ux%u source=%ux%u logical=800x600. The presentation path supplies the yaw-only LOCAL anchor shared by this mapper; a fresh tracked right aim ray supplies native c_GIMouseLookX/Y, and right trigger supplies native c_GIOk with hysteresis. In BfMenu Battlefield frontend state 0, right-stick up/down emits focus-checked mouse-wheel detents with bounded repeat while the Quick Menu is not held. The BFVR back-to-game button emits one focus-checked Escape scan-code down/up pair on a new click edge.",
+            L"Controller menu pointer armed at 0x0045DE60, with direct native hover haptics on BfMenu::playMenuHighLight 0x006A52D0, playLoadMenuHighLight 0x006A53F0, and playHudMouseOver 0x006A5480: runtime=%ux%u source=%ux%u logical=800x600. The presentation path supplies the yaw-only LOCAL anchor shared by this mapper; a fresh tracked right aim ray supplies native c_GIMouseLookX/Y, and right trigger supplies native c_GIOk with hysteresis. In BfMenu Battlefield frontend state 0, right-stick up/down emits focus-checked mouse-wheel detents with bounded repeat while the Quick Menu is not held. The BFVR back-to-game button emits one focus-checked Escape scan-code down/up pair on a new click edge.",
             runtimeUiWidth,
             runtimeUiHeight,
             sourceUiWidth,
@@ -267,6 +357,13 @@ public:
             MH_DisableHook(setGameInputTarget);
             hookEnabled = false;
         }
+        if (nativeHoverHooksEnabled)
+        {
+            MH_DisableHook(playMenuHighlightTarget);
+            MH_DisableHook(playLoadMenuHighlightTarget);
+            MH_DisableHook(playHudMouseOverTarget);
+            nativeHoverHooksEnabled = false;
+        }
         while (InterlockedCompareExchange(&callbackEntrants, 0, 0) != 0)
         {
             Sleep(0);
@@ -277,11 +374,12 @@ public:
         InterlockedExchange(&g_mainMenuOverlayHovered, 0);
         InterlockedExchange(&g_mainMenuOverlayAvailable, 0);
         WriteLog(
-            L"Controller menu pointer report: calls=%ld nativeMenuFrames=%ld mainMenuFrames=%ld hoverFrames=%ld freshTracking=%ld rayHits=%ld applied=%ld wheelUp=%ld wheelDown=%ld wheelFailures=%ld escapePresses=%ld escapeFailures=%ld readFaults=%ld restoreFaults=%ld.",
+            L"Controller menu pointer report: calls=%ld nativeMenuFrames=%ld mainMenuFrames=%ld hoverFrames=%ld nativeHoverEvents=%ld freshTracking=%ld rayHits=%ld applied=%ld wheelUp=%ld wheelDown=%ld wheelFailures=%ld escapePresses=%ld escapeFailures=%ld readFaults=%ld restoreFaults=%ld.",
             observedCalls,
             nativeMenuFrames,
             mainMenuFrames,
             hoverFrames,
+            nativeHoverEvents,
             freshTrackingFrames,
             rayHits,
             appliedFrames,
@@ -297,6 +395,68 @@ public:
     }
 
 private:
+    enum class NativeHoverKind
+    {
+        menu,
+        loadMenu,
+        hud,
+    };
+
+    static unsigned int __fastcall PlayMenuHighlightHook(void* menu, void*)
+    {
+        return DispatchNativeHover(menu, NativeHoverKind::menu);
+    }
+
+    static unsigned int __fastcall PlayLoadMenuHighlightHook(void* menu, void*)
+    {
+        return DispatchNativeHover(menu, NativeHoverKind::loadMenu);
+    }
+
+    static unsigned int __fastcall PlayHudMouseOverHook(void* menu, void*)
+    {
+        return DispatchNativeHover(menu, NativeHoverKind::hud);
+    }
+
+    static unsigned int DispatchNativeHover(
+        void* menu,
+        NativeHoverKind kind) noexcept
+    {
+        MenuPointerOverlay* const overlay =
+            static_cast<MenuPointerOverlay*>(
+                InterlockedCompareExchangePointer(&active, nullptr, nullptr));
+        if (overlay == nullptr)
+        {
+            return 1;
+        }
+        InterlockedIncrement(&callbackEntrants);
+        bfvr::NotifyControllerNativeMenuHover();
+        InterlockedIncrement(&overlay->nativeHoverEvents);
+        if (InterlockedCompareExchange(
+                &overlay->loggedFirstNativeHover,
+                1,
+                0) == 0)
+        {
+            overlay->WriteLog(
+                L"Controller haptics observed the first direct native BfMenu hover/highlight event.");
+        }
+        MenuHoverFn original = nullptr;
+        switch (kind)
+        {
+        case NativeHoverKind::menu:
+            original = overlay->originalPlayMenuHighlight;
+            break;
+        case NativeHoverKind::loadMenu:
+            original = overlay->originalPlayLoadMenuHighlight;
+            break;
+        case NativeHoverKind::hud:
+            original = overlay->originalPlayHudMouseOver;
+            break;
+        }
+        const unsigned int result = original != nullptr ? original(menu) : 1;
+        InterlockedDecrement(&callbackEntrants);
+        return result;
+    }
+
     static void __fastcall SetGameInputHook(
         void* menu,
         void*,
@@ -725,7 +885,24 @@ private:
             MH_RemoveHook(setGameInputTarget);
             hookCreated = false;
         }
+        if (nativeHoverHooksEnabled)
+        {
+            MH_DisableHook(playMenuHighlightTarget);
+            MH_DisableHook(playLoadMenuHighlightTarget);
+            MH_DisableHook(playHudMouseOverTarget);
+            nativeHoverHooksEnabled = false;
+        }
+        if (nativeHoverHooksCreated)
+        {
+            MH_RemoveHook(playMenuHighlightTarget);
+            MH_RemoveHook(playLoadMenuHighlightTarget);
+            MH_RemoveHook(playHudMouseOverTarget);
+            nativeHoverHooksCreated = false;
+        }
         originalSetGameInput = nullptr;
+        originalPlayMenuHighlight = nullptr;
+        originalPlayLoadMenuHighlight = nullptr;
+        originalPlayHudMouseOver = nullptr;
         if (ownsMinHook)
         {
             MH_Uninitialize();
@@ -759,6 +936,8 @@ private:
     volatile LONG nativeMenuFrames = 0;
     volatile LONG mainMenuFrames = 0;
     volatile LONG hoverFrames = 0;
+    volatile LONG nativeHoverEvents = 0;
+    volatile LONG loggedFirstNativeHover = 0;
     volatile LONG freshTrackingFrames = 0;
     volatile LONG rayHits = 0;
     volatile LONG appliedFrames = 0;
@@ -771,7 +950,13 @@ private:
     volatile LONG restoreFaults = 0;
     std::byte* gameImage = nullptr;
     void* setGameInputTarget = nullptr;
+    void* playMenuHighlightTarget = nullptr;
+    void* playLoadMenuHighlightTarget = nullptr;
+    void* playHudMouseOverTarget = nullptr;
     SetGameInputFn originalSetGameInput = nullptr;
+    MenuHoverFn originalPlayMenuHighlight = nullptr;
+    MenuHoverFn originalPlayLoadMenuHighlight = nullptr;
+    MenuHoverFn originalPlayHudMouseOver = nullptr;
     UINT runtimeUiWidth = 0;
     UINT runtimeUiHeight = 0;
     UINT sourceUiWidth = 0;
@@ -786,6 +971,8 @@ private:
     bool ownsMinHook = false;
     bool hookCreated = false;
     bool hookEnabled = false;
+    bool nativeHoverHooksCreated = false;
+    bool nativeHoverHooksEnabled = false;
 };
 
 PVOID volatile MenuPointerOverlay::active = nullptr;

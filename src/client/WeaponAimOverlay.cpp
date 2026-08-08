@@ -1,6 +1,7 @@
 #include "client/WeaponAimOverlay.h"
 
 #include "client/BFSoldierVrMotionFilter.h"
+#include "client/ControllerHaptics.h"
 #include "client/ScopeViewOverlay.h"
 #include "client/WeaponPoseRuntimeCache.h"
 #include "stereo/ScopeViewMath.h"
@@ -96,17 +97,14 @@ public:
         }
         appendLog = log;
         wchar_t enabled[2] = {};
-        if (GetEnvironmentVariableW(
+        weaponMotionEnabled =
+            GetEnvironmentVariableW(
                 kEnableWeaponMotionEnvironment,
                 enabled,
-                static_cast<DWORD>(std::size(enabled))) != 1 ||
-            enabled[0] != L'1')
-        {
-            InterlockedExchange(&started, 0);
-            return;
-        }
+                static_cast<DWORD>(std::size(enabled))) == 1 &&
+            enabled[0] == L'1';
         wchar_t nativeArmIkEnabled[2] = {};
-        moveNativeFireOrigin =
+        moveNativeFireOrigin = weaponMotionEnabled &&
             GetEnvironmentVariableW(
                 kEnableNativeArmIkEnvironment,
                 nativeArmIkEnabled,
@@ -170,7 +168,9 @@ public:
         }
         hookEnabled = true;
         WriteLog(
-            moveNativeFireOrigin
+            !weaponMotionEnabled
+                ? L"Local WeaponFire_Core haptic observer armed at 0x0053CDB0. Weapon motion is disabled, so every call forwards unchanged after publishing only accepted local firing feedback."
+                : moveNativeFireOrigin
                 ? L"Controller-directed fire overlay armed at 0x0053CDB0 for native 1P arms. The five verified ordinary-infantry branches receive the same direct tracked OpenXR-aim gun basis used by the solved hand, with the fire parent origin moved to that held-gun pose. During an exact validated useScope view whose hidden native arm is stale, WeaponFire_Core instead shares the visible scoped basis while retaining BF1942's native projectile origin. BF1942 retains weapon/barrel offsets, spread, cadence, projectile creation, and networking; unsupported calls forward unchanged."
                 : L"Controller-directed fire overlay armed at 0x0053CDB0. Only the five verified branches in WeaponFire_Ordinary can receive the fresh displayed-weapon rotation for the alive local infantry player; native fire position and unsupported calls remain unchanged.");
     }
@@ -237,6 +237,19 @@ private:
         const void* callerReturn) noexcept
     {
         InterlockedIncrement(&observedCalls);
+        const bool localAliveActor = IsLocalAliveActor(actor);
+        if (localAliveActor)
+        {
+            // WeaponFire_Core is BF1942's accepted firing boundary. Publishing
+            // here preserves native cadence for semi-automatic, automatic,
+            // and multi-barrel weapons instead of approximating trigger edges.
+            bfvr::NotifyControllerWeaponFired();
+        }
+        if (!weaponMotionEnabled)
+        {
+            originalFire(weapon, actor, matrix, barrelIndex);
+            return;
+        }
         bfvr::stereo::Matrix4 nativeMatrix = {};
         bool readable = false;
         if (matrix != nullptr)
@@ -255,7 +268,7 @@ private:
         if (!IsExpectedCaller(callerReturn))
         {
             InterlockedIncrement(&wrongCallerCalls);
-            if (IsLocalAliveActor(actor) &&
+            if (localAliveActor &&
                 InterlockedIncrement(&loggedLocalFallbacks) <= 8)
             {
                 WriteLog(
@@ -265,7 +278,7 @@ private:
             originalFire(weapon, actor, matrix, barrelIndex);
             return;
         }
-        if (!IsLocalAliveActor(actor))
+        if (!localAliveActor)
         {
             InterlockedIncrement(&nonLocalOrDeadCalls);
             originalFire(weapon, actor, matrix, barrelIndex);
@@ -672,6 +685,7 @@ private:
     bool hookCreated = false;
     bool hookEnabled = false;
     bool moveNativeFireOrigin = false;
+    bool weaponMotionEnabled = false;
 };
 
 PVOID volatile WeaponAimOverlay::active = nullptr;

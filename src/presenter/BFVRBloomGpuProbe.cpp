@@ -205,6 +205,7 @@ int Run(UINT width, UINT height, UINT iterations)
             false,
             true,
             false,
+            0.0F,
             nullptr,
             0.0F,
             nullptr,

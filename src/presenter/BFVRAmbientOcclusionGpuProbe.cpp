@@ -384,6 +384,7 @@ int wmain(int argc, wchar_t** argv)
                 false,
                 false,
                 true,
+                0.0F,
                 eyeAo,
                 eyeAo != nullptr ? 1.0F : 0.0F,
                 nullptr,

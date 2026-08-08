@@ -168,6 +168,8 @@ bool SharedTextureConsumer::Initialize(
         const settings::UserSettingsValues values =
             settings::DecodeUserSettings(userSettingsRuntime.Current());
         worldFxaaEnabled_ = values.fxaaEnabled;
+        worldFxaaSharpeningStrength_ =
+            static_cast<float>(values.fxaaSharpeningPercent) / 100.0F;
         worldBloomEnabled_ = values.bloomEnabled;
         worldBloomThreshold_ =
             static_cast<float>(values.bloomThresholdPercent) / 100.0F;
@@ -556,6 +558,7 @@ bool SharedTextureConsumer::ConsumeFrame(
         applyWaterReflections = waterReflection_.BuildEye(
             eye,
             textures_[eye].sharedView,
+            textures_[eye].sourceAlreadyLinear,
             depthTextures_[eye].sharedView,
             depthTextures_[eye].width,
             depthTextures_[eye].height,
@@ -614,6 +617,7 @@ bool SharedTextureConsumer::ConsumeFrame(
                 texture.transparentPadding,
                 texture.sourceAlreadyLinear,
                 texture.applyAntialiasing,
+                worldFxaaSharpeningStrength_,
                 aoView,
                 aoView != nullptr ? ambientOcclusionIntensity_ : 0.0F,
                 ssgiView,
@@ -673,7 +677,7 @@ bool SharedTextureConsumer::ConsumeFrame(
         if (waterReflectionFrameFailures_ <= 3)
         {
             WriteLog(
-                L"Shared texture consumer rejected water SSR inputs for frame failure %ld; presenting color/UI without water reflections.",
+                L"Shared texture consumer rejected water surface-reflection inputs for frame failure %ld; presenting color/UI without water reflections.",
                 waterReflectionFrameFailures_);
         }
     }
@@ -782,6 +786,15 @@ void SharedTextureConsumer::ApplySavedLiveSettings()
             L"Saved VR Settings applied world FXAA=%d without changing the Ref2 UI path.",
             worldFxaaEnabled_ ? 1 : 0);
     }
+    const float fxaaSharpeningStrength =
+        static_cast<float>(values.fxaaSharpeningPercent) / 100.0F;
+    if (worldFxaaSharpeningStrength_ != fxaaSharpeningStrength)
+    {
+        worldFxaaSharpeningStrength_ = fxaaSharpeningStrength;
+        WriteLog(
+            L"Saved VR Settings applied FXAA sharpening %.2f without changing the Ref2 UI path.",
+            fxaaSharpeningStrength);
+    }
     const float aoRadius = static_cast<float>(
         values.ambientOcclusionRadiusCentimeters) / 100.0F;
     if (ambientOcclusionRadiusMeters_ != aoRadius)
@@ -850,6 +863,7 @@ void SharedTextureConsumer::Shutdown()
     scalerRequired_ = false;
     requiresLegacyCompletionWait_ = false;
     worldFxaaEnabled_ = true;
+    worldFxaaSharpeningStrength_ = 0.25F;
     worldBloomEnabled_ = false;
     ambientOcclusionEnabled_ = false;
     screenSpaceGlobalIlluminationEnabled_ = false;

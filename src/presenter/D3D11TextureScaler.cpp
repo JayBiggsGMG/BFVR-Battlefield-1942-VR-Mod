@@ -59,7 +59,8 @@ cbuffer Configuration : register(b0)
     float waterReflectionIntensity;
     float screenSpaceGlobalIlluminationIntensity;
     float screenSpaceGlobalIlluminationDebugMode;
-    float3 configurationPadding2;
+    float fxaaSharpeningStrength;
+    float2 configurationPadding2;
 };
 
 float3 SrgbToLinear(float3 color)
@@ -137,11 +138,12 @@ cbuffer Configuration : register(b0)
     float waterReflectionIntensity;
     float screenSpaceGlobalIlluminationIntensity;
     float screenSpaceGlobalIlluminationDebugMode;
-    float3 configurationPadding2;
+    float fxaaSharpeningStrength;
+    float2 configurationPadding2;
 };
 
-// NVIDIA FXAA quality controls, retained as compile-time constants because
-// BFVR has one owner-approved world-AA profile rather than a runtime slider.
+// The owner-approved FXAA quality profile remains fixed. Sharpening is an
+// independent runtime strength applied after FXAA's edge and subpixel blends.
 const float kFxaaQualitySubpixel = 0.75;
 const float kFxaaQualityEdgeThreshold = 0.166;
 const float kFxaaQualityEdgeThresholdMin = 0.0833;
@@ -251,6 +253,22 @@ float4 main(float4 position : SV_Position, float2 texcoord : TEXCOORD0) : SV_Tar
     const float3 neighbourhoodColor =
         (center.rgb + northwest + northeast + southwest + southeast) * 0.2;
     filtered = lerp(filtered, neighbourhoodColor, subpixelBlend);
+
+    // CAS-style contrast limiting, fused into this pass with FXAA's existing
+    // centre/diagonal samples. Flat regions remain unchanged, strong edges
+    // suppress sharpening, and no extra pass, target, or texture fetch is used.
+    const float contrastHeadroom = max(
+        min(lumaMinimum, 1.0 - lumaMaximum),
+        0.0);
+    const float adaptiveAmount = sqrt(saturate(
+        contrastHeadroom / max(lumaMaximum, 0.0001)));
+    const float sharpenWeight =
+        -0.20 * saturate(fxaaSharpeningStrength) * adaptiveAmount;
+    const float sharpenDenominator = max(1.0 + 4.0 * sharpenWeight, 0.20);
+    filtered = saturate(
+        (filtered +
+         (northwest + northeast + southwest + southeast) * sharpenWeight) /
+        sharpenDenominator);
 
     float3 linearColor = sourceAlreadyLinear > 0.5
         ? filtered
@@ -783,6 +801,7 @@ bool D3D11TextureScaler::ScaleAspectFit(
     bool transparentPadding,
     bool sourceAlreadyLinear,
     bool applyAntialiasing,
+    float fxaaSharpeningStrength,
     ID3D11ShaderResourceView* ambientOcclusionView,
     float ambientOcclusionIntensity,
     ID3D11ShaderResourceView* screenSpaceGlobalIlluminationView,
@@ -810,6 +829,10 @@ bool D3D11TextureScaler::ScaleAspectFit(
     bloomIntensity = std::clamp(bloomIntensity, 0.0F, 2.0F);
     ambientOcclusionIntensity = std::clamp(
         ambientOcclusionIntensity,
+        0.0F,
+        1.0F);
+    fxaaSharpeningStrength = std::clamp(
+        fxaaSharpeningStrength,
         0.0F,
         1.0F);
     if (ambientOcclusionView == nullptr)
@@ -890,7 +913,8 @@ bool D3D11TextureScaler::ScaleAspectFit(
         applyBloom ? 1.0F / static_cast<float>(bloomHeight_) : 0.0F,
         screenSpaceGlobalIlluminationIntensity,
         screenSpaceGlobalIlluminationDebugMode,
-        waterReflectionIntensity);
+        waterReflectionIntensity,
+        applyAntialiasing ? fxaaSharpeningStrength : 0.0F);
     context_->PSSetShader(
         applyAmbientOcclusion || applyScreenSpaceGlobalIllumination ||
                 applyBloom || applyWaterReflections
@@ -1023,6 +1047,7 @@ bool D3D11TextureScaler::BuildBloom(
             0.0F,
             1.0F / static_cast<float>(bloomWidth_),
             1.0F / static_cast<float>(bloomHeight_),
+            0.0F,
             0.0F,
             0.0F,
             0.0F);
@@ -1178,7 +1203,8 @@ void D3D11TextureScaler::UpdateConfiguration(
     float bloomTexelHeight,
     float screenSpaceGlobalIlluminationIntensity,
     float screenSpaceGlobalIlluminationDebugMode,
-    float waterReflectionIntensity)
+    float waterReflectionIntensity,
+    float fxaaSharpeningStrength)
 {
     const float configuration[12] = {
         sourceAlreadyLinear ? 1.0F : 0.0F,
@@ -1190,7 +1216,7 @@ void D3D11TextureScaler::UpdateConfiguration(
         waterReflectionIntensity,
         screenSpaceGlobalIlluminationIntensity,
         screenSpaceGlobalIlluminationDebugMode,
-        0.0F,
+        fxaaSharpeningStrength,
         0.0F,
         0.0F};
     context_->UpdateSubresource(

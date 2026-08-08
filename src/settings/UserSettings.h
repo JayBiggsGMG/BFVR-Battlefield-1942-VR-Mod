@@ -33,6 +33,10 @@ constexpr std::uint32_t kMinimumAmbientOcclusionStrengthPercent = 0;
 constexpr std::uint32_t kMaximumAmbientOcclusionStrengthPercent = 100;
 constexpr std::uint32_t kAmbientOcclusionStrengthStepPercent = 5;
 constexpr std::uint32_t kDefaultAmbientOcclusionStrengthPercent = 100;
+constexpr std::uint32_t kMinimumFxaaSharpeningPercent = 0;
+constexpr std::uint32_t kMaximumFxaaSharpeningPercent = 100;
+constexpr std::uint32_t kFxaaSharpeningStepPercent = 5;
+constexpr std::uint32_t kDefaultFxaaSharpeningPercent = 25;
 constexpr std::uint32_t kMinimumBloomThresholdPercent = 5;
 constexpr std::uint32_t kMaximumBloomThresholdPercent = 95;
 constexpr std::uint32_t kBloomThresholdStepPercent = 5;
@@ -89,10 +93,12 @@ struct UserSettingsValues
     bool invertFlightPitch = false;
     bool invertTurretPitch = false;
     bool invertTurretYaw = false;
+    bool controllerHapticsEnabled = true;
     OffHandGripStyle offHandGripStyle = OffHandGripStyle::Hold;
     WorldCrosshairMode handWeaponCrosshair = WorldCrosshairMode::On;
     WorldCrosshairMode mountedWeaponCrosshair = WorldCrosshairMode::On;
     bool fxaaEnabled = true;
+    std::uint32_t fxaaSharpeningPercent = kDefaultFxaaSharpeningPercent;
     bool ambientOcclusionEnabled = true;
     std::uint32_t ambientOcclusionRadiusCentimeters =
         kDefaultAmbientOcclusionRadiusCentimeters;

@@ -5,6 +5,7 @@
 #include "client/BFSoldierOffHandWeaponSteering.h"
 #include "client/BFSoldierNativeArmPole.h"
 #include "client/BFSoldierPrimarySupportPoseCache.h"
+#include "client/ScopedOffHandSupportPoseCache.h"
 #include "client/BFSoldierRightGripRotationBinding.h"
 #include "client/BFSoldierTrackedHandPose.h"
 #include "client/BFSoldierVrMotionFilter.h"
@@ -1744,6 +1745,9 @@ private:
                 const auto support =
                     offHandSupportBinding_.Update(
                         supportInput);
+                bfvr::PublishCurrentOffHandSupportState(
+                    supportInput.bindingId,
+                    support.supported);
                 if (support.enteredSupport)
                 {
                     leftGripRotationBinding_.CaptureAnatomicalReference(soldier, skeleton, activeItem, leftHandBone, leftGrip->local, support.targetLocal, appendLog_);
@@ -2312,6 +2316,7 @@ private:
     void ResetOffHandSupportBinding() noexcept
     {
         offHandSupportBinding_.Reset();
+        bfvr::PublishCurrentOffHandSupportState(0, false);
         loggedPrimarySteeringBindingId_ = 0;
     }
 

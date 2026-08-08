@@ -116,14 +116,21 @@ bool TestBounds()
             true) == SettingsMenuSelection::None &&
         SettingsMenuSelectionAt(
             0.57F,
-            0.142F,
+            0.122F,
             false,
             false,
             SettingsMenuTab::GraphicsAudio,
             false) == SettingsMenuSelection::FxaaEnabled &&
         SettingsMenuSelectionAt(
             0.70F,
-            0.337F,
+            0.205F,
+            false,
+            false,
+            SettingsMenuTab::GraphicsAudio,
+            false) == SettingsMenuSelection::FxaaSharpening &&
+        SettingsMenuSelectionAt(
+            0.70F,
+            0.371F,
             false,
             false,
             SettingsMenuTab::GraphicsAudio,
@@ -393,6 +400,16 @@ bool TestInteractionAndPlacement()
     {
         return false;
     }
+    state = interaction.Snapshot();
+    AimAt(input, state.panelPose, state.widthMeters, 0.57F, 0.757F);
+    input.predictedDisplayTime += 11'111'111;
+    interaction.Update(input);
+    Click(interaction, input);
+    if (interaction.Snapshot().values.controllerHapticsEnabled ||
+        !interaction.TakeValuesChanged())
+    {
+        return false;
+    }
 
     state = interaction.Snapshot();
     AimAt(input, state.panelPose, state.widthMeters, 0.84F, 0.05F);
@@ -414,7 +431,18 @@ bool TestInteractionAndPlacement()
         return false;
     }
     state = interaction.Snapshot();
-    AimAt(input, state.panelPose, state.widthMeters, 0.75F, 0.337F);
+    AimAt(input, state.panelPose, state.widthMeters, 0.75F, 0.205F);
+    input.predictedDisplayTime += 11'111'111;
+    interaction.Update(input);
+    Click(interaction, input);
+    if (interaction.Snapshot().values.fxaaSharpeningPercent ==
+            bfvr::settings::kDefaultFxaaSharpeningPercent ||
+        !interaction.TakeValuesChanged())
+    {
+        return false;
+    }
+    state = interaction.Snapshot();
+    AimAt(input, state.panelPose, state.widthMeters, 0.75F, 0.371F);
     input.predictedDisplayTime += 11'111'111;
     interaction.Update(input);
     Click(interaction, input);
@@ -520,6 +548,7 @@ bool TestArt(const wchar_t* directory)
     variant.values.handWeaponCrosshair =
         bfvr::settings::WorldCrosshairMode::HitMarkerOnly;
     variant.values.invertFlightPitch = true;
+    variant.values.controllerHapticsEnabled = false;
     if (!differs(variant))
     {
         return false;
@@ -531,6 +560,7 @@ bool TestArt(const wchar_t* directory)
         return false;
     }
     variant.values.fxaaEnabled = false;
+    variant.values.fxaaSharpeningPercent = 80;
     variant.values.ambientOcclusionRadiusCentimeters = 120;
     if (!differs(variant))
     {

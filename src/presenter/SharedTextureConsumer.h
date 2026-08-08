@@ -100,6 +100,7 @@ private:
     bool requiresLegacyCompletionWait_ = false;
     bool scalerRequired_ = false;
     bool worldFxaaEnabled_ = true;
+    float worldFxaaSharpeningStrength_ = 0.25F;
     bool worldBloomEnabled_ = false;
     bool ambientOcclusionEnabled_ = false;
     bool screenSpaceGlobalIlluminationEnabled_ = false;

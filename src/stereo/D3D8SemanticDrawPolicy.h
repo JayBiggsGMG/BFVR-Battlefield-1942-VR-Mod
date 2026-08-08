@@ -57,10 +57,9 @@ struct BF1942D3D8DrawSignature
     float projectionM11) noexcept;
 
 // BF1942's second water pass uses fixed-function camera-space reflection
-// coordinates. In stereo, an infinite-viewer reflection keeps that generated
-// coordinate independent of the left/right camera translation while the
-// geometry continues to use each eye's complete View/Projection pair.
-[[nodiscard]] bool ShouldUseBF1942InfiniteViewerWaterReflection(
+// coordinates. In stereo, use a shared head-centre material View and
+// projection compensation only for that exact additive pass.
+[[nodiscard]] bool ShouldUseBF1942StereoStableWaterReflection(
     D3D8SemanticDrawClass semanticClass,
     std::uint32_t zWriteEnable,
     bool legacyStereoReflectionRequested) noexcept;

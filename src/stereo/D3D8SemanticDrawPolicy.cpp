@@ -261,7 +261,7 @@ bool IsBF1942FirstPersonArmDraw(
         projectionM11 >= 3.5F;
 }
 
-bool ShouldUseBF1942InfiniteViewerWaterReflection(
+bool ShouldUseBF1942StereoStableWaterReflection(
     D3D8SemanticDrawClass semanticClass,
     std::uint32_t zWriteEnable,
     bool legacyStereoReflectionRequested) noexcept

@@ -527,6 +527,11 @@ int RunPresenter(
     LONG openXrSubmitOrEndCount = 0;
     LONG predictedDisplayPeriodCount = 0;
     LONG mountedCameraToggleSequence = 0;
+    LONG consumedShotRightSequence = 0;
+    LONG consumedShotBothSequence = 0;
+    LONG consumedDeathSequence = 0;
+    LONG consumedNativeMenuHoverSequence = 0;
+    bool nativeMenuHoverActive = false;
     bool desktopMirrorSourceDirty = false;
     bool quickMenuWasVisibleInMirror = false;
     auto consumeSequence = [&](LONG availableSequence)
@@ -542,6 +547,16 @@ int RunPresenter(
             &block->framePresentationFlags,
             0,
             0);
+        const bool nativeMenuHovered =
+            (frameOverlayFlags &
+             bfvr::shared::kFrameOverlayBackToGameHovered) != 0;
+        if (nativeMenuHovered && !nativeMenuHoverActive)
+        {
+            (void)presentation.ApplyHapticFeedback(
+                bfvr::OpenXRHapticEvent::Hover,
+                bfvr::kOpenXRHapticHandRight);
+        }
+        nativeMenuHoverActive = nativeMenuHovered;
         const bool frameDepthValid = InterlockedCompareExchange(
             &block->frameDepthValid,
             0,
@@ -720,6 +735,46 @@ int RunPresenter(
                 0,
                 0) != 0);
         const bool began = presentation.BeginFrame(frame);
+        const auto consumeHapticCounter = [&presentation](
+            volatile LONG* source,
+            LONG& consumed,
+            bfvr::OpenXRHapticEvent event,
+            std::uint32_t handMask)
+        {
+            const LONG available = InterlockedCompareExchange(source, 0, 0);
+            const ULONG pending = (std::min)(
+                static_cast<ULONG>(available) -
+                    static_cast<ULONG>(consumed),
+                64UL);
+            for (ULONG index = 0; index < pending; ++index)
+            {
+                (void)presentation.ApplyHapticFeedback(event, handMask);
+            }
+            consumed = available;
+        };
+        if (began)
+        {
+            consumeHapticCounter(
+                &block->hapticShotRightSequence,
+                consumedShotRightSequence,
+                bfvr::OpenXRHapticEvent::Shot,
+                bfvr::kOpenXRHapticHandRight);
+            consumeHapticCounter(
+                &block->hapticShotBothSequence,
+                consumedShotBothSequence,
+                bfvr::OpenXRHapticEvent::Shot,
+                bfvr::kOpenXRHapticHandBoth);
+            consumeHapticCounter(
+                &block->hapticDeathSequence,
+                consumedDeathSequence,
+                bfvr::OpenXRHapticEvent::Death,
+                bfvr::kOpenXRHapticHandBoth);
+            consumeHapticCounter(
+                &block->hapticNativeMenuHoverSequence,
+                consumedNativeMenuHoverSequence,
+                bfvr::OpenXRHapticEvent::Hover,
+                bfvr::kOpenXRHapticHandRight);
+        }
         dispatchQuickMenuCommand();
         totalOpenXrBeginQpcTicks +=
             ReadPerformanceCounter() - beginStarted;

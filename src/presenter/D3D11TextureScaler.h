@@ -37,6 +37,7 @@ public:
         bool transparentPadding,
         bool sourceAlreadyLinear,
         bool applyAntialiasing,
+        float fxaaSharpeningStrength,
         ID3D11ShaderResourceView* ambientOcclusionView,
         float ambientOcclusionIntensity,
         ID3D11ShaderResourceView* screenSpaceGlobalIlluminationView,
@@ -69,7 +70,8 @@ private:
         float bloomTexelHeight,
         float screenSpaceGlobalIlluminationIntensity,
         float screenSpaceGlobalIlluminationDebugMode,
-        float waterReflectionIntensity);
+        float waterReflectionIntensity,
+        float fxaaSharpeningStrength);
     void WriteLog(const wchar_t* format, ...) const;
 
     ID3D11Device* device_ = nullptr;

@@ -46,6 +46,7 @@ if(BFVR_PRESENTER_ONLY)
     presenter/SharedTextureConsumer.cpp
     settings/UserSettings.cpp
     openxr/OpenXRQuickMenu.cpp
+    openxr/OpenXRHapticOutput.cpp
     openxr/OpenXRPresentation.cpp
     openxr/OpenXRPresentationSupport.cpp
     openxr/OpenXRScopeOverlayLayer.cpp
@@ -195,6 +196,7 @@ add_library(BFVRClient SHARED
   client/BFVRClient.cpp
   client/D3D8CallInventory.cpp
   client/ControllerInputCache.cpp
+  client/ControllerHaptics.cpp
   client/ControllerInputOverlay.cpp
   client/CrosshairOverlay.cpp
   client/D3D8WorldCrosshairRenderer.cpp
@@ -304,6 +306,7 @@ add_executable(BFVROpenXRProbe
   openxr/BFVROpenXRProbe.cpp
   openxr/OpenXRBootstrap.cpp
   openxr/OpenXRQuickMenu.cpp
+  openxr/OpenXRHapticOutput.cpp
   openxr/OpenXRPresentation.cpp
   openxr/OpenXRPresentationSupport.cpp
   openxr/OpenXRScopeOverlayLayer.cpp
@@ -384,6 +387,11 @@ add_executable(BFVRUserSettingsTests
   settings/UserSettingsTests.cpp
 )
 
+add_executable(BFVROpenXRHapticsTests
+  openxr/OpenXRHapticOutput.cpp
+  openxr/OpenXRHapticsTests.cpp
+)
+
 add_executable(BFVRVehicleMotionAimMathTests
   stereo/VehicleMotionAimMathTests.cpp
 )
@@ -448,6 +456,8 @@ add_executable(BFVRDirectSoundImportRouteTests
 )
 
 add_executable(BFVRSharedControlChannelTests
+  client/ControllerHaptics.cpp
+  client/ScopedOffHandSupportPoseCache.cpp
   presenter/SharedControlChannel.cpp
   presenter/SharedControlChannelTests.cpp
 )
@@ -456,7 +466,7 @@ add_executable(BFVRRfaInspect
   tools/RfaInspect.cpp
 )
 
-foreach(target BFVRClient BFVROpenALHrtfRouter BFVRD3D8To9FlatClient BFVRLoader BFVROpenXRProbe BFVRSharedTextureProducerProbe BFVRD3D8To9SharedSurfaceProbe BFVRAmbientOcclusionDepthProbe BFVRStereoMath BFVRStereoMathTests BFVRWaterReflectionTextureBasisTests BFVRWeaponFireAimMathTests BFVROffHandSupportPolicyTests BFVRArmPoleVectorMathTests BFVRMainMenuOverlayTests BFVRQuickMenuTests BFVRSettingsMenuTests BFVRUserSettingsTests BFVRVehicleMotionAimMathTests BFVRDirectionalLocomotionTests BFVRSurfaceVehicleDriveMathTests BFVRTrackingAnchorTests BFVRMountedCameraMathTests BFVRScopeViewMathTests BFVROpenXRScopeOverlayLayerTests BFVRWorldCrosshairMathTests BFVRRuntimeDiagnosticsTests BFVRHrtfListenerMathTests BFVRHrtfBufferPolicyTests BFVRHrtfMenuSoundPolicyTests BFVRHrtfBackendProbe BFVRDirectSoundImportRouteTests BFVRSharedControlChannelTests BFVRRfaInspect)
+foreach(target BFVRClient BFVROpenALHrtfRouter BFVRD3D8To9FlatClient BFVRLoader BFVROpenXRProbe BFVRSharedTextureProducerProbe BFVRD3D8To9SharedSurfaceProbe BFVRAmbientOcclusionDepthProbe BFVRStereoMath BFVRStereoMathTests BFVRWaterReflectionTextureBasisTests BFVRWeaponFireAimMathTests BFVROffHandSupportPolicyTests BFVRArmPoleVectorMathTests BFVRMainMenuOverlayTests BFVRQuickMenuTests BFVRSettingsMenuTests BFVRUserSettingsTests BFVROpenXRHapticsTests BFVRVehicleMotionAimMathTests BFVRDirectionalLocomotionTests BFVRSurfaceVehicleDriveMathTests BFVRTrackingAnchorTests BFVRMountedCameraMathTests BFVRScopeViewMathTests BFVROpenXRScopeOverlayLayerTests BFVRWorldCrosshairMathTests BFVRRuntimeDiagnosticsTests BFVRHrtfListenerMathTests BFVRHrtfBufferPolicyTests BFVRHrtfMenuSoundPolicyTests BFVRHrtfBackendProbe BFVRDirectSoundImportRouteTests BFVRSharedControlChannelTests BFVRRfaInspect)
   target_compile_definitions(${target} PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
   set_property(TARGET ${target} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
   if(MSVC)
@@ -525,6 +535,9 @@ target_include_directories(BFVRSettingsMenuTests PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}")
 target_include_directories(BFVRUserSettingsTests PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}")
+target_include_directories(BFVROpenXRHapticsTests PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}"
+  "${BFVR_OPENXR_INCLUDE_DIRECTORY}")
 target_include_directories(BFVRRuntimeDiagnosticsTests PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}")
 target_include_directories(BFVRSharedControlChannelTests PRIVATE
@@ -563,6 +576,9 @@ if(BUILD_TESTING)
   add_test(
     NAME BFVRUserSettingsTests
     COMMAND BFVRUserSettingsTests)
+  add_test(
+    NAME BFVROpenXRHapticsTests
+    COMMAND BFVROpenXRHapticsTests)
   add_test(
     NAME BFVRVehicleMotionAimMathTests
     COMMAND BFVRVehicleMotionAimMathTests)

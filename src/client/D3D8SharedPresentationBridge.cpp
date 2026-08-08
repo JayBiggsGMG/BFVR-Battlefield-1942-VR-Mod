@@ -1,6 +1,7 @@
 #include "client/D3D8SharedPresentationBridge.h"
 
 #include "client/ControllerInputCache.h"
+#include "client/ControllerHaptics.h"
 #include "client/D3D8To9SharedTextureProducer.h"
 #include "client/D3D8StereoProbeRecords.h"
 #include "client/ScopeViewOverlay.h"
@@ -271,6 +272,7 @@ public:
             return false;
         }
         block = channel.Get();
+        RegisterControllerHapticTransport(block);
         ambientOcclusionRequested = ReadAmbientOcclusionRequested();
         screenSpaceGlobalIlluminationRequested =
             ReadScreenSpaceGlobalIlluminationRequested();
@@ -1161,6 +1163,7 @@ public:
     {
         ClearAcceptedControllerInput();
         StopCompanion();
+        RegisterControllerHapticTransport(nullptr);
         channel.Close();
         block = nullptr;
         requirements = {};

@@ -26,6 +26,7 @@ public:
     bool BuildEye(
         std::size_t eye,
         ID3D11ShaderResourceView* worldColor,
+        bool worldColorAlreadyLinear,
         ID3D11ShaderResourceView* packedDepthAndMask,
         UINT width,
         UINT height,
@@ -48,7 +49,8 @@ private:
     bool UpdateConfiguration(
         UINT width,
         UINT height,
-        const float projection[16]);
+        const float projection[16],
+        bool worldColorAlreadyLinear);
     void ReleaseEyeResources(EyeResources& resources);
     void WriteLog(const wchar_t* format, ...) const;
 

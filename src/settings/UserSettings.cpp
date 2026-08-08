@@ -26,12 +26,16 @@ constexpr std::string_view kStandingEyeHeightKey =
 constexpr std::string_view kInvertFlightPitchKey = "invert_flight_pitch";
 constexpr std::string_view kInvertTurretPitchKey = "invert_turret_pitch";
 constexpr std::string_view kInvertTurretYawKey = "invert_turret_yaw";
+constexpr std::string_view kControllerHapticsEnabledKey =
+    "controller_haptics_enabled";
 constexpr std::string_view kOffHandGripStyleKey = "off_hand_grip_style";
 constexpr std::string_view kHandWeaponCrosshairKey =
     "hand_weapon_3d_crosshair";
 constexpr std::string_view kMountedWeaponCrosshairKey =
     "mounted_weapon_3d_crosshair";
 constexpr std::string_view kFxaaEnabledKey = "fxaa_enabled";
+constexpr std::string_view kFxaaSharpeningKey =
+    "fxaa_sharpening_percent";
 constexpr std::string_view kAmbientOcclusionEnabledKey =
     "ambient_occlusion_enabled";
 constexpr std::string_view kAmbientOcclusionRadiusKey =
@@ -190,6 +194,15 @@ bool IsAmbientOcclusionRadius(std::string_view value) noexcept
         bfvr::settings::kMinimumAmbientOcclusionRadiusCentimeters,
         bfvr::settings::kMaximumAmbientOcclusionRadiusCentimeters,
         bfvr::settings::kAmbientOcclusionRadiusStepCentimeters);
+}
+
+bool IsFxaaSharpening(std::string_view value) noexcept
+{
+    return IsUnsignedInRangeStep(
+        value,
+        bfvr::settings::kMinimumFxaaSharpeningPercent,
+        bfvr::settings::kMaximumFxaaSharpeningPercent,
+        bfvr::settings::kFxaaSharpeningStepPercent);
 }
 
 bool IsAmbientOcclusionStrength(std::string_view value) noexcept
@@ -455,6 +468,15 @@ UserSettingsSchema SeededUserSettingsSchema()
             IsBoolean
         },
         {
+            std::string(kControllerHapticsEnabledKey),
+            "true",
+            {
+                "Enables all BFVR controller vibration: a light impulse when the right-hand pointer enters a menu control, one firing impulse per accepted local weapon shot, and a death impulse on both hands.",
+                "One-handed firing vibrates only the right controller; an acquired two-hand weapon-support grip vibrates both controllers. Accepted values: true or false. Applied after Controls > Save."
+            },
+            IsBoolean
+        },
+        {
             std::string(kOffHandGripStyleKey),
             "hold",
             {
@@ -489,6 +511,15 @@ UserSettingsSchema SeededUserSettingsSchema()
                 "Accepted values: true or false. This setting is applied only after VR Settings > Save and does not require a restart."
             },
             IsBoolean
+        },
+        {
+            std::string(kFxaaSharpeningKey),
+            std::to_string(kDefaultFxaaSharpeningPercent),
+            {
+                "Controls a lightweight contrast-adaptive sharpening step fused into BFVR's world-only FXAA shader. It restores detail softened by FXAA without filtering the separate VR menu and HUD layers.",
+                "Accepted values: 0 through 100 percent in steps of 5. 0 disables sharpening while retaining FXAA; 25 is the mild default. Applied after VR Settings > Save without requiring a restart."
+            },
+            IsFxaaSharpening
         },
         {
             std::string(kAmbientOcclusionEnabledKey),
@@ -598,6 +629,9 @@ UserSettingsValues DecodeUserSettings(const UserSettings& settings) noexcept
     result.invertFlightPitch = readBoolean(kInvertFlightPitchKey, false);
     result.invertTurretPitch = readBoolean(kInvertTurretPitchKey, false);
     result.invertTurretYaw = readBoolean(kInvertTurretYawKey, false);
+    result.controllerHapticsEnabled = readBoolean(
+        kControllerHapticsEnabledKey,
+        true);
     const auto readGripStyle = [&settings]() {
         const auto found = settings.values.find(
             std::string(kOffHandGripStyleKey));
@@ -645,6 +679,10 @@ UserSettingsValues DecodeUserSettings(const UserSettings& settings) noexcept
         kAmbientOcclusionRadiusKey,
         kDefaultAmbientOcclusionRadiusCentimeters,
         IsAmbientOcclusionRadius);
+    result.fxaaSharpeningPercent = readUnsigned(
+        kFxaaSharpeningKey,
+        kDefaultFxaaSharpeningPercent,
+        IsFxaaSharpening);
     result.ambientOcclusionStrengthPercent = readUnsigned(
         kAmbientOcclusionStrengthKey,
         kDefaultAmbientOcclusionStrengthPercent,
@@ -720,6 +758,8 @@ void EncodeUserSettings(
         values.invertTurretPitch ? "true" : "false";
     settings.values[std::string(kInvertTurretYawKey)] =
         values.invertTurretYaw ? "true" : "false";
+    settings.values[std::string(kControllerHapticsEnabledKey)] =
+        values.controllerHapticsEnabled ? "true" : "false";
     settings.values[std::string(kOffHandGripStyleKey)] =
         values.offHandGripStyle == OffHandGripStyle::Toggle
         ? "toggle"
@@ -757,6 +797,12 @@ void EncodeUserSettings(
             kMinimumSnapTurnAngleDegrees,
             kMaximumSnapTurnAngleDegrees,
             kSnapTurnAngleStepDegrees));
+    settings.values[std::string(kFxaaSharpeningKey)] =
+        std::to_string(snap(
+            values.fxaaSharpeningPercent,
+            kMinimumFxaaSharpeningPercent,
+            kMaximumFxaaSharpeningPercent,
+            kFxaaSharpeningStepPercent));
     settings.values[std::string(kVrHeightAdjustmentKey)] =
         std::to_string(std::clamp(
             values.vrHeightAdjustmentCentimeters,

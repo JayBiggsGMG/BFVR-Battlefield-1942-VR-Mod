@@ -927,20 +927,27 @@ bool SettingsMenuArt::ComposeSettingsBody(
             state.values.bloomIntensityPercent / 100U,
             state.values.bloomIntensityPercent % 100U);
         return drawToggle(0, L"FXAA", state.values.fxaaEnabled, false) &&
-            drawToggle(
+            drawSlider(
                 1,
+                L"FXAA Sharpening",
+                state.values.fxaaSharpeningPercent,
+                settings::kMinimumFxaaSharpeningPercent,
+                settings::kMaximumFxaaSharpeningPercent,
+                std::to_wstring(state.values.fxaaSharpeningPercent) + L"%") &&
+            drawToggle(
+                2,
                 L"Ambient Occlusion",
                 state.values.ambientOcclusionEnabled,
                 true) &&
             drawSlider(
-                2,
+                3,
                 L"AO Radius",
                 state.values.ambientOcclusionRadiusCentimeters,
                 settings::kMinimumAmbientOcclusionRadiusCentimeters,
                 settings::kMaximumAmbientOcclusionRadiusCentimeters,
                 aoRadius) &&
             drawSlider(
-                3,
+                4,
                 L"AO Strength",
                 state.values.ambientOcclusionStrengthPercent,
                 settings::kMinimumAmbientOcclusionStrengthPercent,
@@ -948,19 +955,19 @@ bool SettingsMenuArt::ComposeSettingsBody(
                 std::to_wstring(
                     state.values.ambientOcclusionStrengthPercent) + L"%") &&
             drawToggle(
-                4,
+                5,
                 L"Bloom",
                 state.values.bloomEnabled,
                 true) &&
             drawSlider(
-                5,
+                6,
                 L"Bloom Threshold",
                 state.values.bloomThresholdPercent,
                 settings::kMinimumBloomThresholdPercent,
                 settings::kMaximumBloomThresholdPercent,
                 bloomThreshold) &&
             drawSlider(
-                6,
+                7,
                 L"Bloom Intensity",
                 state.values.bloomIntensityPercent,
                 settings::kMinimumBloomIntensityPercent,
@@ -1063,7 +1070,7 @@ bool SettingsMenuArt::ComposeSettingsBody(
             stereo::SettingsMenuSelection::MountedCrosshairNext) ||
         !DrawWhiteText(
             destination,
-            L"Vehicle & Turret Inversion:",
+            L"Controller Feedback & Vehicle Inversion:",
             82,
             495,
             460,
@@ -1073,14 +1080,16 @@ bool SettingsMenuArt::ComposeSettingsBody(
     {
         return false;
     }
-    constexpr std::array<const wchar_t*, 3> labels = {
+    constexpr std::array<const wchar_t*, 4> labels = {
         L"Flight Pitch (Invert Vertical Stick)",
         L"Turret Pitch (Up/Down)",
-        L"Turret Yaw (Left/Right)"};
-    const std::array<bool, 3> checked = {
+        L"Turret Yaw (Left/Right)",
+        L"Controller Haptics"};
+    const std::array<bool, 4> checked = {
         state.values.invertFlightPitch,
         state.values.invertTurretPitch,
-        state.values.invertTurretYaw};
+        state.values.invertTurretYaw,
+        state.values.controllerHapticsEnabled};
     for (std::size_t index = 0; index < labels.size(); ++index)
     {
         const int centerY = static_cast<int>(

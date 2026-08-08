@@ -103,10 +103,73 @@ bfvr::stereo::Matrix4 Multiply(
     return result;
 }
 
+std::optional<bfvr::stereo::Matrix4> InvertRigidAffine(
+    const bfvr::stereo::Matrix4& matrix) noexcept
+{
+    if (!IsRigidAffine(matrix))
+    {
+        return std::nullopt;
+    }
+
+    bfvr::stereo::Matrix4 result = Identity();
+    for (std::size_t row = 0; row < 3; ++row)
+    {
+        for (std::size_t column = 0; column < 3; ++column)
+        {
+            result.values[row][column] = matrix.values[column][row];
+        }
+    }
+    for (std::size_t column = 0; column < 3; ++column)
+    {
+        result.values[3][column] = -(
+            matrix.values[3][0] * result.values[0][column] +
+            matrix.values[3][1] * result.values[1][column] +
+            matrix.values[3][2] * result.values[2][column]);
+    }
+    return result;
+}
+
 } // namespace
 
 namespace bfvr::stereo
 {
+
+std::optional<D3D8WaterReflectionStereoTransforms>
+MakeD3D8WaterReflectionStereoTransforms(
+    const Matrix4& sharedView,
+    const Matrix4& leftView,
+    const Matrix4& leftProjection,
+    const Matrix4& rightView,
+    const Matrix4& rightProjection) noexcept
+{
+    if (!IsRigidAffine(sharedView) ||
+        !IsRigidAffine(leftView) ||
+        !IsRigidAffine(rightView) ||
+        !IsFinite(leftProjection) ||
+        !IsFinite(rightProjection))
+    {
+        return std::nullopt;
+    }
+
+    const auto inverseShared = InvertRigidAffine(sharedView);
+    if (!inverseShared.has_value())
+    {
+        return std::nullopt;
+    }
+
+    D3D8WaterReflectionStereoTransforms result = {};
+    result.sharedView = sharedView;
+    result.eyeProjections[0] = Multiply(
+        Multiply(*inverseShared, leftView),
+        leftProjection);
+    result.eyeProjections[1] = Multiply(
+        Multiply(*inverseShared, rightView),
+        rightProjection);
+    return IsFinite(result.eyeProjections[0]) &&
+            IsFinite(result.eyeProjections[1])
+        ? std::optional<D3D8WaterReflectionStereoTransforms>(result)
+        : std::nullopt;
+}
 
 std::optional<Matrix4> MakeD3D8WaterReflectionTextureTransform(
     const Matrix4& logicalCameraToWorld,

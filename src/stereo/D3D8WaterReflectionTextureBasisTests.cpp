@@ -215,11 +215,80 @@ bool TestInvalidMatricesFailClosed() noexcept
                 nonFiniteTexture).has_value();
 }
 
+bool TestStereoTransformsPreservePerEyeClipGeometry() noexcept
+{
+    Matrix4 sharedView = Multiply(Pitch(-0.31F), Yaw(0.44F));
+    sharedView.values[3][0] = -12.0F;
+    sharedView.values[3][1] = 3.5F;
+    sharedView.values[3][2] = 27.0F;
+
+    Matrix4 leftView = sharedView;
+    Matrix4 rightView = sharedView;
+    leftView.values[3][0] += 0.032F;
+    rightView.values[3][0] -= 0.032F;
+    Matrix4 leftProjection = Identity();
+    Matrix4 rightProjection = Identity();
+    leftProjection.values[0][0] = 1.37F;
+    leftProjection.values[1][1] = 1.62F;
+    leftProjection.values[2][0] = -0.08F;
+    leftProjection.values[2][2] = 1.001F;
+    leftProjection.values[2][3] = 1.0F;
+    leftProjection.values[3][2] = -0.1F;
+    leftProjection.values[3][3] = 0.0F;
+    rightProjection = leftProjection;
+    rightProjection.values[2][0] = 0.09F;
+
+    const auto result =
+        bfvr::stereo::MakeD3D8WaterReflectionStereoTransforms(
+            sharedView,
+            leftView,
+            leftProjection,
+            rightView,
+            rightProjection);
+    if (!result.has_value() || !NearlyEqual(result->sharedView, sharedView))
+    {
+        return false;
+    }
+
+    Matrix4 world = Yaw(-0.17F);
+    world.values[3][0] = 250.0F;
+    world.values[3][1] = -4.0F;
+    world.values[3][2] = 900.0F;
+    const Matrix4 nativeLeft = Multiply(
+        Multiply(world, leftView),
+        leftProjection);
+    const Matrix4 nativeRight = Multiply(
+        Multiply(world, rightView),
+        rightProjection);
+    const Matrix4 repairedLeft = Multiply(
+        Multiply(world, result->sharedView),
+        result->eyeProjections[0]);
+    const Matrix4 repairedRight = Multiply(
+        Multiply(world, result->sharedView),
+        result->eyeProjections[1]);
+    return NearlyEqual(nativeLeft, repairedLeft) &&
+        NearlyEqual(nativeRight, repairedRight);
+}
+
+bool TestStereoTransformsRejectNonRigidViews() noexcept
+{
+    Matrix4 scaledView = Identity();
+    scaledView.values[1][1] = 1.5F;
+    return !bfvr::stereo::MakeD3D8WaterReflectionStereoTransforms(
+        scaledView,
+        Identity(),
+        Identity(),
+        Identity(),
+        Identity()).has_value();
+}
+
 } // namespace
 
 int main()
 {
     const bool passed =
+        TestStereoTransformsPreservePerEyeClipGeometry() &&
+        TestStereoTransformsRejectNonRigidViews() &&
         TestIdentityPreservesOriginalTextureTransform() &&
         TestTranslationDoesNotEnterDirectionBasis() &&
         TestReplayCoordinatesMapToLogicalCameraBasis() &&

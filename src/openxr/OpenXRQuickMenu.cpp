@@ -688,6 +688,39 @@ OpenXRTrackingAction OpenXRQuickMenu::TakeTrackingAction() noexcept
     return result;
 }
 
+std::uint64_t OpenXRQuickMenu::HapticHoverTarget() const noexcept
+{
+    const stereo::SettingsMenuSnapshot settings =
+        settingsInteraction_.Snapshot();
+    if (settings.active)
+    {
+        return settings.visible &&
+            settings.hovered != stereo::SettingsMenuSelection::None
+            ? 0x1'0000'0000ULL +
+                static_cast<std::uint64_t>(settings.hovered)
+            : 0;
+    }
+    const stereo::QuickMenuInteractionSnapshot quick =
+        interaction_.Snapshot();
+    return quick.visible &&
+        quick.hovered != stereo::QuickMenuSelection::None
+        ? 1ULL + static_cast<std::uint64_t>(quick.hovered)
+        : 0;
+}
+
+bool OpenXRQuickMenu::ControllerHapticsEnabled() const noexcept
+{
+    const stereo::SettingsMenuSnapshot settings =
+        settingsInteraction_.Snapshot();
+    if (settings.active)
+    {
+        return settings.values.controllerHapticsEnabled;
+    }
+    return userSettingsRuntime_ == nullptr ||
+        settings::DecodeUserSettings(userSettingsRuntime_->Current())
+            .controllerHapticsEnabled;
+}
+
 bool OpenXRQuickMenu::GetMirrorState(
     OpenXRQuickMenuMirrorState& state) const noexcept
 {

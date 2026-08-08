@@ -43,12 +43,6 @@ bool RestoreFrameState(void* device, const DrawStateSnapshot& snapshot)
                 kD3DTransformTexture0,
                 &snapshot.waterTexture0)
             : S_OK;
-        const HRESULT localViewerResult = snapshot.localViewerOverridden
-            ? g_methods.setRenderState(
-                device,
-                kD3DRenderStateLocalViewer,
-                snapshot.localViewer)
-            : S_OK;
         writesSucceeded =
             skinningRestored &&
             spriteRestored &&
@@ -58,8 +52,7 @@ bool RestoreFrameState(void* device, const DrawStateSnapshot& snapshot)
             SUCCEEDED(viewResult) &&
             SUCCEEDED(projectionResult) &&
             SUCCEEDED(worldResult) &&
-            SUCCEEDED(waterTextureResult) &&
-            SUCCEEDED(localViewerResult);
+            SUCCEEDED(waterTextureResult);
     }
 
     bool exact = writesSucceeded;
@@ -88,7 +81,6 @@ bool RestoreFrameState(void* device, const DrawStateSnapshot& snapshot)
         D3DMatrix actualView = {};
         D3DMatrix actualProjection = {};
         D3DMatrix actualWaterTexture = {};
-        DWORD actualLocalViewer = 0;
         const HRESULT getColorResult =
             g_methods.getRenderTarget(device, &actualColor);
         const HRESULT getDepthResult =
@@ -114,12 +106,6 @@ bool RestoreFrameState(void* device, const DrawStateSnapshot& snapshot)
                 kD3DTransformTexture0,
                 &actualWaterTexture)
             : S_OK;
-        const HRESULT getLocalViewerResult = snapshot.localViewerOverridden
-            ? g_methods.getRenderState(
-                device,
-                kD3DRenderStateLocalViewer,
-                &actualLocalViewer)
-            : S_OK;
         exact =
             writesSucceeded &&
             SUCCEEDED(getColorResult) &&
@@ -129,7 +115,6 @@ bool RestoreFrameState(void* device, const DrawStateSnapshot& snapshot)
             SUCCEEDED(getViewResult) &&
             SUCCEEDED(getProjectionResult) &&
             SUCCEEDED(getWaterTextureResult) &&
-            SUCCEEDED(getLocalViewerResult) &&
             shaderConstantsExact &&
             actualColor == snapshot.sourceColor &&
             actualDepth == snapshot.sourceDepth &&
@@ -138,9 +123,7 @@ bool RestoreFrameState(void* device, const DrawStateSnapshot& snapshot)
             EqualMatrix(actualView, snapshot.view) &&
             EqualMatrix(actualProjection, snapshot.projection) &&
             (!snapshot.waterTexture0Overridden ||
-             EqualMatrix(actualWaterTexture, snapshot.waterTexture0)) &&
-            (!snapshot.localViewerOverridden ||
-             actualLocalViewer == snapshot.localViewer);
+             EqualMatrix(actualWaterTexture, snapshot.waterTexture0));
         ReleaseUnknown(actualColor);
         ReleaseUnknown(actualDepth);
     }

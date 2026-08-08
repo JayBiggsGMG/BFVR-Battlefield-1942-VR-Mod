@@ -1,6 +1,7 @@
 #pragma once
 
 #include "stereo/QuickMenuInteraction.h"
+#include "openxr/OpenXRHaptics.h"
 
 #include <d3d11.h>
 
@@ -233,6 +234,12 @@ public:
     // The game-side camera hook owns this state. The presenter mirrors it
     // only to render the left utility button's coupled/decoupled appearance.
     void SetMountedCameraDecoupled(bool decoupled) noexcept;
+
+    // Applies one controller pulse through the session's already-bound
+    // vibration action. The single saved Controls toggle gates every event.
+    bool ApplyHapticFeedback(
+        OpenXRHapticEvent event,
+        std::uint32_t handMask) noexcept;
 
     // Returns the current separately submitted menu/cursor state for the
     // right-eye desktop preview. The returned textures are borrowed.

@@ -488,18 +488,30 @@ sampled. There are no
 motion vectors, frame-varying noise, or temporal history. Allocation, shader,
 depth, or projection failure falls back to the normal world image for that frame.
 
-The native additive-water repair keeps complete stereo View/Projection
-geometry and uses `D3DRS_LOCALVIEWER=FALSE` only for the exact reflection pass.
-Its current texture-basis experiment is default-on: the original stage-0
-texture matrix is rotation-only rebased from each replay eye into BF1942's
-logical camera basis, then restored after the draw. Set
-`BFVR_WATER_REFLECTION_TEXTURE_BASIS=0` for a matched comparison that keeps the
-accepted no-band repair but disables only the new basis correction. The older
-`BFVR_STEREO_WATER_REFLECTION=1` comparison disables the complete native-water
-repair and can therefore restore the rejected eye-relative bands.
+The native additive-water repair now preserves Battlefield's complete authored
+material: scrolling normal map, generated light/reflection lookup, map-provided
+`Water.SpecularColor`, `Water.SpecularStreakFactor`, and the original local-viewer
+response. The exact specular pass uses the current head-centre View for both
+eyes, while each eye's residual View is folded into its Projection. Thus
+`World * View * Projection` remains mathematically identical for each eye, but
+the fixed-function reflection coordinate has one world-locked viewer instead
+of two eye-relative viewers. `BFVR_STEREO_WATER_REFLECTION=1` disables this
+repair for a legacy comparison and can restore the rejected eye-relative bands.
 
-Water-only screen-space reflections are experimental and default-off in code.
-Set `BFVR_OPENXR_WATER_SSR=1` to request them; the comparison launcher currently
+Controller vibration is enabled by default and has one saved Controls-page
+switch: `Controller Haptics`. It gates a light pulse when the right-hand pointer
+enters a different Quick Menu or Settings target, the BFVR Back-to-Game target,
+or any selectable item in Battlefield's native frontend, pause, spawn/deploy,
+kit, and related menus; one pulse for every accepted local weapon shot; and one
+longer pulse on both hands when the local player dies. Native-menu hover hooks
+Battlefield's actual `BfMenu::playMenuHighLight`, `playLoadMenuHighLight`, and
+`playHudMouseOver` UI event functions; it does not inspect or classify audio.
+One-handed fire affects the right controller only. When BFVR's
+actual off-hand weapon-support binding is acquired, firing affects both
+controllers; raw grip-button state alone does not select both hands.
+
+The per-eye water surface-reflection pass is experimental and default-off in
+code. Set `BFVR_OPENXR_WATER_SSR=1` to request it; the normal launcher currently
 does this explicitly. `BFVR_OPENXR_WATER_SSR_INTENSITY` defaults to `1.0` and
 accepts `0.0..2.0`. Set only `BFVR_OPENXR_WATER_SSR=0` for a matched native-water
 A/B.
@@ -508,10 +520,11 @@ The x86 renderer derives a dedicated per-eye mask only from BF1942's exact
 depth-writing additive/specular `WaterSurface` replay. It writes that material's
 own alpha to the alpha channel of the packed-depth texture while the ordinary
 depth resolve writes RGB only. The x64 pass reconstructs view space from each
-eye's projection, estimates a water normal from nearby masked depths, rejects
-water self-hits, uses a conservative 24-step spatial ray march with six-step
-depth-crossing refinement, fixed roughness, and Schlick Fresnel, and blends the
-result only into the corresponding world eye.
+eye's projection and estimates a water normal from nearby masked depths. Valid
+SSR hits use a conservative 24-step spatial ray march with six-step
+depth-crossing refinement, fixed roughness, and physical Schlick weighting.
+That reflection is blended only into the corresponding world eye, on top of
+the native normal-mapped, map-authored sun shine.
 There is no temporal history or motion-vector dependency, and Ref2 UI is never
 sampled or modified. Missing masks/depth/projections, unsupported resources, or
 shader failures retain the native water image for that frame.
@@ -632,7 +645,12 @@ corrected close foliage renders properly in-headset.
 The x64 conversion stage follows OpenXR's linear-composition contract. It
 prefers a BGRA8 sRGB swapchain and converts BF1942's legacy encoded R10/R16 RGB
 to linear before output; BGRA8 UNORM remains a linear-data fallback. Its
-world-eye path applies FXAA while the Ref2 UI remains unfiltered. Bloom is
+world-eye path applies FXAA while the Ref2 UI remains unfiltered. The Graphics
+Settings page places an `FXAA Sharpening` slider and number box directly below
+the FXAA toggle. Its `0..100%` control defaults to a mild `25%` and drives a
+CAS-style contrast-adaptive sharpen fused into the existing FXAA pass, reusing
+the samples FXAA already fetched. It therefore adds no full-screen pass,
+intermediate target, temporal history, or HUD/menu filtering. Bloom is
 default-off. When explicitly enabled, only the world eyes compile and execute
 the independent quarter-resolution brightness extraction/blur and bind its
 HDR result at the final linear composite; the default path still compiles no

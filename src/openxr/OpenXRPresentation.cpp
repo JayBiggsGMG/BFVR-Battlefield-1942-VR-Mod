@@ -1,4 +1,5 @@
 #include "openxr/OpenXRPresentation.h"
+#include "openxr/OpenXRHapticOutput.h"
 
 #include <windows.h>
 
@@ -999,7 +1000,7 @@ public:
 
         controllerInputAttached = true;
         WriteLog(
-            L"OpenXR attached a two-hand controller action set. The x64 presenter only samples OpenXR; the x86 client independently accepts fresh focused samples and may translate them into the current local native PlayerInput frame.");
+            L"OpenXR attached a two-hand controller action set with per-hand vibration output. The x64 presenter samples input and applies gated hover, accepted-shot, and death pulses; the x86 client independently accepts fresh focused samples and may translate them into the current local native PlayerInput frame.");
         return true;
     }
 
@@ -1612,7 +1613,7 @@ public:
             publicFrameState.controllerInput);
         if (!pendingFrameState.shouldRender)
         {
-            quickMenu.Update(publicFrameState);
+            UpdateQuickMenuAndHoverHaptics(publicFrameState);
             return true;
         }
 
@@ -1655,7 +1656,7 @@ public:
                 viewSpace,
                 pendingFrameState.predictedDisplayTime,
                 publicFrameState.standingHeightMeters);
-        quickMenu.Update(publicFrameState);
+        UpdateQuickMenuAndHoverHaptics(publicFrameState);
         if (quickMenu.TakeTrackingAction() ==
             OpenXRTrackingAction::RecenterForward)
         {
@@ -1670,7 +1671,7 @@ public:
                 publicFrameState.recenterForwardSequence =
                     recenterForwardSequence;
                 quickMenu.OnTrackingSpaceChanged();
-                quickMenu.Update(publicFrameState);
+                UpdateQuickMenuAndHoverHaptics(publicFrameState);
             }
         }
 
@@ -1722,6 +1723,8 @@ public:
         }
         return true;
     }
+
+#include "openxr/internal/OpenXRPresentationHaptics.inl"
 
     bool EndFrame(
         const OpenXRPresentationTextures& textures,
@@ -2094,6 +2097,7 @@ public:
         pendingHeadPose = {};
         pendingHeadPoseValid = false;
         recenterForwardSequence = 0;
+        lastHapticHoverTarget = 0;
         worldLockedUiPose = {};
         worldLockedUiPoseValid = false;
         uiReferenceModeInitialized = false;
@@ -2144,6 +2148,7 @@ public:
     bool pendingViewsValid = false;
     bool pendingHeadPoseValid = false;
     LONG recenterForwardSequence = 0;
+    std::uint64_t lastHapticHoverTarget = 0;
     bool worldLockedUiPoseValid = false;
     bool uiReferenceModeInitialized = false;
     XrFrameState pendingFrameState = {};
@@ -2428,6 +2433,13 @@ void OpenXRPresentation::SetMountedCameraDecoupled(
     {
         impl_->quickMenu.SetMountedCameraDecoupled(decoupled);
     }
+}
+
+bool OpenXRPresentation::ApplyHapticFeedback(
+    const OpenXRHapticEvent event,
+    const std::uint32_t handMask) noexcept
+{
+    return impl_ != nullptr && impl_->ApplyHapticFeedback(event, handMask);
 }
 
 bool OpenXRPresentation::GetQuickMenuMirrorState(

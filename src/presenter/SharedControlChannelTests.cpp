@@ -1,3 +1,4 @@
+#include "client/ControllerHaptics.h"
 #include "presenter/SharedControlChannel.h"
 
 #include <windows.h>
@@ -102,9 +103,43 @@ int main()
         L"producer-to-presenter mounted-camera state feedback failed") &&
         passed;
 
+    InterlockedIncrement(&producerBlock->hapticShotRightSequence);
+    InterlockedIncrement(&producerBlock->hapticShotBothSequence);
+    InterlockedIncrement(&producerBlock->hapticDeathSequence);
+    InterlockedIncrement(&producerBlock->hapticNativeMenuHoverSequence);
+    passed = Check(
+        producer.SignalProducerUpdate() &&
+            presenter.WaitForProducerUpdate(1000) == WAIT_OBJECT_0 &&
+            InterlockedCompareExchange(
+                &presenterBlock->hapticShotRightSequence, 0, 0) == 1 &&
+            InterlockedCompareExchange(
+                &presenterBlock->hapticShotBothSequence, 0, 0) == 1 &&
+            InterlockedCompareExchange(
+                &presenterBlock->hapticDeathSequence, 0, 0) == 1 &&
+            InterlockedCompareExchange(
+                &presenterBlock->hapticNativeMenuHoverSequence,
+                0,
+                0) == 1,
+        L"producer-to-presenter haptic event counters failed") && passed;
+
+    bfvr::RegisterControllerHapticTransport(producerBlock);
+    const LONG initialHoverSequence = InterlockedCompareExchange(
+        &producerBlock->hapticNativeMenuHoverSequence,
+        0,
+        0);
+    bfvr::NotifyControllerNativeMenuHover();
+    bfvr::RegisterControllerHapticTransport(nullptr);
+    bfvr::NotifyControllerNativeMenuHover();
+    passed = Check(
+        InterlockedCompareExchange(
+            &producerBlock->hapticNativeMenuHoverSequence,
+            0,
+            0) == initialHoverSequence + 1,
+        L"direct native-menu hover event did not publish exactly once through the registered transport") && passed;
+
     if (passed)
     {
-        wprintf(L"[PASS] Shared control events, context recenter/STAGE-height commands, and mounted-camera feedback are bidirectional.\n");
+        wprintf(L"[PASS] Shared control events, haptic counters, context recenter/STAGE-height commands, and mounted-camera feedback are bidirectional.\n");
     }
     return passed ? 0 : 1;
 }

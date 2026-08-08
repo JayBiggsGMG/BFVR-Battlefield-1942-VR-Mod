@@ -11,7 +11,7 @@ namespace bfvr::shared
 using SharedTextureLogCallback = void (*)(void* context, const wchar_t* message);
 
 constexpr DWORD kProtocolMagic = 0x52564642; // "BFVR"
-constexpr DWORD kProtocolVersion = 17;
+constexpr DWORD kProtocolVersion = 19;
 constexpr std::size_t kTextureCount = 3;
 constexpr std::size_t kDepthTextureCount = 2;
 constexpr std::size_t kSharedNameCapacity = 128;
@@ -236,6 +236,13 @@ struct ControlBlock
     volatile LONG renderRequestSequence = 0;
     volatile LONG renderedFrameSequence = 0;
     volatile LONG controllerSampleSequence = 0;
+    // Producer-to-presenter event counters. Each accepted x86 event advances
+    // exactly one counter; the x64 OpenXR owner consumes deltas without
+    // transferring pointers or mistaking held input for repeated events.
+    volatile LONG hapticShotRightSequence = 0;
+    volatile LONG hapticShotBothSequence = 0;
+    volatile LONG hapticDeathSequence = 0;
+    volatile LONG hapticNativeMenuHoverSequence = 0;
     // Published by the x86 producer before frameSequence. Gameplay HUD uses
     // VIEW; native menus use a latched LOCAL pose.
     volatile LONG frameUiReferenceMode =

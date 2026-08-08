@@ -63,6 +63,7 @@ bool IsSliderSelection(
     using bfvr::stereo::SettingsMenuSelection;
     return selection == SettingsMenuSelection::InfantryTurnSpeed ||
         selection == SettingsMenuSelection::VrHeightAdjustment ||
+        selection == SettingsMenuSelection::FxaaSharpening ||
         selection == SettingsMenuSelection::AmbientOcclusionRadius ||
         selection == SettingsMenuSelection::AmbientOcclusionStrength ||
         selection == SettingsMenuSelection::BloomThreshold ||
@@ -259,7 +260,7 @@ SettingsMenuSelection SettingsMenuSelectionAt(
         {
             const float centerY =
                 kSettingsMenuGraphicsRowCentersPixels[index];
-            const bool toggle = index == 0 || index == 1 || index == 4;
+            const bool toggle = index == 0 || index == 2 || index == 5;
             const float right = toggle
                 ? kSettingsMenuControlColumnPixels + 72.0F
                 : kSettingsMenuSliderRightPixels;
@@ -333,7 +334,11 @@ const wchar_t* SettingsMenuSelectionName(
         return L"Turret Pitch inversion";
     case SettingsMenuSelection::InvertTurretYaw:
         return L"Turret Yaw inversion";
+    case SettingsMenuSelection::ControllerHapticsEnabled:
+        return L"Controller Haptics";
     case SettingsMenuSelection::FxaaEnabled: return L"FXAA";
+    case SettingsMenuSelection::FxaaSharpening:
+        return L"FXAA Sharpening slider";
     case SettingsMenuSelection::AmbientOcclusionEnabled:
         return L"Ambient Occlusion";
     case SettingsMenuSelection::AmbientOcclusionRadius:
@@ -807,6 +812,12 @@ void SettingsMenuInteraction::Activate(
         valuesChanged_ = true;
         status_ = SettingsMenuStatus::SettingsNotSaved;
         break;
+    case SettingsMenuSelection::ControllerHapticsEnabled:
+        values_.controllerHapticsEnabled =
+            !values_.controllerHapticsEnabled;
+        valuesChanged_ = true;
+        status_ = SettingsMenuStatus::SettingsNotSaved;
+        break;
     case SettingsMenuSelection::FxaaEnabled:
         values_.fxaaEnabled = !values_.fxaaEnabled;
         valuesChanged_ = true;
@@ -825,6 +836,7 @@ void SettingsMenuInteraction::Activate(
         break;
     case SettingsMenuSelection::InfantryTurnSpeed:
     case SettingsMenuSelection::VrHeightAdjustment:
+    case SettingsMenuSelection::FxaaSharpening:
     case SettingsMenuSelection::AmbientOcclusionRadius:
     case SettingsMenuSelection::AmbientOcclusionStrength:
     case SettingsMenuSelection::BloomThreshold:
@@ -874,6 +886,12 @@ void SettingsMenuInteraction::SetGraphicsSliderFromPointer(
     std::uint32_t step = 1;
     switch (selection)
     {
+    case SettingsMenuSelection::FxaaSharpening:
+        destination = &values_.fxaaSharpeningPercent;
+        minimum = settings::kMinimumFxaaSharpeningPercent;
+        maximum = settings::kMaximumFxaaSharpeningPercent;
+        step = settings::kFxaaSharpeningStepPercent;
+        break;
     case SettingsMenuSelection::AmbientOcclusionRadius:
         destination = &values_.ambientOcclusionRadiusCentimeters;
         minimum = settings::kMinimumAmbientOcclusionRadiusCentimeters;

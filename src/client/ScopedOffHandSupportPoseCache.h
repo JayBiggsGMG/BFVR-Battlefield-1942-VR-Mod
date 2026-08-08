@@ -31,4 +31,13 @@ void PublishScopedOffHandSupportPose(
     ScopedOffHandSupportPose& pose,
     DWORD maximumAgeMs) noexcept;
 
+// The native-arm binding publishes this for both primary and close sidearm
+// support. It lets per-shot feedback use the actual acquired two-hand state
+// without interpreting raw squeeze buttons independently.
+void PublishCurrentOffHandSupportState(
+    std::uint64_t bindingId,
+    bool supported) noexcept;
+[[nodiscard]] bool IsFreshCurrentOffHandSupportHeld(
+    DWORD maximumAgeMs) noexcept;
+
 } // namespace bfvr

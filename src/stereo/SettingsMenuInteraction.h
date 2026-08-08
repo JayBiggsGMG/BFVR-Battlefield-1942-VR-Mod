@@ -52,7 +52,9 @@ enum class SettingsMenuSelection : std::uint32_t
     InvertFlightPitch,
     InvertTurretPitch,
     InvertTurretYaw,
+    ControllerHapticsEnabled,
     FxaaEnabled,
+    FxaaSharpening,
     AmbientOcclusionEnabled,
     AmbientOcclusionRadius,
     AmbientOcclusionStrength,
@@ -109,12 +111,13 @@ constexpr std::array<float, 3> kSettingsMenuVrPageTwoRowCentersPixels = {
     245.0F, 465.0F, 660.0F};
 constexpr std::array<float, 3> kSettingsMenuControlsSelectorRowCentersPixels = {
     165.0F, 330.0F, 420.0F};
-constexpr std::array<float, 3> kSettingsMenuControlsToggleRowCentersPixels = {
-    585.0F, 665.0F, 745.0F};
+constexpr std::array<float, 4> kSettingsMenuControlsToggleRowCentersPixels = {
+    565.0F, 635.0F, 705.0F, 775.0F};
 constexpr float kSettingsMenuSelectorLeftArrowCenterPixels = 585.0F;
 constexpr float kSettingsMenuSelectorRightArrowCenterPixels = 910.0F;
-constexpr std::array<float, 7> kSettingsMenuGraphicsRowCentersPixels = {
-    145.0F, 245.0F, 345.0F, 445.0F, 545.0F, 645.0F, 745.0F};
+constexpr std::array<float, 8> kSettingsMenuGraphicsRowCentersPixels = {
+    125.0F, 210.0F, 295.0F, 380.0F,
+    465.0F, 550.0F, 635.0F, 720.0F};
 constexpr std::array<std::uint32_t,
     static_cast<std::size_t>(SettingsMenuTab::Count)>
     kSettingsMenuPageCounts = {2, 1, 1};

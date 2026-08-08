@@ -43,6 +43,7 @@ cbuffer Configuration : register(b0)
     float4 projectionA; // m00, m11, m20, m21
     float4 projectionB; // m22, m23, m32, m33
     float4 textureInfo; // 1/width, 1/height, width, height
+    float4 materialInfo; // source-is-linear, reserved
 };
 
 float DecodeDepth(float3 encoded)
@@ -251,7 +252,9 @@ float4 main(float4 screenPosition : SV_Position, float2 uv : TEXCOORD0) : SV_Tar
         worldColorTexture.SampleLevel(linearSampler, hitUv + blurY, 0.0).rgb * 0.15;
     reflectedColor +=
         worldColorTexture.SampleLevel(linearSampler, hitUv - blurY, 0.0).rgb * 0.15;
-    reflectedColor = SrgbToLinear(reflectedColor);
+    reflectedColor = materialInfo.x > 0.5
+        ? reflectedColor
+        : SrgbToLinear(reflectedColor);
 
     const float viewFacing = saturate(dot(normal, -incident));
     const float fresnel = 0.02 + 0.98 * pow(1.0 - viewFacing, 5.0);
@@ -362,7 +365,7 @@ bool D3D11WaterReflection::Initialize(
         vertexBytecode->Release();
 
     D3D11_BUFFER_DESC bufferDescription = {};
-    bufferDescription.ByteWidth = sizeof(float) * 12;
+    bufferDescription.ByteWidth = sizeof(float) * 16;
     bufferDescription.Usage = D3D11_USAGE_DEFAULT;
     bufferDescription.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
     if (SUCCEEDED(result))
@@ -410,6 +413,7 @@ bool D3D11WaterReflection::Initialize(
 bool D3D11WaterReflection::BuildEye(
     std::size_t eye,
     ID3D11ShaderResourceView* worldColor,
+    bool worldColorAlreadyLinear,
     ID3D11ShaderResourceView* packedDepthAndMask,
     UINT width,
     UINT height,
@@ -419,7 +423,11 @@ bool D3D11WaterReflection::BuildEye(
         worldColor == nullptr || packedDepthAndMask == nullptr ||
         width == 0 || height == 0 || projection == nullptr ||
         !EnsureEyeResources(eyes_[eye], width, height) ||
-        !UpdateConfiguration(width, height, projection))
+        !UpdateConfiguration(
+            width,
+            height,
+            projection,
+            worldColorAlreadyLinear))
     {
         return false;
     }
@@ -520,9 +528,10 @@ bool D3D11WaterReflection::EnsureEyeResources(
 bool D3D11WaterReflection::UpdateConfiguration(
     UINT width,
     UINT height,
-    const float projection[16])
+    const float projection[16],
+    bool worldColorAlreadyLinear)
 {
-    const float configuration[12] = {
+    const float configuration[16] = {
         projection[0],
         projection[5],
         projection[8],
@@ -534,7 +543,11 @@ bool D3D11WaterReflection::UpdateConfiguration(
         1.0F / static_cast<float>(width),
         1.0F / static_cast<float>(height),
         static_cast<float>(width),
-        static_cast<float>(height)};
+        static_cast<float>(height),
+        worldColorAlreadyLinear ? 1.0F : 0.0F,
+        0.0F,
+        0.0F,
+        0.0F};
     context_->UpdateSubresource(
         configurationBuffer_,
         0,
