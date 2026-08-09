@@ -26,7 +26,10 @@ namespace
 {
 constexpr std::ptrdiff_t kFireArmsSetZoomRva = 0x001391B0;
 constexpr std::ptrdiff_t kBFSoldierSetStateBitsRva = 0x000F76D0;
+constexpr std::ptrdiff_t kPlayerManagerGlobalRva = 0x0057D76C;
 constexpr unsigned int kBFSoldierZoomStateBit = 0x20U;
+constexpr std::size_t kPlayerManagerLocalPlayerOffset = 0x54;
+constexpr std::size_t kBFPlayerIsAliveOffset = 0xA9;
 constexpr std::size_t kFireArmsTemplateOffset = 0x4C;
 constexpr std::size_t kFireArmsNormalFovOffset = 0x1F4;
 constexpr std::size_t kFireArmsTargetFovOffset = 0x1F8;
@@ -161,6 +164,7 @@ public:
             return;
         }
         appendLog_ = log;
+        gameImage_ = static_cast<std::byte*>(gameImage);
         setZoomTarget_ = gameImage == nullptr
             ? nullptr
             : static_cast<std::byte*>(gameImage) + kFireArmsSetZoomRva;
@@ -260,7 +264,7 @@ public:
         }
         setStateBitsHookEnabled_ = true;
         WriteLog(
-            L"Weapon-directed stereo scope policy armed at FireArms::setZoom 0x005391B0 and BFSoldier::setStateBits 0x004F76D0. Only useScope-enabled exact local active items are eligible; ordinary zoom-only secondary fire remains unchanged. A fresh multiplayer-infantry mouse or controller alt-fire edge owns only that exact weapon/soldier zoom lifetime until the next edge or lifecycle loss; the exact local soldier zoom bit and weapon request are kept consistent while owned.");
+            L"Weapon-directed stereo scope policy armed at FireArms::setZoom 0x005391B0 and BFSoldier::setStateBits 0x004F76D0. Only useScope-enabled exact local active items are eligible; ordinary zoom-only secondary fire remains unchanged. A fresh multiplayer-infantry mouse or controller alt-fire edge owns only that exact weapon/soldier zoom lifetime until the next edge, death, or other lifecycle loss; death clears the BFVR camera/frustum lifetime and performs one native unzoom before the deploy menu is presented.");
     }
 
     void Stop()
@@ -286,11 +290,14 @@ public:
         }
         ClearAll();
         WriteLog(
-            L"Scoped-view activation stopped: zoomCalls=%ld stateBitsCalls=%ld activations=%ld deactivations=%ld nonScopeZoomsIgnored=%ld localReceiverRejects=%ld freshAimUpdates=%ld trackedAimUpdates=%ld trackedOffHandSteeringUpdates=%ld latchedAimFallbacks=%ld trackedAimCorrectionFailures=%ld scopeIntentToggles=%ld zoomOverrides=%ld stateBitOverrides=%ld ownedZoomLifetimePreservations=%ld ownedPoseContradictionFallbacks=%ld.",
+            L"Scoped-view activation stopped: zoomCalls=%ld stateBitsCalls=%ld activations=%ld deactivations=%ld lifecycleReleases=%ld lifecycleNativeUnzoomFailures=%ld nonScopeZoomsIgnored=%ld localReceiverRejects=%ld freshAimUpdates=%ld trackedAimUpdates=%ld trackedOffHandSteeringUpdates=%ld latchedAimFallbacks=%ld trackedAimCorrectionFailures=%ld scopeIntentToggles=%ld zoomOverrides=%ld stateBitOverrides=%ld ownedZoomLifetimePreservations=%ld ownedPoseContradictionFallbacks=%ld.",
             InterlockedCompareExchange(&zoomCalls_, 0, 0),
             InterlockedCompareExchange(&stateBitsCalls_, 0, 0),
             InterlockedCompareExchange(&activations_, 0, 0),
             InterlockedCompareExchange(&deactivations_, 0, 0),
+            InterlockedCompareExchange(&lifecycleReleases_, 0, 0),
+            InterlockedCompareExchange(
+                &lifecycleNativeUnzoomFailures_, 0, 0),
             InterlockedCompareExchange(&ignoredNonScopeZooms_, 0, 0),
             InterlockedCompareExchange(&localReceiverRejects_, 0, 0),
             InterlockedCompareExchange(&freshAimUpdates_, 0, 0),
@@ -319,7 +326,34 @@ public:
                 0,
                 0));
         RemoveHook();
+        gameImage_ = nullptr;
         InterlockedExchange(&started_, 0);
+    }
+
+    void PollPlayerLifecycle() noexcept
+    {
+        bool alive = false;
+        const bool readable = ReadLocalPlayerAlive(alive);
+        const bool scopeLifetimeActive =
+            requestedWeapon_.load(std::memory_order_acquire) != nullptr ||
+            ownedScopeWeapon_.load(std::memory_order_acquire) != nullptr ||
+            pendingOwnedScopeActivation_.load(
+                std::memory_order_acquire) != nullptr;
+        if (bfvr::stereo::ShouldReleaseD3D8ScopeForPlayerLifecycle(
+                readable,
+                alive,
+                scopeLifetimeActive))
+        {
+            ForceReleaseForLifecycleLoss();
+        }
+    }
+
+    bool ConsumeNormalFovRestore(float& normalFov) noexcept
+    {
+        normalFov = pendingNormalFovRestore_.exchange(
+            -1.0F,
+            std::memory_order_acq_rel);
+        return std::isfinite(normalFov) && normalFov > 0.0F;
     }
 
     bool ReadFrameState(bfvr::ScopeViewFrameState& state) noexcept
@@ -330,6 +364,12 @@ public:
         if (requested == nullptr ||
             InterlockedCompareExchange(&started_, 0, 0) == 0)
         {
+            return false;
+        }
+        bool alive = false;
+        if (ReadLocalPlayerAlive(alive) && !alive)
+        {
+            ForceReleaseForLifecycleLoss();
             return false;
         }
 
@@ -544,6 +584,7 @@ public:
         state.controllerGeneration = controllerGeneration;
         state.normalFov = normalFov;
         state.projectionScale = projectionScale;
+        state.offHandSupported = trackedOffHandApplied;
         return true;
     }
 
@@ -688,6 +729,104 @@ public:
     }
 
 private:
+    bool ReadLocalPlayerAlive(bool& alive) const noexcept
+    {
+        alive = false;
+        if (gameImage_ == nullptr)
+        {
+            return false;
+        }
+        __try
+        {
+            void* const manager = *reinterpret_cast<void* const*>(
+                gameImage_ + kPlayerManagerGlobalRva);
+            void* const localPlayer = manager == nullptr
+                ? nullptr
+                : *reinterpret_cast<void* const*>(
+                    static_cast<const std::byte*>(manager) +
+                    kPlayerManagerLocalPlayerOffset);
+            if (localPlayer == nullptr)
+            {
+                return false;
+            }
+            alive = std::to_integer<BYTE>(
+                static_cast<const std::byte*>(localPlayer)
+                    [kBFPlayerIsAliveOffset]) != 0;
+            return true;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            alive = false;
+            return false;
+        }
+    }
+
+    void ForceReleaseForLifecycleLoss() noexcept
+    {
+        PublishNormalFovRestore();
+        void* const requested = requestedWeapon_.exchange(
+            nullptr,
+            std::memory_order_acq_rel);
+        void* const policyWeapon = ownedScopeWeapon_.exchange(
+            nullptr,
+            std::memory_order_acq_rel);
+        void* const weapon = requested != nullptr
+            ? requested
+            : policyWeapon;
+        pendingOwnedScopeActivation_.store(
+            nullptr,
+            std::memory_order_release);
+        ownedScopeSoldier_.store(nullptr, std::memory_order_relaxed);
+        ownedScopeDesiredEnabled_.store(false, std::memory_order_relaxed);
+        ClearCachedAim(nullptr);
+        normalFov_.store(-1.0F, std::memory_order_release);
+        projectionScale_.store(1.0F, std::memory_order_release);
+        projectionReplaySequence_.store(0, std::memory_order_release);
+        projectionReplayBuilds_.store(0, std::memory_order_release);
+        projectionPublicationConfirmed_.store(
+            false,
+            std::memory_order_release);
+        if (weapon == nullptr)
+        {
+            return;
+        }
+
+        bool nativeUnzoomed = false;
+        if (originalSetZoom_ != nullptr)
+        {
+            __try
+            {
+                originalSetZoom_(weapon, 0);
+                nativeUnzoomed = true;
+            }
+            __except (EXCEPTION_EXECUTE_HANDLER)
+            {
+                nativeUnzoomed = false;
+            }
+        }
+        InterlockedIncrement(&lifecycleReleases_);
+        if (!nativeUnzoomed)
+        {
+            InterlockedIncrement(&lifecycleNativeUnzoomFailures_);
+        }
+        WriteLog(
+            L"Scoped view released on local-player death: weapon=%p nativeUnzoom=%d. BFVR scope camera, projection, and broad pre-cull state are clear before deploy-menu presentation; respawn cannot inherit the zoomed FOV.",
+            weapon,
+            nativeUnzoomed ? 1 : 0);
+    }
+
+    void PublishNormalFovRestore() noexcept
+    {
+        const float normalFov = normalFov_.load(
+            std::memory_order_acquire);
+        if (std::isfinite(normalFov) && normalFov > 0.0F)
+        {
+            pendingNormalFovRestore_.store(
+                normalFov,
+                std::memory_order_release);
+        }
+    }
+
     void PublishScopeIntent(ScopeIntentSource source) noexcept
     {
         scopeIntentTick_.store(GetTickCount(), std::memory_order_relaxed);
@@ -782,6 +921,13 @@ private:
         if (policyWeapon == nullptr || policySoldier == nullptr ||
             soldier != policySoldier)
         {
+            return nativeStateBits;
+        }
+
+        bool localPlayerAlive = false;
+        if (ReadLocalPlayerAlive(localPlayerAlive) && !localPlayerAlive)
+        {
+            ReleaseOwnedScopePolicy(policyWeapon);
             return nativeStateBits;
         }
 
@@ -918,6 +1064,13 @@ private:
             return nativeEnabled;
         }
 
+        bool localPlayerAlive = false;
+        if (ReadLocalPlayerAlive(localPlayerAlive) && !localPlayerAlive)
+        {
+            ReleaseOwnedScopePolicy(weapon);
+            return nativeEnabled;
+        }
+
         const void* const policySoldier = ownedScopeSoldier_.load(
             std::memory_order_acquire);
         const void* const currentSoldier =
@@ -974,6 +1127,12 @@ private:
     {
         if (!enabled)
         {
+            bool localPlayerAlive = false;
+            if (ReadLocalPlayerAlive(localPlayerAlive) &&
+                !localPlayerAlive)
+            {
+                PublishNormalFovRestore();
+            }
             if (ClearIfRequested(weapon))
             {
                 InterlockedIncrement(&deactivations_);
@@ -982,6 +1141,13 @@ private:
                     weapon,
                     returnAddress);
             }
+            return;
+        }
+
+        bool localPlayerAlive = false;
+        if (ReadLocalPlayerAlive(localPlayerAlive) && !localPlayerAlive)
+        {
+            ForceReleaseForLifecycleLoss();
             return;
         }
 
@@ -1222,6 +1388,7 @@ private:
         projectionReplaySequence_.store(0, std::memory_order_release);
         projectionReplayBuilds_.store(0, std::memory_order_release);
         projectionPublicationConfirmed_.store(false, std::memory_order_release);
+        pendingNormalFovRestore_.store(-1.0F, std::memory_order_release);
     }
 
     void ReleaseOwnedScopePolicy(const void* weapon) noexcept
@@ -1312,6 +1479,8 @@ private:
     volatile LONG stateBitsCalls_ = 0;
     volatile LONG activations_ = 0;
     volatile LONG deactivations_ = 0;
+    volatile LONG lifecycleReleases_ = 0;
+    volatile LONG lifecycleNativeUnzoomFailures_ = 0;
     volatile LONG ignoredNonScopeZooms_ = 0;
     volatile LONG localReceiverRejects_ = 0;
     volatile LONG freshAimUpdates_ = 0;
@@ -1343,6 +1512,7 @@ private:
     std::atomic<void*> requestedWeapon_ = nullptr;
     std::atomic<float> normalFov_ = -1.0F;
     std::atomic<float> projectionScale_ = 1.0F;
+    std::atomic<float> pendingNormalFovRestore_ = -1.0F;
     std::atomic<LONG> projectionReplaySequence_ = 0;
     std::atomic<LONG> projectionReplayBuilds_ = 0;
     std::atomic<bool> projectionPublicationConfirmed_ = false;
@@ -1371,6 +1541,7 @@ private:
     bool setZoomHookEnabled_ = false;
     bool setStateBitsHookEnabled_ = false;
     bool ownsMinHook_ = false;
+    std::byte* gameImage_ = nullptr;
     void (*appendLog_)(const wchar_t* message) = nullptr;
 
     static void* volatile active_;
@@ -1395,6 +1566,16 @@ void StartScopeViewOverlay(
 void StopScopeViewOverlay()
 {
     g_scopeViewOverlay.Stop();
+}
+
+void PollScopeViewPlayerLifecycle() noexcept
+{
+    g_scopeViewOverlay.PollPlayerLifecycle();
+}
+
+bool ConsumeScopeViewNormalFovRestore(float& normalFov) noexcept
+{
+    return g_scopeViewOverlay.ConsumeNormalFovRestore(normalFov);
 }
 
 void NotifyMultiplayerInfantryAltFirePulse() noexcept

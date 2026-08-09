@@ -89,6 +89,19 @@ bool TestScopeAimSourceKeepsModeIndependentFromTransientFreshness() noexcept
             ScopeAimSource::None;
 }
 
+bool TestDeathIsAHardScopeLifetimeBoundary() noexcept
+{
+    using bfvr::stereo::ShouldReleaseD3D8ScopeForPlayerLifecycle;
+    return ShouldReleaseD3D8ScopeForPlayerLifecycle(
+               true, false, true) &&
+        !ShouldReleaseD3D8ScopeForPlayerLifecycle(
+            true, true, true) &&
+        !ShouldReleaseD3D8ScopeForPlayerLifecycle(
+            false, false, true) &&
+        !ShouldReleaseD3D8ScopeForPlayerLifecycle(
+            true, false, false);
+}
+
 bool TestScopedFireRequiresExactWeaponAndSoldierLifetime() noexcept
 {
     const int fireWeapon = 1;
@@ -343,6 +356,7 @@ bool TestEyeFillingScopeQuadFollowsEyePose() noexcept
 int main()
 {
     if (!TestConfiguredFovBecomesExactRelativeScale() ||
+        !TestDeathIsAHardScopeLifetimeBoundary() ||
         !TestScopeAimSourceKeepsModeIndependentFromTransientFreshness() ||
         !TestScopedFireRequiresExactWeaponAndSoldierLifetime() ||
         !TestTrackedScopeAimRetainsAuthoritativeLocalCorrection() ||

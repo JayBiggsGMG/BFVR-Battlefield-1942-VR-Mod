@@ -47,6 +47,10 @@ public:
     [[nodiscard]] D3D8RuntimeControllerSample RebaseControllerSample(
         const D3D8RuntimeControllerSample& sample) const noexcept;
     [[nodiscard]] D3D8TrackingContext Context() const noexcept;
+    // Changes only when Capture commits a stable tracking-context handoff.
+    // Camera/body state consumers use this exact generation so their lifetime
+    // cannot reset on a separately timed vehicle/station resolver transition.
+    [[nodiscard]] std::uint32_t ContextGeneration() const noexcept;
     [[nodiscard]] bool IsValid() const noexcept;
     [[nodiscard]] bool IsSeatedPostureTransitionActive() const noexcept;
 
@@ -61,6 +65,7 @@ private:
     D3D8RuntimeView baseReference_ = {};
     D3D8TrackingContext context_ = {};
     D3D8TrackingContext pendingContext_ = {};
+    std::uint32_t contextGeneration_ = 0;
     std::uint32_t pendingContextSamples_ = 0;
     LONG consumedRecenterSequence_ = 0;
     float standingReferenceY_ = 0.0F;

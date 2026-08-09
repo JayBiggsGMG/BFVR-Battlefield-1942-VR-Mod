@@ -1,6 +1,7 @@
 #include "client/ControllerInputOverlay.h"
 
 #include "client/ControllerInputCache.h"
+#include "client/HandWeaponRecoilRuntime.h"
 #include "client/ScopeViewOverlay.h"
 #include "presenter/SharedPresentationProtocol.h"
 #include "settings/UserSettings.h"
@@ -1096,7 +1097,6 @@ private:
                                 userSettings.snapTurnAngleDegrees),
                             snapAxis);
                         AddInfantrySnapTurnInput(destination, degrees);
-                        bfvr::NotifyControllerInfantryTurnApplied();
                         mouseLookEnabled = true;
                         snapTurnArmed = false;
                     }
@@ -1120,7 +1120,6 @@ private:
                 if (turnInput != 0.0F)
                 {
                     AddInfantryTurnInput(destination, turnInput);
-                    bfvr::NotifyControllerInfantryTurnApplied();
                     mouseLookEnabled = true;
                 }
 
@@ -1269,6 +1268,7 @@ private:
                 kLogicalInputCrouch,
                 crouchToggled);
             triggerHeld = false;
+            bfvr::PublishHandWeaponRecoilFireHeld(false);
             leftTriggerHeld = false;
             rightSqueezeHeld = false;
             leftPrimaryWasDown = IsHandButtonPressed(
@@ -1291,6 +1291,7 @@ private:
                 kControllerTriggerPressThreshold,
                 kControllerTriggerReleaseThreshold,
                 triggerHeld));
+        bfvr::PublishHandWeaponRecoilFireHeld(triggerHeld);
 
         const bool leftTriggerActive =
             (left.flags & bfvr::shared::kControllerHandFlagTriggerActive) != 0;
@@ -1534,6 +1535,7 @@ private:
     void ResetControllerState() noexcept
     {
         triggerHeld = false;
+        bfvr::PublishHandWeaponRecoilFireHeld(false);
         leftTriggerHeld = false;
         rightSqueezeHeld = false;
         nativeAltFireWasDown = false;

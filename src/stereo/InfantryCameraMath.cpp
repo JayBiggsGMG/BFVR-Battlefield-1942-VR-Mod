@@ -87,12 +87,6 @@ Matrix4 MakeCameraFromYaw(
 namespace bfvr::stereo
 {
 
-void ResetInfantryCameraHeadingState(
-    InfantryCameraHeadingState& headingState) noexcept
-{
-    headingState = {};
-}
-
 std::optional<Matrix4> MakeD3D8InfantryComfortCamera(
     const Matrix4& sourceCameraWorld,
     const Matrix4& soldierBodyWorld) noexcept
@@ -107,45 +101,6 @@ std::optional<Matrix4> MakeD3D8InfantryComfortCamera(
         return std::nullopt;
     }
     return MakeCameraFromYaw(sourceCameraWorld, *yaw);
-}
-
-std::optional<Matrix4> MakeD3D8FilteredInfantryComfortCamera(
-    const Matrix4& sourceCameraWorld,
-    const Matrix4& soldierBodyWorld,
-    bool suppressObservedYawDelta,
-    InfantryCameraHeadingState& headingState) noexcept
-{
-    if (!IsAffine(sourceCameraWorld))
-    {
-        return std::nullopt;
-    }
-    const auto observedYaw = ReadHorizontalFacingYaw(soldierBodyWorld);
-    if (!observedYaw.has_value())
-    {
-        return std::nullopt;
-    }
-
-    InfantryCameraHeadingState next = headingState;
-    if (!next.initialized || !std::isfinite(next.presentedYaw) ||
-        !std::isfinite(next.observedYaw))
-    {
-        next.presentedYaw = *observedYaw;
-        next.observedYaw = *observedYaw;
-        next.initialized = true;
-    }
-    else
-    {
-        const float observedDelta = NormalizeRadians(
-            *observedYaw - next.observedYaw);
-        next.observedYaw = *observedYaw;
-        if (!suppressObservedYawDelta)
-        {
-            next.presentedYaw = NormalizeRadians(
-                next.presentedYaw + observedDelta);
-        }
-    }
-    headingState = next;
-    return MakeCameraFromYaw(sourceCameraWorld, next.presentedYaw);
 }
 
 } // namespace bfvr::stereo

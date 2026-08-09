@@ -18,6 +18,7 @@ struct ScopeViewFrameState
     std::int32_t controllerGeneration = 0;
     float normalFov = -1.0F;
     float projectionScale = 1.0F;
+    bool offHandSupported = false;
 };
 
 // Observes the profiled FireArms::setZoom boundary. Only an actual local
@@ -27,6 +28,17 @@ void StartScopeViewOverlay(
     void* gameImage,
     void (*appendLog)(const wchar_t* message));
 void StopScopeViewOverlay();
+
+// Polls the profiled local BFPlayer alive byte from the game Present thread.
+// Death releases both BFVR's scope camera/frustum state and the native weapon
+// zoom before the deploy menu is presented.
+void PollScopeViewPlayerLifecycle() noexcept;
+
+// Consumed by the RenderView owner after death. FireArms::setZoom(false)
+// restores the weapon target, but its dead-owner update no longer advances the
+// active RenderView back from the scope FOV.
+[[nodiscard]] bool ConsumeScopeViewNormalFovRestore(
+    float& normalFov) noexcept;
 
 // The multiplayer compact-action route can replay conflicting native soldier
 // zoom bits after one alt-fire edge. Controller and native mouse notifications

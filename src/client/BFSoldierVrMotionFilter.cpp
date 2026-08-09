@@ -1,6 +1,7 @@
 #include "client/BFSoldierVrMotionFilter.h"
 
 #include "client/BFSoldierNativeArmIk.h"
+#include "client/HandWeaponRecoilRuntime.h"
 
 #include <MinHook.h>
 
@@ -53,18 +54,25 @@ struct LegacyRecoilState
 {
     float pitch = 0.0F;
     float yaw = 0.0F;
-    DWORD pitchUpdatedAt = 0;
-    DWORD yawUpdatedAt = 0;
+    DWORD updatedAt = 0;
     const void* soldier = nullptr;
     LONG sequence = 0;
-    bool pitchValid = false;
-    bool yawValid = false;
+    bool valid = false;
+};
+
+struct PendingRecoilYaw
+{
+    float yaw = 0.0F;
+    DWORD updatedAt = 0;
+    void* soldier = nullptr;
+    bool valid = false;
 };
 
 SRWLOCK g_legacyRecoilLock = SRWLOCK_INIT;
 LegacyRecoilState g_legacyRecoil = {};
 volatile LONG g_legacyRecoilSequence = 0;
 PVOID g_currentCameraSoldier = nullptr;
+thread_local PendingRecoilYaw g_pendingRecoilYaw = {};
 
 struct FireCameraTraceState
 {
@@ -83,10 +91,6 @@ struct FireCameraTraceState
 SRWLOCK g_fireCameraTraceLock = SRWLOCK_INIT;
 FireCameraTraceState g_fireCameraTrace = {};
 volatile LONG g_fireCameraTraceSequence = 0;
-
-SRWLOCK g_localWeaponFireLock = SRWLOCK_INIT;
-bfvr::BFSoldierVrLocalWeaponFire g_localWeaponFire = {};
-volatile LONG g_localWeaponFireSequence = 0;
 
 bool IsActiveFireCameraTraceForSoldier(
     const FireCameraTraceState& trace,
@@ -157,41 +161,73 @@ void PublishFireCameraTraceShake(void* soldier) noexcept
     ReleaseSRWLockExclusive(&g_fireCameraTraceLock);
 }
 
-void PublishLegacyPitchRecoil(void* soldier, float pitch) noexcept
+bool ReadRecoilIndex(void* soldier, int& recoilIndex) noexcept
 {
-    AcquireSRWLockExclusive(&g_legacyRecoilLock);
-    if (g_legacyRecoil.soldier != soldier)
+    recoilIndex = -1;
+    if (soldier == nullptr)
     {
-        g_legacyRecoil = {};
-        g_legacyRecoil.soldier = soldier;
+        return false;
     }
-    g_legacyRecoil.pitch = pitch;
-    g_legacyRecoil.pitchUpdatedAt = GetTickCount();
-    g_legacyRecoil.pitchValid = true;
-    ReleaseSRWLockExclusive(&g_legacyRecoilLock);
-    PublishFireCameraTracePitch(soldier, pitch);
+    __try
+    {
+        recoilIndex = *reinterpret_cast<const int*>(
+            static_cast<const std::byte*>(soldier) + 0x594);
+        return recoilIndex >= 0 && recoilIndex <= 20;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        recoilIndex = -1;
+        return false;
+    }
 }
 
-void PublishLegacyYawRecoil(void* soldier, float yaw) noexcept
+void PublishPendingLegacyYaw(void* soldier, const float yaw) noexcept
 {
-    AcquireSRWLockExclusive(&g_legacyRecoilLock);
-    if (g_legacyRecoil.soldier != soldier)
-    {
-        g_legacyRecoil = {};
-        g_legacyRecoil.soldier = soldier;
-    }
-    g_legacyRecoil.yaw = yaw;
-    g_legacyRecoil.yawUpdatedAt = GetTickCount();
-    g_legacyRecoil.yawValid = true;
-    // This generation belongs to the publication stream, not to the current
-    // soldier snapshot. Other soldiers can transiently query the same global
-    // hooks between two local-arm updates; resetting the snapshot on that
-    // ownership change must not make a later local sample look like an old
-    // sequence.
-    g_legacyRecoil.sequence =
-        InterlockedIncrement(&g_legacyRecoilSequence);
-    ReleaseSRWLockExclusive(&g_legacyRecoilLock);
+    g_pendingRecoilYaw = {
+        yaw,
+        GetTickCount(),
+        soldier,
+        soldier != nullptr && std::isfinite(yaw)};
     PublishFireCameraTraceYaw(soldier, yaw);
+}
+
+bool PublishPairedLegacyRecoil(void* soldier, const float pitch) noexcept
+{
+    PublishFireCameraTracePitch(soldier, pitch);
+    const DWORD now = GetTickCount();
+    const PendingRecoilYaw pending = g_pendingRecoilYaw;
+    g_pendingRecoilYaw = {};
+    if (!pending.valid || pending.soldier != soldier ||
+        now - pending.updatedAt > 50 || !std::isfinite(pitch) ||
+        InterlockedCompareExchangePointer(
+            &g_currentCameraSoldier,
+            nullptr,
+            nullptr) != soldier)
+    {
+        return false;
+    }
+
+    const LONG sequence = InterlockedIncrement(&g_legacyRecoilSequence);
+    AcquireSRWLockExclusive(&g_legacyRecoilLock);
+    g_legacyRecoil = {
+        pitch,
+        pending.yaw,
+        now,
+        soldier,
+        sequence,
+        true};
+    ReleaseSRWLockExclusive(&g_legacyRecoilLock);
+
+    int recoilIndex = -1;
+    if (ReadRecoilIndex(soldier, recoilIndex))
+    {
+        bfvr::PublishPairedNativeHandWeaponRecoil(
+            soldier,
+            pitch,
+            pending.yaw,
+            recoilIndex);
+    }
+    return true;
 }
 
 void ClearLegacyRecoil() noexcept
@@ -202,9 +238,7 @@ void ClearLegacyRecoil() noexcept
     AcquireSRWLockExclusive(&g_fireCameraTraceLock);
     g_fireCameraTrace = {};
     ReleaseSRWLockExclusive(&g_fireCameraTraceLock);
-    AcquireSRWLockExclusive(&g_localWeaponFireLock);
-    g_localWeaponFire = {};
-    ReleaseSRWLockExclusive(&g_localWeaponFireLock);
+    g_pendingRecoilYaw = {};
     InterlockedExchangePointer(&g_currentCameraSoldier, nullptr);
 }
 
@@ -226,9 +260,7 @@ bool ReadFreshBFSoldierVrLegacyRecoil(
     const LegacyRecoilState snapshot = g_legacyRecoil;
     ReleaseSRWLockShared(&g_legacyRecoilLock);
     const DWORD now = GetTickCount();
-    if (!snapshot.pitchValid || !snapshot.yawValid ||
-        now - snapshot.pitchUpdatedAt > maximumAgeMs ||
-        now - snapshot.yawUpdatedAt > maximumAgeMs ||
+    if (!snapshot.valid || now - snapshot.updatedAt > maximumAgeMs ||
         !std::isfinite(snapshot.pitch) || !std::isfinite(snapshot.yaw))
     {
         return false;
@@ -251,18 +283,6 @@ void NotifyBFSoldierVrLocalWeaponFired() noexcept
         &g_currentCameraSoldier,
         nullptr,
         nullptr);
-    const LONG liveSequence = InterlockedIncrement(&g_localWeaponFireSequence);
-    if (liveSequence > 0)
-    {
-        BFSoldierVrLocalWeaponFire fire = {};
-        fire.soldier = soldier;
-        fire.firedAt = GetTickCount();
-        fire.sequence = liveSequence;
-        AcquireSRWLockExclusive(&g_localWeaponFireLock);
-        g_localWeaponFire = fire;
-        ReleaseSRWLockExclusive(&g_localWeaponFireLock);
-    }
-
     const LONG traceSequence = InterlockedIncrement(&g_fireCameraTraceSequence);
     if (traceSequence <= 0 || traceSequence > kMaximumFireCameraTraceShots)
     {
@@ -275,27 +295,6 @@ void NotifyBFSoldierVrLocalWeaponFired() noexcept
     AcquireSRWLockExclusive(&g_fireCameraTraceLock);
     g_fireCameraTrace = trace;
     ReleaseSRWLockExclusive(&g_fireCameraTraceLock);
-}
-
-bool ReadFreshBFSoldierVrLocalWeaponFire(
-    BFSoldierVrLocalWeaponFire& fire,
-    DWORD maximumAgeMs) noexcept
-{
-    fire = {};
-    if (maximumAgeMs == 0)
-    {
-        return false;
-    }
-    AcquireSRWLockShared(&g_localWeaponFireLock);
-    const BFSoldierVrLocalWeaponFire snapshot = g_localWeaponFire;
-    ReleaseSRWLockShared(&g_localWeaponFireLock);
-    if (snapshot.sequence <= 0 || snapshot.soldier == nullptr ||
-        GetTickCount() - snapshot.firedAt > maximumAgeMs)
-    {
-        return false;
-    }
-    fire = snapshot;
-    return true;
 }
 
 bool ReadActiveBFSoldierVrFireCameraTrace(
@@ -442,8 +441,10 @@ public:
                 static_cast<int>(yawStatus));
             return false;
         }
+        StartHandWeaponRecoilRuntime(logCallback);
         if (!StartBFSoldierNativeArmIk(gameImage, logCallback))
         {
+            StopHandWeaponRecoilRuntime();
             MH_DisableHook(yawRecoilTarget);
             MH_DisableHook(pitchRecoilTarget);
             MH_DisableHook(updateCameraShakeTarget);
@@ -453,7 +454,7 @@ public:
             return false;
         }
         WriteLog(
-            L"VR player-motion filter armed: BFSoldier pitch/yaw recoil returns zero only to the legacy camera path, and each generated camera-shake matrix is replaced with identity after BF1942 updates its native state. Native weapon animation, firing, spread, and controller-directed aim remain game-owned; the failed cumulative native-arm recoil transfer is disabled.");
+            L"VR player-motion filter armed: BFSoldier pitch/yaw recoil returns zero only to the legacy camera path, and each generated camera-shake matrix is replaced with identity after BF1942 updates its native state. The exact local yaw-then-pitch pair now feeds only the bounded handweapon recoil runtime; weapon animation, spread, cadence, and controller-directed fire remain game-owned.");
         return true;
     }
 
@@ -467,6 +468,7 @@ public:
             MH_DisableHook(updateCameraShakeTarget);
             enabled = false;
         }
+        StopHandWeaponRecoilRuntime();
         RemoveCreatedHooks();
         if (active == this)
         {
@@ -484,12 +486,15 @@ public:
 
     void LogSummary() const
     {
+        LogHandWeaponRecoilSummary();
         WriteLog(
-            L"VR player-motion filter summary: shakeUpdates=%ld shakeMatricesNeutralized=%ld pitchRecoilQueries=%ld yawRecoilQueries=%ld matrixWriteFailures=%ld.",
+            L"VR player-motion filter summary: shakeUpdates=%ld shakeMatricesNeutralized=%ld pitchRecoilQueries=%ld yawRecoilQueries=%ld pairedLocalRecoil=%ld rejectedRecoilPairs=%ld matrixWriteFailures=%ld.",
             updateCameraShakeCalls,
             shakeMatricesNeutralized,
             pitchRecoilCalls,
             yawRecoilCalls,
+            pairedLocalRecoil,
+            rejectedRecoilPairs,
             shakeMatrixWriteFailures);
     }
 
@@ -527,15 +532,15 @@ private:
         // recoil angle out of the player camera. The held weapon still owns
         // its native recoil state and presentation animation.
         const float pitch = self->originalPitchRecoil(soldier);
-        PublishLegacyPitchRecoil(soldier, pitch);
+        const bool paired = PublishPairedLegacyRecoil(soldier, pitch);
         InterlockedIncrement(&self->pitchRecoilCalls);
-        if (std::fabs(pitch) > 0.000001F &&
-            InterlockedIncrement(&self->loggedRecoilImpulses) <= 8)
+        if (paired)
         {
-            self->WriteLog(
-                L"Captured native BFSoldier pitch recoil impulse %.7f for soldier=%p.",
-                pitch,
-                soldier);
+            InterlockedIncrement(&self->pairedLocalRecoil);
+        }
+        else
+        {
+            InterlockedIncrement(&self->rejectedRecoilPairs);
         }
         return 0.0F;
     }
@@ -548,16 +553,8 @@ private:
             return 0.0F;
         }
         const float yaw = self->originalYawRecoil(soldier);
-        PublishLegacyYawRecoil(soldier, yaw);
+        PublishPendingLegacyYaw(soldier, yaw);
         InterlockedIncrement(&self->yawRecoilCalls);
-        if (std::fabs(yaw) > 0.000001F &&
-            InterlockedIncrement(&self->loggedRecoilImpulses) <= 8)
-        {
-            self->WriteLog(
-                L"Captured native BFSoldier yaw recoil impulse %.7f for soldier=%p.",
-                yaw,
-                soldier);
-        }
         return 0.0F;
     }
 
@@ -638,7 +635,8 @@ private:
     volatile LONG shakeMatricesNeutralized = 0;
     volatile LONG pitchRecoilCalls = 0;
     volatile LONG yawRecoilCalls = 0;
-    volatile LONG loggedRecoilImpulses = 0;
+    volatile LONG pairedLocalRecoil = 0;
+    volatile LONG rejectedRecoilPairs = 0;
     volatile LONG shakeMatrixWriteFailures = 0;
     bool created = false;
     bool enabled = false;

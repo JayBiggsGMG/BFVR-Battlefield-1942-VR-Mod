@@ -116,92 +116,23 @@ float ForwardYaw(const Matrix4& matrix) noexcept
     return std::atan2(matrix.values[2][0], matrix.values[2][2]);
 }
 
-bool TestSuppressedYawIsConsumedWithoutDelayedSnap() noexcept
+bool TestEveryBodyHeadingIsAppliedAbsolutely() noexcept
 {
-    bfvr::stereo::InfantryCameraHeadingState state = {};
-    auto camera = bfvr::stereo::MakeD3D8FilteredInfantryComfortCamera(
+    const auto initial = bfvr::stereo::MakeD3D8InfantryComfortCamera(
         Identity(),
-        Yaw(0.20F),
-        false,
-        state);
-    if (!camera.has_value() || !Near(ForwardYaw(*camera), 0.20F))
-    {
-        return false;
-    }
-
-    camera = bfvr::stereo::MakeD3D8FilteredInfantryComfortCamera(
+        Yaw(0.20F));
+    const auto turned = bfvr::stereo::MakeD3D8InfantryComfortCamera(
         Identity(),
-        Yaw(0.31F),
-        true,
-        state);
-    if (!camera.has_value() || !Near(ForwardYaw(*camera), 0.20F))
-    {
-        return false;
-    }
-
-    // Ending suppression at the same observed body yaw must not replay the
-    // ignored correction. A later ordinary turn still advances relatively.
-    camera = bfvr::stereo::MakeD3D8FilteredInfantryComfortCamera(
-        Identity(),
-        Yaw(0.31F),
-        false,
-        state);
-    if (!camera.has_value() || !Near(ForwardYaw(*camera), 0.20F))
-    {
-        return false;
-    }
-    camera = bfvr::stereo::MakeD3D8FilteredInfantryComfortCamera(
-        Identity(),
-        Yaw(0.46F),
-        false,
-        state);
-    return camera.has_value() && Near(ForwardYaw(*camera), 0.35F);
-}
-
-bool TestUnsuppressedIntentionalTurnPassesThrough() noexcept
-{
-    bfvr::stereo::InfantryCameraHeadingState state = {};
-    const auto first = bfvr::stereo::MakeD3D8FilteredInfantryComfortCamera(
-        Identity(),
-        Yaw(-0.30F),
-        false,
-        state);
-    const auto turned = bfvr::stereo::MakeD3D8FilteredInfantryComfortCamera(
-        Identity(),
-        Yaw(0.50F),
-        false,
-        state);
-    return first.has_value() && turned.has_value() &&
-        Near(ForwardYaw(*turned), 0.50F);
-}
-
-bool TestMountedLifecycleResetReanchorsAbsoluteHeading() noexcept
-{
-    bfvr::stereo::InfantryCameraHeadingState state = {};
-    const auto initial =
-        bfvr::stereo::MakeD3D8FilteredInfantryComfortCamera(
+        Yaw(0.31F));
+    const auto afterContextChange =
+        bfvr::stereo::MakeD3D8InfantryComfortCamera(
             Identity(),
-            Yaw(0.10F),
-            false,
-            state);
-    const auto suppressed =
-        bfvr::stereo::MakeD3D8FilteredInfantryComfortCamera(
-            Identity(),
-            Yaw(0.45F),
-            true,
-            state);
-    bfvr::stereo::ResetInfantryCameraHeadingState(state);
-    const auto afterMountedExit =
-        bfvr::stereo::MakeD3D8FilteredInfantryComfortCamera(
-            Identity(),
-            Yaw(-1.20F),
-            false,
-            state);
-    return initial.has_value() && suppressed.has_value() &&
-        afterMountedExit.has_value() &&
-        Near(ForwardYaw(*initial), 0.10F) &&
-        Near(ForwardYaw(*suppressed), 0.10F) &&
-        Near(ForwardYaw(*afterMountedExit), -1.20F);
+            Yaw(-1.20F));
+    return initial.has_value() && turned.has_value() &&
+        afterContextChange.has_value() &&
+        Near(ForwardYaw(*initial), 0.20F) &&
+        Near(ForwardYaw(*turned), 0.31F) &&
+        Near(ForwardYaw(*afterContextChange), -1.20F);
 }
 
 } // namespace
@@ -211,9 +142,7 @@ int main()
     if (!TestSourceRecoilIsReplacedByBodyFacing() ||
         !TestTiltedBodyStillSuppliesOnlyHorizontalFacing() ||
         !TestInvalidInputsFailClosed() ||
-        !TestSuppressedYawIsConsumedWithoutDelayedSnap() ||
-        !TestUnsuppressedIntentionalTurnPassesThrough() ||
-        !TestMountedLifecycleResetReanchorsAbsoluteHeading())
+        !TestEveryBodyHeadingIsAppliedAbsolutely())
     {
         std::fprintf(stderr, "Infantry-camera math tests failed.\n");
         return 1;

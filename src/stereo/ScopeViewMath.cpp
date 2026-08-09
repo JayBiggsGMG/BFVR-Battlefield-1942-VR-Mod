@@ -129,6 +129,15 @@ std::optional<Matrix4> InvertRigidAffine(const Matrix4& matrix) noexcept
 namespace bfvr::stereo
 {
 
+bool ShouldReleaseD3D8ScopeForPlayerLifecycle(
+    const bool localPlayerStateReadable,
+    const bool localPlayerAlive,
+    const bool scopeLifetimeActive) noexcept
+{
+    return localPlayerStateReadable && !localPlayerAlive &&
+        scopeLifetimeActive;
+}
+
 ScopeAimSource SelectScopeAimSource(
     bool scopeRequested,
     bool freshPoseMatchesRequestedWeapon,

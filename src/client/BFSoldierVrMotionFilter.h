@@ -49,24 +49,10 @@ struct BFSoldierVrFireCameraTrace
     bool shakeValid = false;
 };
 
-// Unbounded process-lifetime publication of the newest accepted local shot.
-// Unlike the diagnostic trace below, this remains active after its bounded
-// logging quota so the live HMD camera can reject delayed MP fire corrections.
-struct BFSoldierVrLocalWeaponFire
-{
-    const void* soldier = nullptr;
-    DWORD firedAt = 0;
-    LONG sequence = 0;
-};
-
 // WeaponFire_Core is the accepted local firing boundary. Only the first few
 // process-lifetime shots open a short trace window, keeping normal logs bounded
 // even for automatic weapons.
 void NotifyBFSoldierVrLocalWeaponFired() noexcept;
-
-[[nodiscard]] bool ReadFreshBFSoldierVrLocalWeaponFire(
-    BFSoldierVrLocalWeaponFire& fire,
-    DWORD maximumAgeMs) noexcept;
 
 [[nodiscard]] bool ReadActiveBFSoldierVrFireCameraTrace(
     BFSoldierVrFireCameraTrace& trace,

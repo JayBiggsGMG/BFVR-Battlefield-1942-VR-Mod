@@ -15,8 +15,6 @@ struct ControllerInputCacheSlot
 
 std::array<ControllerInputCacheSlot, 2> g_slots = {};
 volatile LONG g_publishedGeneration = 0;
-volatile LONG g_infantryTurnGeneration = 0;
-volatile LONG g_infantryTurnAppliedAt = 0;
 
 LONG NextGeneration(LONG current) noexcept
 {
@@ -46,28 +44,6 @@ void PublishAcceptedControllerInput(
 void ClearAcceptedControllerInput() noexcept
 {
     PublishAcceptedControllerInput({}, {}, false);
-}
-
-void NotifyControllerInfantryTurnApplied() noexcept
-{
-    InterlockedExchange(
-        &g_infantryTurnAppliedAt,
-        static_cast<LONG>(GetTickCount()));
-    MemoryBarrier();
-    InterlockedIncrement(&g_infantryTurnGeneration);
-}
-
-bool WasControllerInfantryTurnAppliedRecently(DWORD maximumAgeMs) noexcept
-{
-    if (maximumAgeMs == 0 ||
-        InterlockedCompareExchange(&g_infantryTurnGeneration, 0, 0) <= 0)
-    {
-        return false;
-    }
-    MemoryBarrier();
-    const DWORD appliedAt = static_cast<DWORD>(
-        InterlockedCompareExchange(&g_infantryTurnAppliedAt, 0, 0));
-    return GetTickCount() - appliedAt <= maximumAgeMs;
 }
 
 bool ReadFreshAcceptedControllerInput(

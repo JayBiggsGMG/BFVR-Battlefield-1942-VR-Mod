@@ -10,6 +10,7 @@
 #include "client/BFSoldierTrackedHandPose.h"
 #include "client/BFSoldierVrMotionFilter.h"
 #include "client/ControllerInputCache.h"
+#include "client/HandWeaponRecoilRuntime.h"
 #include "client/WeaponPoseRuntimeCache.h"
 #include "presenter/SharedPresentationProtocol.h"
 #include "settings/UserSettings.h"
@@ -1403,6 +1404,24 @@ private:
                                     3.14159265358979323846F);
                         }
                     }
+                }
+            }
+            const auto recoiledGunWorld =
+                bfvr::MakeCurrentHandWeaponRecoilPose(
+                    controllerGunWorld,
+                    soldier,
+                    alignment.activeItem);
+            if (recoiledGunWorld.has_value())
+            {
+                const auto recoiledHand =
+                    bfvr::stereo::
+                        MakeD3D8ControllerDirectedNativeHandMatrix(
+                            *recoiledGunWorld,
+                            alignment.handFromFire);
+                if (recoiledHand.has_value())
+                {
+                    controllerGunWorld = *recoiledGunWorld;
+                    correctedHandWorld = *recoiledHand;
                 }
             }
             Matrix4 target = Multiply(

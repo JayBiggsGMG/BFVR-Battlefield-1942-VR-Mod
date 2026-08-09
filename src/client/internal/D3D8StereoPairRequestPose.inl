@@ -220,5 +220,8 @@ void PrepareRuntimeRenderRequestPose()
     }
     g_renderViewPoseHook.UpdatePose(
         trackingReference,
-        g_runtimeRenderRequest);
+        g_runtimeRenderRequest,
+        g_trackingAnchor.ContextGeneration(),
+        g_trackingAnchor.Context().kind ==
+            bfvr::D3D8TrackingContextKind::Infantry);
 }

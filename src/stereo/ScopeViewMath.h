@@ -38,6 +38,14 @@ enum class ScopeAimSource
     Latched
 };
 
+// Death is a hard scope lifetime boundary even when BF1942 temporarily keeps
+// the old soldier and weapon pointers alive for the deploy-menu transition.
+// An unreadable player sample does not authorize a native method call.
+[[nodiscard]] bool ShouldReleaseD3D8ScopeForPlayerLifecycle(
+    bool localPlayerStateReadable,
+    bool localPlayerAlive,
+    bool scopeLifetimeActive) noexcept;
+
 // Keeps native scope-mode lifetime independent from transient pose-cache
 // availability. Once available, the corrected continuous tracked basis stays
 // authoritative even if BF1942 intermittently republishes its hidden 1P arm;

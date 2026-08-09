@@ -1650,10 +1650,20 @@ HRESULT WINAPI HookPresent(
     const RGNDATA* dirtyRegion)
 {
     InterlockedIncrement(&g_record.activeCallbacks);
-    if (IsPresentationMode() && !g_offlinePresentation)
+    if (IsPresentationMode())
     {
-        bfvr::PollControllerHapticDeath(
-            reinterpret_cast<void*>(g_gameImageBegin));
+        bfvr::PollScopeViewPlayerLifecycle();
+        float scopeNormalFov = -1.0F;
+        if (bfvr::ConsumeScopeViewNormalFovRestore(scopeNormalFov))
+        {
+            g_renderViewPoseHook.RequestScopeNormalFovRestore(
+                scopeNormalFov);
+        }
+        if (!g_offlinePresentation)
+        {
+            bfvr::PollControllerHapticDeath(
+                reinterpret_cast<void*>(g_gameImageBegin));
+        }
     }
     const LONG stateAtEntry =
         InterlockedCompareExchange(&g_record.state, 0, 0);

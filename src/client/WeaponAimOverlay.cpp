@@ -2,6 +2,9 @@
 
 #include "client/BFSoldierVrMotionFilter.h"
 #include "client/ControllerHaptics.h"
+#include "client/HandWeaponRecoilRuntime.h"
+#include "client/MountedWeaponAimResolver.h"
+#include "client/ScopedOffHandSupportPoseCache.h"
 #include "client/ScopeViewOverlay.h"
 #include "client/WeaponPoseRuntimeCache.h"
 #include "stereo/ScopeViewMath.h"
@@ -44,6 +47,7 @@ constexpr std::size_t kPlayerManagerLocalPlayerOffset = 0x54;
 constexpr std::size_t kBFPlayerIsAliveOffset = 0xA9;
 constexpr std::size_t kSoldierActiveItemIndexOffset = 0x3E8;
 constexpr DWORD kVisualWeaponPoseMaximumAgeMs = 125;
+constexpr DWORD kOffHandSupportMaximumAgeMs = 150;
 constexpr std::size_t kRecordCapacity = 16;
 constexpr BYTE kWeaponFireCorePrefix[] = {
     0x81, 0xEC, 0xB8, 0x01, 0x00, 0x00, 0x53, 0x55,
@@ -265,11 +269,31 @@ private:
         const bool localAliveActor = IsLocalAliveActor(actor);
         if (localAliveActor)
         {
-            // WeaponFire_Core is BF1942's accepted firing boundary. Publishing
-            // here preserves native cadence for semi-automatic, automatic,
-            // and multi-barrel weapons instead of approximating trigger edges.
+            // Haptics cover every accepted local weapon. Infantry camera and
+            // handweapon recoil lifetimes are narrower: a mounted/vehicle
+            // WeaponFire_Core call must never survive its independently timed
+            // tracking-context handoff into the returned soldier view.
             bfvr::NotifyControllerWeaponFired();
-            bfvr::NotifyBFSoldierVrLocalWeaponFired();
+            const void* const cameraSoldier =
+                bfvr::ReadCurrentBFSoldierVrCameraSoldier();
+            bfvr::LocalPlayerControlContext controlContext = {};
+            const bool exactInfantryControl =
+                bfvr::ReadLocalPlayerControlContext(controlContext) &&
+                controlContext.currentControlObject ==
+                    controlContext.defaultControlObject &&
+                controlContext.defaultControlObject == cameraSoldier;
+            if (exactInfantryControl)
+            {
+                // WeaponFire_Core is BF1942's accepted handweapon boundary.
+                // Publishing here preserves native cadence for semi-auto,
+                // automatic, and multi-barrel infantry weapons.
+                bfvr::NotifyBFSoldierVrLocalWeaponFired();
+                bfvr::NotifyHandWeaponRecoilShot(
+                    cameraSoldier,
+                    weapon,
+                    bfvr::IsFreshCurrentOffHandSupportHeld(
+                        kOffHandSupportMaximumAgeMs));
+            }
         }
         if (!weaponMotionEnabled)
         {
@@ -356,6 +380,14 @@ private:
                 visualControllerGeneration =
                     static_cast<LONG>(scopeFrame.controllerGeneration);
                 scopedDirectionOnly = true;
+                // Scoped aiming keeps fresh two-controller support after
+                // BF1942 hides the native arm callback. Correct the initial
+                // ordinary support-cache latch before calcRecoil publishes
+                // this shot's first native sample.
+                bfvr::NotifyHandWeaponRecoilShot(
+                    currentSoldier,
+                    weapon,
+                    scopeFrame.offHandSupported);
             }
             else if (nativeArmPose.soldier !=
                      bfvr::ReadCurrentBFSoldierVrCameraSoldier())
@@ -436,6 +468,22 @@ private:
                 L"Local WeaponFire_Core call forwarded unchanged because no fresh displayed-weapon attachment was available.");
             originalFire(weapon, actor, matrix, barrelIndex);
             return;
+        }
+
+        // Full-screen native scopes keep their existing raw controller camera
+        // basis. Only the WeaponFire matrix receives the current weapon recoil
+        // offset, so scoped recoil can never rotate either VR eye.
+        if (scopedDirectionOnly)
+        {
+            const auto recoiledScopeFire =
+                bfvr::MakeCurrentHandWeaponRecoilPose(
+                    controllerGunWorld,
+                    bfvr::ReadCurrentBFSoldierVrCameraSoldier(),
+                    weapon);
+            if (recoiledScopeFire.has_value())
+            {
+                controllerGunWorld = *recoiledScopeFire;
+            }
         }
 
         const auto adjusted = moveNativeFireOrigin

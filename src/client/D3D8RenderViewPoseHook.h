@@ -2,6 +2,7 @@
 
 #include "client/D3D8SharedPresentationBridge.h"
 
+#include <cstdint>
 #include <memory>
 
 namespace bfvr
@@ -30,10 +31,16 @@ public:
     bool Enable();
     void UpdatePose(
         const D3D8RuntimeView& referenceHead,
-        const D3D8RuntimeRenderRequest& request);
+        const D3D8RuntimeRenderRequest& request,
+        std::uint32_t trackingContextGeneration,
+        bool committedInfantryTrackingContext);
     // Clears only transient per-request hook state. This is used after a D3D8
     // Reset so no pre-reset HMD pose can be replayed before the next request.
     void ClearPose() noexcept;
+    // Restores the saved pre-scope FOV on the active RenderView and dirties
+    // both projection and frustum caches. If no view is active yet, the value
+    // remains pending until the next verified getFrustum call.
+    void RequestScopeNormalFovRestore(float normalFov) noexcept;
     [[nodiscard]] bool WasApplied(LONG sequence) const noexcept;
     // Returns the unmodified BF1942 logical camera that was paired with the
     // HMD-composed RenderView camera for this request. The sequence check

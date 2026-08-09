@@ -115,7 +115,8 @@ bool TestTransientVehicleContextsDoNotPinHeadPose() noexcept
         head, true, {bfvr::D3D8TrackingContextKind::Seat, 0x2000},
         4'000'000'000, 0, false, true, 1.10F, 1.70F, 0.0F);
     if (!NearlyEqual(anchor.RebaseView(head).positionX, 0.30F) ||
-        anchor.Context().kind != bfvr::D3D8TrackingContextKind::Infantry)
+        anchor.Context().kind != bfvr::D3D8TrackingContextKind::Infantry ||
+        anchor.ContextGeneration() != 1)
     {
         return false;
     }
@@ -131,7 +132,8 @@ bool TestTransientVehicleContextsDoNotPinHeadPose() noexcept
         head, true, {bfvr::D3D8TrackingContextKind::Seat, 0x2000},
         6'000'000'000, 0, false, true, 1.10F, 1.70F, 0.0F);
     if (!NearlyEqual(anchor.RebaseView(head).positionX, 0.0F) ||
-        anchor.Context().kind != bfvr::D3D8TrackingContextKind::Seat)
+        anchor.Context().kind != bfvr::D3D8TrackingContextKind::Seat ||
+        anchor.ContextGeneration() != 2)
     {
         return false;
     }
@@ -139,14 +141,74 @@ bool TestTransientVehicleContextsDoNotPinHeadPose() noexcept
     anchor.Update(
         head, true, {bfvr::D3D8TrackingContextKind::Seat, 0x2000},
         7'000'000'000, 0, false, true, 1.10F, 1.70F, 0.0F);
-    return NearlyEqual(anchor.RebaseView(head).positionX, 0.10F);
+    return NearlyEqual(anchor.RebaseView(head).positionX, 0.10F) &&
+        anchor.ContextGeneration() == 2;
+}
+
+bool TestVehicleSeatChangeAndExitShareCommittedGeneration() noexcept
+{
+    bfvr::D3D8RuntimeView head = {};
+    head.orientationW = 1.0F;
+    bfvr::D3D8TrackingAnchor anchor = {};
+    const auto update = [&](const float x,
+                            const bfvr::D3D8TrackingContext context) {
+        head.positionX = x;
+        anchor.Update(
+            head, true, context, 1'000'000'000, 0,
+            false, true, 1.10F, 1.70F, 0.0F);
+    };
+
+    const bfvr::D3D8TrackingContext infantry = {
+        bfvr::D3D8TrackingContextKind::Infantry, 0x1000};
+    const bfvr::D3D8TrackingContext seat = {
+        bfvr::D3D8TrackingContextKind::Seat, 0x2000};
+    const bfvr::D3D8TrackingContext secondSeat = {
+        bfvr::D3D8TrackingContextKind::Seat, 0x2001};
+    update(0.0F, infantry);
+    update(0.1F, seat);
+    update(0.2F, seat);
+    update(0.3F, seat);
+    if (anchor.ContextGeneration() != 2 ||
+        anchor.Context().kind != bfvr::D3D8TrackingContextKind::Seat)
+    {
+        return false;
+    }
+
+    // A tank/transport/aircraft station or passenger-seat identity change is
+    // the same committed boundary as a stationary gun. It must not borrow the
+    // prior seat's headset/controller/body lifetime.
+    update(0.31F, secondSeat);
+    update(0.32F, secondSeat);
+    update(0.33F, secondSeat);
+    if (anchor.ContextGeneration() != 3 ||
+        anchor.Context().token != secondSeat.token)
+    {
+        return false;
+    }
+
+    // The body/camera lifetime consumer must still see the seat generation
+    // during the first two exit samples. The third sample atomically commits
+    // the new infantry reference and generation; no separately timed station
+    // resolver is needed to guess this boundary.
+    update(0.4F, infantry);
+    update(0.5F, infantry);
+    if (anchor.ContextGeneration() != 3 ||
+        anchor.Context().kind != bfvr::D3D8TrackingContextKind::Seat)
+    {
+        return false;
+    }
+    update(0.6F, infantry);
+    return anchor.ContextGeneration() == 4 &&
+        anchor.Context().kind == bfvr::D3D8TrackingContextKind::Infantry &&
+        NearlyEqual(anchor.RebaseView(head).positionX, 0.0F);
 }
 } // namespace
 
 int main()
 {
     if (!TestMenuAnchorAndControllerUseOneRebasedSpace() ||
-        !TestTransientVehicleContextsDoNotPinHeadPose())
+        !TestTransientVehicleContextsDoNotPinHeadPose() ||
+        !TestVehicleSeatChangeAndExitShareCommittedGeneration())
     {
         std::fprintf(
             stderr,

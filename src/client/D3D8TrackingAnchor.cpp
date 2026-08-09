@@ -109,6 +109,7 @@ void D3D8TrackingAnchor::Reset() noexcept
     baseReference_ = {};
     context_ = {};
     ClearPendingContext();
+    contextGeneration_ = 0;
     consumedRecenterSequence_ = 0;
     standingReferenceY_ = 0.0F;
     manualHeightAdjustmentMeters_ = 0.0F;
@@ -143,6 +144,11 @@ void D3D8TrackingAnchor::Capture(
     baseReference_ = currentHead;
     SetYaw(baseReference_, yaw);
     context_ = context;
+    ++contextGeneration_;
+    if (contextGeneration_ == 0)
+    {
+        contextGeneration_ = 1;
+    }
     ClearPendingContext();
     standingReferenceValid_ = false;
     infantryModeInitialized_ = false;
@@ -373,6 +379,11 @@ D3D8RuntimeControllerSample D3D8TrackingAnchor::RebaseControllerSample(
 D3D8TrackingContext D3D8TrackingAnchor::Context() const noexcept
 {
     return context_;
+}
+
+std::uint32_t D3D8TrackingAnchor::ContextGeneration() const noexcept
+{
+    return contextGeneration_;
 }
 
 bool D3D8TrackingAnchor::IsValid() const noexcept
