@@ -23,6 +23,15 @@ namespace bfvr::stereo
     const Matrix4& cameraInStation,
     const Matrix4& stationWorld) noexcept;
 
+// Selects the temporary vertical-FOV multiplier used only while BF1942 builds
+// its cached visibility frustum. Ordinary VR retains the headset-accepted
+// margin. A decoupled mounted camera receives a larger vertical envelope so
+// nearby dynamic-object roots below an elevated turret camera are not rejected
+// while their separately culled weapon children remain visible. The renderer's
+// real projection is restored before either eye is drawn.
+[[nodiscard]] float SelectD3D8VisibilityFrustumVerticalScale(
+    bool mountedCameraDecoupled) noexcept;
+
 struct MountedCameraControlState
 {
     std::uintptr_t stationIdentity = 0;

@@ -17,6 +17,13 @@ struct InfantryCameraHeadingState
     bool initialized = false;
 };
 
+// Ends one infantry-camera lifetime. Vehicle and mounted-station ownership
+// may rotate or otherwise reposition the soldier while the infantry heading
+// is not being observed; the next infantry sample must therefore establish a
+// fresh absolute heading instead of applying a delta from before occupation.
+void ResetInfantryCameraHeadingState(
+    InfantryCameraHeadingState& headingState) noexcept;
+
 // Builds the VR infantry camera base from game-owned position and the local
 // soldier body's horizontal facing direction. Native camera pitch/roll and
 // view-only yaw offsets are deliberately excluded: the HMD owns head

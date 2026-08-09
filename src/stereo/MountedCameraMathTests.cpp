@@ -205,6 +205,16 @@ bool TestToggleOutsideStationIsConsumedAndIgnored() noexcept
     return ignored.toggleIgnored && !state.decoupled &&
         entered.stationChanged && !entered.toggleApplied;
 }
+
+bool TestMountedVisibilityMarginIsStateLocal() noexcept
+{
+    return std::fabs(
+               bfvr::stereo::SelectD3D8VisibilityFrustumVerticalScale(false) -
+               1.50F) <= kTolerance &&
+        std::fabs(
+            bfvr::stereo::SelectD3D8VisibilityFrustumVerticalScale(true) -
+            2.00F) <= kTolerance;
+}
 } // namespace
 
 int main()
@@ -213,7 +223,8 @@ int main()
         !TestGunPivotTranslationIsNotInherited() ||
         !TestInvalidTransformsFailClosed() ||
         !TestDefaultCoupledSeatLocalTogglePolicy() ||
-        !TestToggleOutsideStationIsConsumedAndIgnored())
+        !TestToggleOutsideStationIsConsumedAndIgnored() ||
+        !TestMountedVisibilityMarginIsStateLocal())
     {
         std::fprintf(stderr, "Mounted-camera math tests failed.\n");
         return 1;

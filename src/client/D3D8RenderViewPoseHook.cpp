@@ -33,11 +33,6 @@ constexpr std::size_t kRenderViewFieldOfViewOffset = 0x24;
 constexpr std::size_t kRenderViewAspectOffset = 0x30;
 constexpr std::size_t kRenderViewFrustumDirtyOffset = 0x312;
 constexpr float kWorldUnitsPerMeter = 1.0F;
-// RenderView::getFrustum derives its left/right planes from
-// (verticalFov * 0.5) / aspect and its top/bottom planes directly from
-// verticalFov * 0.5. Scaling both temporary inputs widens only top/bottom:
-// their ratio, and therefore horizontal culling coverage, stays unchanged.
-constexpr float kVerticalFrustumHalfAngleScale = 1.50F;
 // The scoped path proved this exact target after the older proposed ordinary
 // caller-return gate never matched. Runtime work is now gated to an active
 // BFVR request and the exact active RenderView; scope-specific camera/FOV work
@@ -446,7 +441,7 @@ public:
     void LogSummary() const
     {
         WriteLog(
-            L"RenderView pose/frustum-hook summary: setterMatches=%ld setterApplied=%ld setterRejected=%ld infantryComfortApplied=%ld infantryComfortRejected=%ld infantryFireHeadingSuppressed=%ld scopedApplied=%ld scopedRejected=%ld frustumMatches=%ld frustumApplied=%ld frustumNoSource=%ld frustumRejected=%ld mountedAnchorCaptures=%ld mountedDecoupled=%ld mountedRejected=%ld mountedResets=%ld mountedToggles=%ld mountedToggleIgnored=%ld fireCameraTraceFrames=%ld lastRequested=%ld lastApplied=%ld lastFrustum=%ld.",
+            L"RenderView pose/frustum-hook summary: setterMatches=%ld setterApplied=%ld setterRejected=%ld infantryComfortApplied=%ld infantryComfortRejected=%ld infantryFireHeadingSuppressed=%ld scopedApplied=%ld scopedRejected=%ld frustumMatches=%ld frustumApplied=%ld mountedFrustumApplied=%ld frustumNoSource=%ld frustumRejected=%ld mountedAnchorCaptures=%ld mountedDecoupled=%ld mountedRejected=%ld mountedResets=%ld mountedToggles=%ld mountedToggleIgnored=%ld fireCameraTraceFrames=%ld lastRequested=%ld lastApplied=%ld lastFrustum=%ld.",
             matchingCalls,
             appliedCalls,
             rejectedTransforms,
@@ -457,6 +452,7 @@ public:
             scopedRejected,
             frustumMatchingCalls,
             frustumAppliedCalls,
+            mountedFrustumAppliedCalls,
             frustumNoSource,
             frustumRejected,
             mountedAnchorCaptures,
@@ -606,6 +602,8 @@ private:
                     0,
                     0),
                 0L));
+        const std::uintptr_t previousMountedStation =
+            mountedCameraControl.stationIdentity;
         const stereo::MountedCameraControlTransition transition =
             stereo::UpdateMountedCameraControl(
                 mountedCameraControl,
@@ -614,6 +612,16 @@ private:
                         station.controlObject)
                     : 0,
                 toggleSequence);
+        if (transition.stationChanged)
+        {
+            stereo::ResetInfantryCameraHeadingState(
+                infantryHeadingState);
+            infantryHeadingControlObject = nullptr;
+            WriteLog(
+                L"Infantry camera heading lifetime reset across mounted ownership transition previousStation=%p currentStation=%p. The next on-foot sample will reanchor absolutely so the body, native arms, controller IK, and VR view cannot retain different pre/post-station yaw frames.",
+                reinterpret_cast<const void*>(previousMountedStation),
+                station.controlObject);
+        }
         if (transition.stationChanged || transition.decouplingChanged)
         {
             ResetMountedCameraAnchor(
@@ -763,6 +771,14 @@ private:
         ScopeViewFrameState scope = {};
         const bool scoped = ReadScopeViewFrameState(scope) &&
             std::isfinite(scope.normalFov) && scope.normalFov > 0.0F;
+        const bool mountedDecoupled =
+            InterlockedCompareExchange(
+                &mountedCameraDecoupled,
+                0,
+                0) != 0;
+        const float verticalFrustumScale =
+            stereo::SelectD3D8VisibilityFrustumVerticalScale(
+                mountedDecoupled);
         InterlockedIncrement(&frustumMatchingCalls);
         bool poseApplied = false;
         if (lastCameraSourceValid)
@@ -813,9 +829,9 @@ private:
             nativeAspect = *aspect;
             visibilityFov =
                 (scoped ? scope.normalFov : nativeFov) *
-                kVerticalFrustumHalfAngleScale;
+                verticalFrustumScale;
             visibilityAspect =
-                nativeAspect * kVerticalFrustumHalfAngleScale;
+                nativeAspect * verticalFrustumScale;
             if (std::isfinite(nativeFov) && nativeFov > 0.0F &&
                 std::isfinite(nativeAspect) && nativeAspect > 0.0F &&
                 std::isfinite(visibilityFov) && visibilityFov > 0.0F &&
@@ -868,8 +884,25 @@ private:
         }
 
         InterlockedIncrement(&frustumAppliedCalls);
+        if (mountedDecoupled)
+        {
+            InterlockedIncrement(&mountedFrustumAppliedCalls);
+        }
         InterlockedExchange(&appliedFrustumSequence, sequence);
-        if (scoped && InterlockedCompareExchange(
+        if (mountedDecoupled && InterlockedCompareExchange(
+                &firstMountedFrustumLogged,
+                1,
+                0) == 0)
+        {
+            WriteLog(
+                L"Mounted-decoupled pre-cull margin reached verified RenderView::getFrustum: currentHeadPose=%d cullVerticalFov=%.6f nativeAspect=%.6f cullAspect=%.6f verticalScale=%.2f. Nearby dynamic-object roots receive a broader top/bottom visibility envelope; horizontal coverage and rendered per-eye projections are unchanged.",
+                poseApplied ? 1 : 0,
+                visibilityFov,
+                nativeAspect,
+                visibilityAspect,
+                verticalFrustumScale);
+        }
+        else if (scoped && InterlockedCompareExchange(
                 &firstScopedFrustumLogged,
                 1,
                 0) == 0)
@@ -881,7 +914,7 @@ private:
                 visibilityFov,
                 nativeAspect,
                 visibilityAspect,
-                kVerticalFrustumHalfAngleScale);
+                verticalFrustumScale);
         }
         else if (!scoped && InterlockedCompareExchange(
                      &firstOrdinaryFrustumLogged,
@@ -894,7 +927,7 @@ private:
                 visibilityFov,
                 nativeAspect,
                 visibilityAspect,
-                kVerticalFrustumHalfAngleScale);
+                verticalFrustumScale);
         }
         return frustum;
     }
@@ -1069,6 +1102,7 @@ private:
     volatile LONG infantryFireHeadingSuppressed = 0;
     volatile LONG frustumMatchingCalls = 0;
     volatile LONG frustumAppliedCalls = 0;
+    volatile LONG mountedFrustumAppliedCalls = 0;
     volatile LONG frustumNoSource = 0;
     volatile LONG frustumRejected = 0;
     volatile LONG mountedAnchorCaptures = 0;
@@ -1083,6 +1117,7 @@ private:
     volatile LONG appliedFrustumSequence = 0;
     volatile LONG firstScopedFrustumLogged = 0;
     volatile LONG firstOrdinaryFrustumLogged = 0;
+    volatile LONG firstMountedFrustumLogged = 0;
     volatile LONG firstInfantryComfortLogged = 0;
     LONG tracedFireSequence = 0;
     LONG tracedFireFrames = 0;

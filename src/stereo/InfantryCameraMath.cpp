@@ -87,6 +87,12 @@ Matrix4 MakeCameraFromYaw(
 namespace bfvr::stereo
 {
 
+void ResetInfantryCameraHeadingState(
+    InfantryCameraHeadingState& headingState) noexcept
+{
+    headingState = {};
+}
+
 std::optional<Matrix4> MakeD3D8InfantryComfortCamera(
     const Matrix4& sourceCameraWorld,
     const Matrix4& soldierBodyWorld) noexcept

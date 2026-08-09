@@ -150,6 +150,17 @@ std::optional<Matrix4> ComposeD3D8MountedCameraFromAnchor(
         : std::nullopt;
 }
 
+float SelectD3D8VisibilityFrustumVerticalScale(
+    bool mountedCameraDecoupled) noexcept
+{
+    // 1.50 is the owner-accepted ordinary/scoped VR margin. Decoupled mounted
+    // cameras can sit appreciably above nearby soldier object origins, whose
+    // body and attached weapon are admitted through separate culling nodes.
+    // 2.00 expands only top/bottom coverage for that state; callers preserve
+    // the horizontal half-angle by scaling aspect by the same factor.
+    return mountedCameraDecoupled ? 2.00F : 1.50F;
+}
+
 MountedCameraControlTransition UpdateMountedCameraControl(
     MountedCameraControlState& state,
     std::uintptr_t stationIdentity,

@@ -175,6 +175,35 @@ bool TestUnsuppressedIntentionalTurnPassesThrough() noexcept
         Near(ForwardYaw(*turned), 0.50F);
 }
 
+bool TestMountedLifecycleResetReanchorsAbsoluteHeading() noexcept
+{
+    bfvr::stereo::InfantryCameraHeadingState state = {};
+    const auto initial =
+        bfvr::stereo::MakeD3D8FilteredInfantryComfortCamera(
+            Identity(),
+            Yaw(0.10F),
+            false,
+            state);
+    const auto suppressed =
+        bfvr::stereo::MakeD3D8FilteredInfantryComfortCamera(
+            Identity(),
+            Yaw(0.45F),
+            true,
+            state);
+    bfvr::stereo::ResetInfantryCameraHeadingState(state);
+    const auto afterMountedExit =
+        bfvr::stereo::MakeD3D8FilteredInfantryComfortCamera(
+            Identity(),
+            Yaw(-1.20F),
+            false,
+            state);
+    return initial.has_value() && suppressed.has_value() &&
+        afterMountedExit.has_value() &&
+        Near(ForwardYaw(*initial), 0.10F) &&
+        Near(ForwardYaw(*suppressed), 0.10F) &&
+        Near(ForwardYaw(*afterMountedExit), -1.20F);
+}
+
 } // namespace
 
 int main()
@@ -183,7 +212,8 @@ int main()
         !TestTiltedBodyStillSuppliesOnlyHorizontalFacing() ||
         !TestInvalidInputsFailClosed() ||
         !TestSuppressedYawIsConsumedWithoutDelayedSnap() ||
-        !TestUnsuppressedIntentionalTurnPassesThrough())
+        !TestUnsuppressedIntentionalTurnPassesThrough() ||
+        !TestMountedLifecycleResetReanchorsAbsoluteHeading())
     {
         std::fprintf(stderr, "Infantry-camera math tests failed.\n");
         return 1;
