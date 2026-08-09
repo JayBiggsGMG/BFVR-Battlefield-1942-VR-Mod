@@ -91,6 +91,8 @@ private:
         UINT width = 0;
         UINT height = 0;
         std::vector<XrSwapchainImageD3D11KHR> images;
+        ID3D11Texture2D* copiedSource = nullptr;
+        bool contentValid = false;
     };
 
     bool CreateSwapchain(Swapchain& swapchain, UINT width, UINT height);

@@ -85,6 +85,14 @@ std::uint32_t BlendPremultiplied(
     std::uint32_t destination) noexcept
 {
     const std::uint32_t sourceAlpha = Channel(source, 24U);
+    if (sourceAlpha == 0U)
+    {
+        return destination;
+    }
+    if (sourceAlpha == 255U)
+    {
+        return source;
+    }
     const std::uint32_t inverseAlpha = 255U - sourceAlpha;
     const auto blendChannel = [inverseAlpha](
                                   std::uint32_t sourceChannel,
@@ -242,6 +250,7 @@ void SettingsMenuArt::Reset() noexcept
     numberBox_ = {};
     whiteButton_ = {};
     text_ = {};
+    textCache_.clear();
     logCallback_ = nullptr;
     logContext_ = nullptr;
 }
@@ -496,12 +505,30 @@ bool SettingsMenuArt::DrawWhiteText(
     int width,
     int height,
     int pixelHeight,
-    UINT format)
+    UINT format) const
 {
     if (text == nullptr || text[0] == L'\0' || width <= 0 || height <= 0 ||
         pixelHeight <= 0)
     {
         return false;
+    }
+    const auto cached = std::find_if(
+        textCache_.begin(),
+        textCache_.end(),
+        [&](const TextCacheEntry& entry) {
+            return entry.text == text && entry.width == width &&
+                entry.height == height && entry.pixelHeight == pixelHeight &&
+                entry.format == format;
+        });
+    if (cached != textCache_.end())
+    {
+        return CompositeLayerAt(
+            cached->image,
+            destination,
+            left,
+            top,
+            cached->image.width,
+            cached->image.height);
     }
     BITMAPINFO information = {};
     information.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
@@ -579,18 +606,31 @@ bool SettingsMenuArt::DrawWhiteText(
     DeleteObject(font);
     DeleteObject(bitmap);
     DeleteDC(deviceContext);
-    return drawn != 0 && CompositeLayerAt(
-        textImage,
+    if (drawn == 0)
+    {
+        return false;
+    }
+    TextCacheEntry entry = {};
+    entry.text = text;
+    entry.width = width;
+    entry.height = height;
+    entry.pixelHeight = pixelHeight;
+    entry.format = format;
+    entry.image = std::move(textImage);
+    textCache_.push_back(std::move(entry));
+    const Image& cachedImage = textCache_.back().image;
+    return CompositeLayerAt(
+        cachedImage,
         destination,
         left,
         top,
-        textImage.width,
-        textImage.height);
+        cachedImage.width,
+        cachedImage.height);
 }
 
 bool SettingsMenuArt::DrawStatusField(
     Image& destination,
-    stereo::SettingsMenuStatus status)
+    stereo::SettingsMenuStatus status) const
 {
     constexpr int left = 64;
     constexpr int top = 858;

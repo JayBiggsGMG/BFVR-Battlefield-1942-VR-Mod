@@ -1074,6 +1074,11 @@ bool OpenXRQuickMenu::RefreshSettingsSource(
         pixels.data(),
         width * sizeof(std::uint32_t),
         0);
+    // The source texture is mutable. Its pointer remains stable when the
+    // composed Settings artwork changes, so explicitly invalidate the cached
+    // OpenXR image and upload the new pixels on the next layer submission.
+    settingsSwapchain_.copiedSource = nullptr;
+    settingsSwapchain_.contentValid = false;
     renderedSettingsState_ = state;
     settingsVisualValid_ = true;
     return true;
@@ -1087,6 +1092,13 @@ bool OpenXRQuickMenu::CopyToSwapchain(
     if (source == nullptr || target.handle == XR_NULL_HANDLE)
     {
         return false;
+    }
+    // OpenXR composition layers may keep submitting the most recently
+    // released swapchain image. Reusing it avoids an acquire/wait/copy/release
+    // round trip every frame when only a quad pose (not its pixels) changed.
+    if (target.contentValid && target.copiedSource == source)
+    {
+        return true;
     }
     D3D11_TEXTURE2D_DESC description = {};
     source->GetDesc(&description);
@@ -1142,8 +1154,14 @@ bool OpenXRQuickMenu::CopyToSwapchain(
             label,
             static_cast<long>(releaseResult));
     }
-    return XR_SUCCEEDED(result) && destination != nullptr &&
+    const bool copied = XR_SUCCEEDED(result) && destination != nullptr &&
         XR_SUCCEEDED(releaseResult);
+    if (copied)
+    {
+        target.copiedSource = source;
+        target.contentValid = true;
+    }
+    return copied;
 }
 
 void OpenXRQuickMenu::DestroySwapchain(Swapchain& swapchain) noexcept

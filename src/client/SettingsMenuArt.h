@@ -40,6 +40,16 @@ private:
         std::vector<std::uint32_t> pixels;
     };
 
+    struct TextCacheEntry
+    {
+        std::wstring text;
+        int width = 0;
+        int height = 0;
+        int pixelHeight = 0;
+        UINT format = 0;
+        Image image;
+    };
+
     static bool LoadPng(
         void* imagingFactory,
         const std::wstring& path,
@@ -52,7 +62,7 @@ private:
         int top,
         UINT width,
         UINT height);
-    static bool DrawWhiteText(
+    bool DrawWhiteText(
         Image& destination,
         const wchar_t* text,
         int left,
@@ -60,10 +70,10 @@ private:
         int width,
         int height,
         int pixelHeight,
-        UINT format);
-    static bool DrawStatusField(
+        UINT format) const;
+    bool DrawStatusField(
         Image& destination,
-        stereo::SettingsMenuStatus status);
+        stereo::SettingsMenuStatus status) const;
     bool ComposeSettingsBody(
         const stereo::SettingsMenuSnapshot& state,
         Image& destination) const;
@@ -83,6 +93,7 @@ private:
     Image numberBox_ = {};
     Image whiteButton_ = {};
     Image text_ = {};
+    mutable std::vector<TextCacheEntry> textCache_;
     LogCallback logCallback_ = nullptr;
     void* logContext_ = nullptr;
 };

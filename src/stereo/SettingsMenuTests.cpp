@@ -526,6 +526,16 @@ bool TestArt(const wchar_t* directory)
     {
         return false;
     }
+    std::vector<std::uint32_t> cachedBase;
+    UINT cachedWidth = 0;
+    UINT cachedHeight = 0;
+    if (!art.Compose(state, cachedBase, cachedWidth, cachedHeight) ||
+        cachedWidth != width || cachedHeight != height || cachedBase != base)
+    {
+        // Reusing cached text rasters must be pixel-identical to the initial
+        // GDI composition; this is a performance cache, not a visual policy.
+        return false;
+    }
     auto differs = [&](const bfvr::stereo::SettingsMenuSnapshot& variant) {
         std::vector<std::uint32_t> pixels;
         UINT variantWidth = 0;
