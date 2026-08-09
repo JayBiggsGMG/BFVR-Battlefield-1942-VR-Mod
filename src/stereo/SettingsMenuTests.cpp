@@ -140,6 +140,13 @@ bool TestBounds()
             SettingsMenuTab::GraphicsAudio,
             false) == SettingsMenuSelection::AmbientOcclusionRadius &&
         SettingsMenuSelectionAt(
+            0.57F,
+            0.786F,
+            false,
+            false,
+            SettingsMenuTab::GraphicsAudio,
+            false) == SettingsMenuSelection::WaterReflectionsEnabled &&
+        SettingsMenuSelectionAt(
             0.70F,
             0.728F,
             false,
@@ -466,6 +473,16 @@ bool TestInteractionAndPlacement()
     {
         return false;
     }
+    state = interaction.Snapshot();
+    AimAt(input, state.panelPose, state.widthMeters, 0.57F, 0.786F);
+    input.predictedDisplayTime += 11'111'111;
+    interaction.Update(input);
+    Click(interaction, input);
+    if (interaction.Snapshot().values.waterReflectionsEnabled ||
+        !interaction.TakeValuesChanged())
+    {
+        return false;
+    }
     interaction.SetStatus(
         bfvr::stereo::SettingsMenuStatus::SettingsSaved);
     if (interaction.Snapshot().status !=
@@ -586,6 +603,7 @@ bool TestArt(const wchar_t* directory)
     variant.values.fxaaEnabled = false;
     variant.values.fxaaSharpeningPercent = 80;
     variant.values.ambientOcclusionRadiusCentimeters = 120;
+    variant.values.waterReflectionsEnabled = false;
     if (!differs(variant))
     {
         return false;

@@ -61,7 +61,8 @@ enum class SettingsMenuSelection : std::uint32_t
     AmbientOcclusionStrength,
     BloomEnabled,
     BloomThreshold,
-    BloomIntensity
+    BloomIntensity,
+    WaterReflectionsEnabled
 };
 
 enum class SettingsMenuCommand : std::uint32_t
@@ -116,9 +117,9 @@ constexpr std::array<float, 4> kSettingsMenuControlsToggleRowCentersPixels = {
     565.0F, 635.0F, 705.0F, 775.0F};
 constexpr float kSettingsMenuSelectorLeftArrowCenterPixels = 585.0F;
 constexpr float kSettingsMenuSelectorRightArrowCenterPixels = 910.0F;
-constexpr std::array<float, 8> kSettingsMenuGraphicsRowCentersPixels = {
+constexpr std::array<float, 9> kSettingsMenuGraphicsRowCentersPixels = {
     125.0F, 210.0F, 295.0F, 380.0F,
-    465.0F, 550.0F, 635.0F, 720.0F};
+    465.0F, 550.0F, 635.0F, 720.0F, 805.0F};
 constexpr std::array<std::uint32_t,
     static_cast<std::size_t>(SettingsMenuTab::Count)>
     kSettingsMenuPageCounts = {2, 1, 1};

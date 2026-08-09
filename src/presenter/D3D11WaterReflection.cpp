@@ -88,6 +88,75 @@ bool ReadWaterPosition(float2 uv, out float3 position)
     return packed.a > (1.0 / 255.0) && depth < 0.99999 && position.z > 0.0;
 }
 
+bool ReadDryPosition(float2 uv, out float3 position)
+{
+    if (any(uv <= 0.001) || any(uv >= 0.999))
+        return false;
+    const float4 packed = depthMaskTexture.SampleLevel(pointSampler, uv, 0.0);
+    const float depth = DecodeDepth(packed.rgb);
+    position = ReconstructViewPosition(uv, depth);
+    return packed.a <= (1.0 / 255.0) && depth < 0.99999 && position.z > 0.0;
+}
+
+float ValidateFiniteHit(
+    float2 hitUv,
+    float3 rayPosition,
+    float3 rayDirection,
+    float3 hitPosition,
+    float thickness)
+{
+    float3 hitLeft;
+    float3 hitRight;
+    float3 hitUp;
+    float3 hitDown;
+    if (!ReadDryPosition(
+            hitUv - float2(textureInfo.x, 0.0), hitLeft) ||
+        !ReadDryPosition(
+            hitUv + float2(textureInfo.x, 0.0), hitRight) ||
+        !ReadDryPosition(
+            hitUv - float2(0.0, textureInfo.y), hitUp) ||
+        !ReadDryPosition(
+            hitUv + float2(0.0, textureInfo.y), hitDown))
+    {
+        return 0.0;
+    }
+
+    // Screen-space depth has no object identity. Reject silhouette/disocclusion
+    // neighborhoods before treating their front-most depth as a reflector hit;
+    // this removes most of the "foliage behind itself" class of artifacts.
+    const float maximumDepthDelta = max(
+        max(abs(hitLeft.z - hitPosition.z), abs(hitRight.z - hitPosition.z)),
+        max(abs(hitUp.z - hitPosition.z), abs(hitDown.z - hitPosition.z)));
+    if (maximumDepthDelta > max(0.20, hitPosition.z * 0.18))
+        return 0.0;
+
+    const float3 hitNormalVector = cross(
+        hitRight - hitLeft,
+        hitDown - hitUp);
+    const float hitNormalLength = length(hitNormalVector);
+    if (hitNormalLength <= 0.000001)
+        return 0.0;
+    float3 hitNormal = hitNormalVector / hitNormalLength;
+    if (dot(hitNormal, -hitPosition) < 0.0)
+        hitNormal = -hitNormal;
+
+    // The reflected ray must enter the camera-visible side of the receiving
+    // surface. A screen-depth crossing from its concealed side is not a
+    // physically possible reflection, even though the 2-D depths overlap.
+    const float rayFacing = dot(hitNormal, -rayDirection);
+    const float planeError = abs(dot(rayPosition - hitPosition, hitNormal));
+    if (rayFacing <= 0.02 || planeError > thickness)
+        return 0.0;
+    return smoothstep(0.02, 0.20, rayFacing);
+}
+
+float WaterDetailLuminance(float2 uv)
+{
+    const float3 color = worldColorTexture.SampleLevel(
+        linearSampler, uv, 0.0).rgb;
+    return dot(color, float3(0.2126, 0.7152, 0.0722));
+}
+
 float4 main(float4 screenPosition : SV_Position, float2 uv : TEXCOORD0) : SV_Target
 {
     float3 center;
@@ -134,10 +203,11 @@ float4 main(float4 screenPosition : SV_Position, float2 uv : TEXCOORD0) : SV_Tar
     bool previousDrySample = false;
     float2 hitUv = 0.0;
     float hitTravel = 0.0;
+    float hitSurfaceConfidence = 0.0;
     bool hit = false;
 
     [loop]
-    for (uint stepIndex = 0; stepIndex < 24; ++stepIndex)
+    for (uint stepIndex = 0; stepIndex < 32; ++stepIndex)
     {
         const float3 rayPosition = origin + reflected * travel;
         if (rayPosition.z <= 0.001)
@@ -215,11 +285,21 @@ float4 main(float4 screenPosition : SV_Position, float2 uv : TEXCOORD0) : SV_Tar
                 const float thickness = max(
                     0.08,
                     candidateScenePosition.z * 0.0035);
-                if (candidateSeparation <= thickness)
+                const float candidateSurfaceConfidence =
+                    candidateSeparation <= thickness
+                    ? ValidateFiniteHit(
+                        candidateUv,
+                        origin + reflected * candidateTravel,
+                        reflected,
+                        candidateScenePosition,
+                        thickness)
+                    : 0.0;
+                if (candidateSurfaceConfidence > 0.0)
                 {
                     hit = true;
                     hitUv = candidateUv;
                     hitTravel = candidateTravel;
+                    hitSurfaceConfidence = candidateSurfaceConfidence;
                     break;
                 }
             }
@@ -232,42 +312,108 @@ float4 main(float4 screenPosition : SV_Position, float2 uv : TEXCOORD0) : SV_Tar
             previousDrySample = false;
         }
         travel += stepLength;
-        stepLength *= 1.12;
+        // Preserve the dense near-field traversal, then spend only eight
+        // additional samples on a coarser tail. Continuous depth crossings
+        // still receive the same six bisection refinements below, while tall
+        // shoreline terrain is no longer capped at roughly 0.64x the source
+        // water point's view depth.
+        stepLength *= stepIndex < 24 ? 1.12 : 1.18;
     }
-    if (!hit)
+
+    // BF1942's six skybox faces are already present in worldColorTexture, but
+    // they render with depth testing disabled and therefore leave clear/far
+    // depth behind. Treat only that clear-depth texel in the infinite reflected
+    // direction as an environment fallback. Finite scene geometry always wins,
+    // and reflected directions outside this eye image remain ordinary SSR
+    // misses rather than clamped or head-pinned sky.
+    float2 environmentUv = 0.0;
+    bool environmentHit = false;
+    if (!hit && reflected.z > 0.001)
+    {
+        environmentUv = ProjectViewPosition(reflected);
+        if (!any(environmentUv <= 0.001) && !any(environmentUv >= 0.999))
+        {
+            const float4 environmentPacked = depthMaskTexture.SampleLevel(
+                pointSampler, environmentUv, 0.0);
+            const float environmentDepth = DecodeDepth(environmentPacked.rgb);
+            environmentHit = environmentDepth >= 0.99999 &&
+                environmentPacked.a <= (1.0 / 255.0);
+        }
+    }
+    if (!hit && !environmentHit)
+        return 0.0;
+
+    const float2 undistortedReflectionUv = hit ? hitUv : environmentUv;
+    const float reflectionTravel = hit ? hitTravel : 0.0;
+
+    // The native BF1942 water pass has already evaluated its scrolling normal
+    // map into worldColorTexture. Its local high-frequency lighting gradient is
+    // therefore a cheap, animation-faithful distortion field. Applying it only
+    // to the final lookup keeps ray traversal stable and avoids transporting a
+    // second full-resolution normal surface between the D3D8 and D3D11 processes.
+    const float detailLeft = WaterDetailLuminance(
+        uv - float2(textureInfo.x, 0.0));
+    const float detailRight = WaterDetailLuminance(
+        uv + float2(textureInfo.x, 0.0));
+    const float detailUp = WaterDetailLuminance(
+        uv - float2(0.0, textureInfo.y));
+    const float detailDown = WaterDetailLuminance(
+        uv + float2(0.0, textureInfo.y));
+    const float2 waterDetailGradient = float2(
+        detailRight - detailLeft,
+        detailDown - detailUp);
+    const float viewFacing = saturate(dot(normal, -incident));
+    const float detailScale = lerp(22.0, 32.0, 1.0 - viewFacing);
+    const float2 distortionPixels = clamp(
+        waterDetailGradient * detailScale,
+        -2.25,
+        2.25);
+    const float2 reflectionUv = undistortedReflectionUv +
+        distortionPixels * textureInfo.xy;
+    if (any(reflectionUv <= 0.001) || any(reflectionUv >= 0.999))
         return 0.0;
 
     // BF1942 is LDR and supplies no roughness buffer. A fixed, conservative
     // five-tap footprint gives water a little gloss without temporal history.
-    const float blurRadius = 1.5 + min(hitTravel * 0.015, 2.5);
+    const float blurRadius = 1.5 + min(reflectionTravel * 0.015, 2.5);
     const float2 blurX = float2(textureInfo.x * blurRadius, 0.0);
     const float2 blurY = float2(0.0, textureInfo.y * blurRadius);
     float3 reflectedColor =
-        worldColorTexture.SampleLevel(linearSampler, hitUv, 0.0).rgb * 0.40;
+        worldColorTexture.SampleLevel(linearSampler, reflectionUv, 0.0).rgb * 0.40;
     reflectedColor +=
-        worldColorTexture.SampleLevel(linearSampler, hitUv + blurX, 0.0).rgb * 0.15;
+        worldColorTexture.SampleLevel(linearSampler, reflectionUv + blurX, 0.0).rgb * 0.15;
     reflectedColor +=
-        worldColorTexture.SampleLevel(linearSampler, hitUv - blurX, 0.0).rgb * 0.15;
+        worldColorTexture.SampleLevel(linearSampler, reflectionUv - blurX, 0.0).rgb * 0.15;
     reflectedColor +=
-        worldColorTexture.SampleLevel(linearSampler, hitUv + blurY, 0.0).rgb * 0.15;
+        worldColorTexture.SampleLevel(linearSampler, reflectionUv + blurY, 0.0).rgb * 0.15;
     reflectedColor +=
-        worldColorTexture.SampleLevel(linearSampler, hitUv - blurY, 0.0).rgb * 0.15;
+        worldColorTexture.SampleLevel(linearSampler, reflectionUv - blurY, 0.0).rgb * 0.15;
     reflectedColor = materialInfo.x > 0.5
         ? reflectedColor
         : SrgbToLinear(reflectedColor);
 
-    const float viewFacing = saturate(dot(normal, -incident));
     const float fresnel = 0.02 + 0.98 * pow(1.0 - viewFacing, 5.0);
     const float edgeDistance = min(
-        min(hitUv.x, 1.0 - hitUv.x),
-        min(hitUv.y, 1.0 - hitUv.y));
+        min(reflectionUv.x, 1.0 - reflectionUv.x),
+        min(reflectionUv.y, 1.0 - reflectionUv.y));
     const float edgeConfidence = smoothstep(0.0, 0.08, edgeDistance);
-    const float distanceConfidence = 1.0 - saturate(
-        hitTravel / max(12.0, center.z * 1.5));
+    // Fade finite hits over their additional reflected optical path. The
+    // absolute ceiling prevents distant, normally fog-concealed geometry from
+    // becoming conspicuous merely because its screen-space depth still exists.
+    const float reflectedPathLimit = min(
+        max(32.0, center.z * 3.0),
+        180.0);
+    const float distanceConfidence = hit
+        ? 1.0 - smoothstep(
+            reflectedPathLimit * 0.35,
+            reflectedPathLimit,
+            hitTravel)
+        : 1.0;
     const float sourceMask = depthMaskTexture.SampleLevel(
         pointSampler, uv, 0.0).a;
     const float confidence = saturate(sourceMask * 4.0) *
-        edgeConfidence * distanceConfidence * normalValidity;
+        edgeConfidence * distanceConfidence * normalValidity *
+        (hit ? hitSurfaceConfidence : 1.0);
     return float4(reflectedColor, fresnel * confidence);
 }
 )";
@@ -406,7 +552,7 @@ bool D3D11WaterReflection::Initialize(
     context_ = context;
     context_->AddRef();
     WriteLog(
-        L"D3D11 water-only SSR initialized: per-eye 24-step spatial ray marching with six-step depth-crossing refinement, fixed roughness, Schlick Fresnel, packed-depth alpha mask, no temporal history or UI input.");
+        L"D3D11 water-only SSR initialized: per-eye 24-step near traversal plus eight-step long-range tail, six-step depth-crossing refinement, receiving-surface/front-face validation, reflected-path distance fade, native animated-water detail distortion, clear-depth skybox fallback, fixed roughness, Schlick Fresnel, packed-depth alpha mask, and no temporal history.");
     return true;
 }
 

@@ -139,13 +139,19 @@ bool ReadScreenSpaceGlobalIlluminationRequested()
 
 bool ReadWaterReflectionsRequested()
 {
+    const auto& runtime = bfvr::settings::ProcessUserSettingsRuntime();
+    if (runtime.IsReady())
+    {
+        return bfvr::settings::DecodeUserSettings(
+            runtime.Current()).waterReflectionsEnabled;
+    }
     wchar_t value[2] = {};
     const DWORD length = GetEnvironmentVariableW(
         L"BFVR_OPENXR_WATER_SSR",
         value,
         static_cast<DWORD>(std::size(value)));
-    // Water SSR is an explicit visual experiment. Fail closed unless the
-    // owner selected exactly 1 for this launch.
+    // Standalone probes without an initialized UserConfig retain the explicit
+    // environment opt-in. Normal BFVR launches use the persisted setting.
     return length == 1 && value[0] == L'1';
 }
 

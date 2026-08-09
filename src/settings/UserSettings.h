@@ -105,6 +105,7 @@ struct UserSettingsValues
         kDefaultAmbientOcclusionRadiusCentimeters;
     std::uint32_t ambientOcclusionStrengthPercent =
         kDefaultAmbientOcclusionStrengthPercent;
+    bool waterReflectionsEnabled = true;
     bool bloomEnabled = true;
     std::uint32_t bloomThresholdPercent = kDefaultBloomThresholdPercent;
     std::uint32_t bloomIntensityPercent = kDefaultBloomIntensityPercent;
@@ -144,6 +145,12 @@ struct UserSettings
 void EncodeUserSettings(
     const UserSettingsValues& values,
     UserSettings& settings);
+
+// Resource-negotiated settings cannot be applied to an active producer /
+// presenter pair. This pure comparison owns the menu's restart-required rule.
+[[nodiscard]] bool UserSettingsRequireRestart(
+    const UserSettingsValues& startup,
+    const UserSettingsValues& saved) noexcept;
 
 // Manual trim is deliberately independent of Seated/Standing placement.
 // Standing floor mapping is performed from simultaneous LOCAL and STAGE poses

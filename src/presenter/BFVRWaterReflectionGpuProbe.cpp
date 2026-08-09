@@ -5,6 +5,7 @@
 #include <array>
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <vector>
 
@@ -62,7 +63,12 @@ bool OutputIsClear(
     UINT height,
     UINT* nonZeroAlpha = nullptr,
     UINT* rowsWithAlpha = nullptr,
-    UINT* internalEmptyRows = nullptr)
+    UINT* internalEmptyRows = nullptr,
+    UINT* firstAlphaRow = nullptr,
+    UINT* lastAlphaRow = nullptr,
+    UINT* redDominantPixels = nullptr,
+    UINT* blueDominantPixels = nullptr,
+    std::uint64_t* outputHash = nullptr)
 {
     ID3D11Resource* outputResource = nullptr;
     outputView->GetResource(&outputResource);
@@ -102,6 +108,9 @@ bool OutputIsClear(
     UINT populatedRows = 0;
     UINT firstPopulatedRow = height;
     UINT lastPopulatedRow = 0;
+    UINT redDominantCount = 0;
+    UINT blueDominantCount = 0;
+    std::uint64_t hash = 1469598103934665603ULL;
     std::vector<bool> rowPopulated(height, false);
     if (mappedSuccessfully)
     {
@@ -113,6 +122,8 @@ bool OutputIsClear(
             {
                 if (row[x] != 0)
                     clear = false;
+                hash ^= row[x];
+                hash *= 1099511628211ULL;
             }
             for (UINT x = 0; x < width; ++x)
             {
@@ -120,6 +131,12 @@ bool OutputIsClear(
                 {
                     ++alphaCount;
                     rowPopulated[y] = true;
+                    const UINT red = row[x * 4];
+                    const UINT blue = row[x * 4 + 2];
+                    if (red > blue + 16)
+                        ++redDominantCount;
+                    if (blue > red + 16)
+                        ++blueDominantCount;
                 }
             }
             if (rowPopulated[y])
@@ -150,6 +167,16 @@ bool OutputIsClear(
         }
         *internalEmptyRows = emptyRows;
     }
+    if (firstAlphaRow != nullptr)
+        *firstAlphaRow = firstPopulatedRow;
+    if (lastAlphaRow != nullptr)
+        *lastAlphaRow = populatedRows != 0 ? lastPopulatedRow : height;
+    if (redDominantPixels != nullptr)
+        *redDominantPixels = redDominantCount;
+    if (blueDominantPixels != nullptr)
+        *blueDominantPixels = blueDominantCount;
+    if (outputHash != nullptr)
+        *outputHash = mappedSuccessfully ? hash : 0;
     return clear;
 }
 
@@ -342,6 +369,354 @@ int wmain()
                 : 0.0);
     }
 
+    // Native-detail control: keep reflection geometry and the striped wall
+    // unchanged, then vary only the water pixels in the pre-SSR scene color.
+    // The output must change, proving the final lookup is displaced by the
+    // original animated-water shading rather than a procedural time function.
+    if (passed)
+    {
+        for (UINT y = 0; y < height; ++y)
+        {
+            for (UINT x = 0; x < width; ++x)
+            {
+                color[static_cast<std::size_t>(y) * width + x] =
+                    y < height / 2
+                    ? ((x / 3) % 2 == 0 ? 0xFF2020E0 : 0xFFE02020)
+                    : 0xFF606060;
+            }
+        }
+        context->UpdateSubresource(
+            colorTexture,
+            0,
+            nullptr,
+            color.data(),
+            width * sizeof(DWORD),
+            0);
+        passed = reflection.BuildEye(
+            0,
+            colorView,
+            false,
+            depthView,
+            width,
+            height,
+            projection);
+        std::uint64_t flatDetailHash = 0;
+        if (passed)
+        {
+            OutputIsClear(
+                device,
+                context,
+                reflection.GetEyeView(0),
+                width,
+                height,
+                nullptr,
+                nullptr,
+                nullptr,
+                nullptr,
+                nullptr,
+                nullptr,
+                nullptr,
+                &flatDetailHash);
+        }
+
+        for (UINT y = height / 2; y < height; ++y)
+        {
+            for (UINT x = 0; x < width; ++x)
+            {
+                color[static_cast<std::size_t>(y) * width + x] =
+                    (x / 2) % 2 == 0 ? 0xFF181818 : 0xFFE8E8E8;
+            }
+        }
+        context->UpdateSubresource(
+            colorTexture,
+            0,
+            nullptr,
+            color.data(),
+            width * sizeof(DWORD),
+            0);
+        passed = passed && reflection.BuildEye(
+            0,
+            colorView,
+            false,
+            depthView,
+            width,
+            height,
+            projection);
+        std::uint64_t animatedDetailHash = 0;
+        if (passed)
+        {
+            OutputIsClear(
+                device,
+                context,
+                reflection.GetEyeView(0),
+                width,
+                height,
+                nullptr,
+                nullptr,
+                nullptr,
+                nullptr,
+                nullptr,
+                nullptr,
+                nullptr,
+                &animatedDetailHash);
+        }
+        const bool nativeDetailMovedReflection =
+            flatDetailHash != 0 && animatedDetailHash != 0 &&
+            flatDetailHash != animatedDetailHash;
+        passed = passed && nativeDetailMovedReflection;
+        std::fwprintf(
+            stdout,
+            L"BFVR water SSR native-detail control flatHash=%llu animatedHash=%llu changed=%ls.\n",
+            static_cast<unsigned long long>(flatDetailHash),
+            static_cast<unsigned long long>(animatedDetailHash),
+            nativeDetailMovedReflection ? L"yes" : L"no");
+    }
+
+    // Discontinuity control: a one-pixel checkerboard of mutually separated
+    // dry depths imitates thin foliage/silhouette depth. It has no coherent
+    // receiving surface and should not produce meaningful finite hits.
+    if (passed)
+    {
+        std::fill(color.begin(), color.end(), 0xFF2020E0);
+        for (UINT y = 0; y < height; ++y)
+        {
+            const float uvY = (static_cast<float>(y) + 0.5F) /
+                static_cast<float>(height);
+            const float ndcY = 1.0F - uvY * 2.0F;
+            const bool water = y > height / 2 && ndcY < -0.02F;
+            for (UINT x = 0; x < width; ++x)
+            {
+                const float viewZ = water
+                    ? -1.0F / ndcY
+                    : ((x + y) % 2 == 0 ? 5.0F : 20.0F);
+                const float deviceDepth =
+                    (viewZ * projection[10] + projection[14]) /
+                    (viewZ * projection[11] + projection[15]);
+                depthMask[static_cast<std::size_t>(y) * width + x] =
+                    PackDepthMask(deviceDepth, water ? 255 : 0);
+            }
+        }
+        context->UpdateSubresource(
+            colorTexture,
+            0,
+            nullptr,
+            color.data(),
+            width * sizeof(DWORD),
+            0);
+        context->UpdateSubresource(
+            depthTexture,
+            0,
+            nullptr,
+            depthMask.data(),
+            width * sizeof(DWORD),
+            0);
+        passed = reflection.BuildEye(
+            0,
+            colorView,
+            false,
+            depthView,
+            width,
+            height,
+            projection);
+        UINT invalidPixels = 0;
+        if (passed)
+        {
+            OutputIsClear(
+                device,
+                context,
+                reflection.GetEyeView(0),
+                width,
+                height,
+                &invalidPixels);
+        }
+        const bool rejectedDiscontinuities = invalidPixels <= 16;
+        passed = passed && rejectedDiscontinuities;
+        std::fwprintf(
+            stdout,
+            L"BFVR water SSR discontinuity control reflectedPixels=%u rejected=%ls.\n",
+            invalidPixels,
+            rejectedDiscontinuities ? L"yes" : L"no");
+    }
+
+    // Long-range control: the dry wall is four times farther away than the
+    // original z=5 wall. The lower reflected rows require more travel than the
+    // former 24-sample bound could provide, while the projected wall remains
+    // inside the eye image.
+    if (passed)
+    {
+        std::fill(color.begin(), color.end(), 0xFF806040);
+        for (UINT y = 0; y < height / 2; ++y)
+        {
+            std::fill_n(
+                color.begin() + static_cast<std::size_t>(y) * width,
+                width,
+                0xFF2020E0);
+        }
+        constexpr float farWallViewZ = 20.0F;
+        for (UINT y = 0; y < height; ++y)
+        {
+            const float uvY = (static_cast<float>(y) + 0.5F) /
+                static_cast<float>(height);
+            const float ndcY = 1.0F - uvY * 2.0F;
+            const bool water = y > height / 2 && ndcY < -0.02F;
+            const float viewZ = water ? -1.0F / ndcY : farWallViewZ;
+            const float deviceDepth =
+                (viewZ * projection[10] + projection[14]) /
+                (viewZ * projection[11] + projection[15]);
+            const DWORD packed = PackDepthMask(
+                deviceDepth,
+                water ? 255 : 0);
+            std::fill_n(
+                depthMask.begin() + static_cast<std::size_t>(y) * width,
+                width,
+                packed);
+        }
+        context->UpdateSubresource(
+            colorTexture,
+            0,
+            nullptr,
+            color.data(),
+            width * sizeof(DWORD),
+            0);
+        context->UpdateSubresource(
+            depthTexture,
+            0,
+            nullptr,
+            depthMask.data(),
+            width * sizeof(DWORD),
+            0);
+        passed = reflection.BuildEye(
+            0,
+            colorView,
+            false,
+            depthView,
+            width,
+            height,
+            projection);
+        UINT reflectedPixels = 0;
+        UINT reflectedRows = 0;
+        UINT internalEmptyRows = 0;
+        UINT firstRow = height;
+        UINT lastRow = height;
+        UINT redPixels = 0;
+        const bool unexpectedlyClear = passed && OutputIsClear(
+            device,
+            context,
+            reflection.GetEyeView(0),
+            width,
+            height,
+            &reflectedPixels,
+            &reflectedRows,
+            &internalEmptyRows,
+            &firstRow,
+            &lastRow,
+            &redPixels);
+        const bool longRangeCoverage =
+            !unexpectedlyClear &&
+            reflectedRows >= 8 &&
+            internalEmptyRows == 0 &&
+            lastRow >= 48 &&
+            redPixels * 4 >= reflectedPixels * 3;
+        passed = passed && longRangeCoverage;
+        std::fwprintf(
+            stdout,
+            L"BFVR water SSR long-range control reflectedPixels=%u rows=%u range=%u..%u internalEmptyRows=%u redDominant=%u.\n",
+            reflectedPixels,
+            reflectedRows,
+            firstRow,
+            lastRow,
+            internalEmptyRows,
+            redPixels);
+    }
+
+    // Sky control: clear/far depth above the water represents BF1942's
+    // depthless skybox color. It must be reflected only through the masked
+    // water pixels and retain the authored blue source color.
+    if (passed)
+    {
+        std::fill(color.begin(), color.end(), 0xFF806040);
+        for (UINT y = 0; y < height / 2; ++y)
+        {
+            std::fill_n(
+                color.begin() + static_cast<std::size_t>(y) * width,
+                width,
+                0xFFE02020);
+        }
+        const DWORD clearDepth = PackDepthMask(1.0F, 0);
+        for (UINT y = 0; y < height; ++y)
+        {
+            const float uvY = (static_cast<float>(y) + 0.5F) /
+                static_cast<float>(height);
+            const float ndcY = 1.0F - uvY * 2.0F;
+            const bool water = y > height / 2 && ndcY < -0.02F;
+            DWORD packed = clearDepth;
+            if (water)
+            {
+                const float viewZ = -1.0F / ndcY;
+                const float deviceDepth =
+                    (viewZ * projection[10] + projection[14]) /
+                    (viewZ * projection[11] + projection[15]);
+                packed = PackDepthMask(deviceDepth, 255);
+            }
+            std::fill_n(
+                depthMask.begin() + static_cast<std::size_t>(y) * width,
+                width,
+                packed);
+        }
+        context->UpdateSubresource(
+            colorTexture,
+            0,
+            nullptr,
+            color.data(),
+            width * sizeof(DWORD),
+            0);
+        context->UpdateSubresource(
+            depthTexture,
+            0,
+            nullptr,
+            depthMask.data(),
+            width * sizeof(DWORD),
+            0);
+        passed = reflection.BuildEye(
+            0,
+            colorView,
+            false,
+            depthView,
+            width,
+            height,
+            projection);
+        UINT reflectedPixels = 0;
+        UINT reflectedRows = 0;
+        UINT internalEmptyRows = 0;
+        UINT bluePixels = 0;
+        const bool unexpectedlyClear = passed && OutputIsClear(
+            device,
+            context,
+            reflection.GetEyeView(0),
+            width,
+            height,
+            &reflectedPixels,
+            &reflectedRows,
+            &internalEmptyRows,
+            nullptr,
+            nullptr,
+            nullptr,
+            &bluePixels);
+        const bool skyCoverage =
+            !unexpectedlyClear &&
+            reflectedRows >= 8 &&
+            internalEmptyRows == 0 &&
+            bluePixels * 4 >= reflectedPixels * 3;
+        passed = passed && skyCoverage;
+        std::fwprintf(
+            stdout,
+            L"BFVR water SSR sky fallback control reflectedPixels=%u rows=%u internalEmptyRows=%u blueDominant=%u.\n",
+            reflectedPixels,
+            reflectedRows,
+            internalEmptyRows,
+            bluePixels);
+    }
+
     reflection.Shutdown();
     ReleaseInterface(depthView);
     ReleaseInterface(depthTexture);
@@ -352,7 +727,7 @@ int wmain()
     std::fwprintf(
         stdout,
         passed
-            ? L"BFVR water SSR GPU probe passed: shader compiled, an empty per-eye mask produced zero reflections, and refined depth crossings produced dense, stripe-free masked-plane coverage against the dry scene wall.\n"
+            ? L"BFVR water SSR GPU probe passed: empty-mask, dense near/long-range wall, native-detail distortion, depth-discontinuity rejection, and clear-depth sky controls all passed.\n"
             : L"BFVR water SSR GPU probe failed.\n");
     return passed ? 0 : 1;
 }

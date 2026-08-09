@@ -370,10 +370,9 @@ void OpenXRQuickMenu::Update(
             const bool saved = userSettingsRuntime_ != nullptr &&
                 userSettingsRuntime_->Commit(userSettingsSession_.Working());
             const bool restartRequired = saved &&
-                (savedValues.ambientOcclusionEnabled !=
-                     startupSettingsValues_.ambientOcclusionEnabled ||
-                 savedValues.bloomEnabled !=
-                     startupSettingsValues_.bloomEnabled);
+                settings::UserSettingsRequireRestart(
+                    startupSettingsValues_,
+                    savedValues);
             settingsInteraction_.SetStatus(
                 !saved
                     ? stereo::SettingsMenuStatus::SaveFailed

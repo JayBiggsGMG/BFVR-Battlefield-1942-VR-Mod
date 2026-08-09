@@ -1051,7 +1051,12 @@ bool SettingsMenuArt::ComposeSettingsBody(
                 state.values.bloomIntensityPercent,
                 settings::kMinimumBloomIntensityPercent,
                 settings::kMaximumBloomIntensityPercent,
-                bloomIntensity);
+                bloomIntensity) &&
+            drawToggle(
+                8,
+                L"Water SSR",
+                state.values.waterReflectionsEnabled,
+                true);
     }
     if (state.tab != stereo::SettingsMenuTab::Controls)
     {

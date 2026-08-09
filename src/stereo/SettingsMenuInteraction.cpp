@@ -267,7 +267,8 @@ SettingsMenuSelection SettingsMenuSelectionAt(
         {
             const float centerY =
                 kSettingsMenuGraphicsRowCentersPixels[index];
-            const bool toggle = index == 0 || index == 2 || index == 5;
+            const bool toggle =
+                index == 0 || index == 2 || index == 5 || index == 8;
             const float right = toggle
                 ? kSettingsMenuControlColumnPixels + 72.0F
                 : kSettingsMenuSliderRightPixels;
@@ -359,6 +360,8 @@ const wchar_t* SettingsMenuSelectionName(
         return L"Bloom Threshold slider";
     case SettingsMenuSelection::BloomIntensity:
         return L"Bloom Intensity slider";
+    case SettingsMenuSelection::WaterReflectionsEnabled:
+        return L"Water SSR";
     default: return L"none";
     }
 }
@@ -845,6 +848,11 @@ void SettingsMenuInteraction::Activate(
         break;
     case SettingsMenuSelection::BloomEnabled:
         values_.bloomEnabled = !values_.bloomEnabled;
+        valuesChanged_ = true;
+        status_ = SettingsMenuStatus::SettingsNotSaved;
+        break;
+    case SettingsMenuSelection::WaterReflectionsEnabled:
+        values_.waterReflectionsEnabled = !values_.waterReflectionsEnabled;
         valuesChanged_ = true;
         status_ = SettingsMenuStatus::SettingsNotSaved;
         break;

@@ -233,7 +233,7 @@ bool TestProductionSeedAndTypedValues(const std::wstring& directory)
     }
     const auto defaults = store.Defaults();
     const auto decodedDefaults = bfvr::settings::DecodeUserSettings(defaults);
-    if (defaults.values.size() != 23 ||
+    if (defaults.values.size() != 24 ||
         decodedDefaults.playMode != bfvr::settings::PlayMode::Seated ||
         decodedDefaults.artificialTurnMode !=
             bfvr::settings::ArtificialTurnMode::Smooth ||
@@ -258,8 +258,9 @@ bool TestProductionSeedAndTypedValues(const std::wstring& directory)
         decodedDefaults.fxaaSharpeningPercent != 25 ||
         !decodedDefaults.ambientOcclusionEnabled ||
         decodedDefaults.ambientOcclusionRadiusCentimeters != 60 ||
-        decodedDefaults.ambientOcclusionStrengthPercent != 100 ||
-        !decodedDefaults.bloomEnabled ||
+         decodedDefaults.ambientOcclusionStrengthPercent != 100 ||
+        !decodedDefaults.waterReflectionsEnabled ||
+         !decodedDefaults.bloomEnabled ||
         decodedDefaults.bloomThresholdPercent != 75 ||
         decodedDefaults.bloomIntensityPercent != 25)
     {
@@ -307,6 +308,7 @@ bool TestProductionSeedAndTypedValues(const std::wstring& directory)
     changed.ambientOcclusionEnabled = false;
     changed.ambientOcclusionRadiusCentimeters = 95;
     changed.ambientOcclusionStrengthPercent = 65;
+    changed.waterReflectionsEnabled = false;
     changed.bloomEnabled = false;
     changed.bloomThresholdPercent = 55;
     changed.bloomIntensityPercent = 70;
@@ -314,6 +316,22 @@ bool TestProductionSeedAndTypedValues(const std::wstring& directory)
     bfvr::settings::EncodeUserSettings(changed, encoded);
     if (!store.Save(encoded) ||
         bfvr::settings::DecodeUserSettings(store.Load().settings) != changed)
+    {
+        return false;
+    }
+    auto liveOnlyChange = decodedDefaults;
+    liveOnlyChange.fxaaEnabled = false;
+    auto waterRestartChange = decodedDefaults;
+    waterRestartChange.waterReflectionsEnabled = false;
+    if (bfvr::settings::UserSettingsRequireRestart(
+            decodedDefaults,
+            decodedDefaults) ||
+        bfvr::settings::UserSettingsRequireRestart(
+            decodedDefaults,
+            liveOnlyChange) ||
+        !bfvr::settings::UserSettingsRequireRestart(
+            decodedDefaults,
+            waterRestartChange))
     {
         return false;
     }
@@ -364,6 +382,9 @@ bool TestProductionSeedAndTypedValues(const std::wstring& directory)
             std::string::npos &&
         contents.find("requires restarting BFVR after Save") !=
             std::string::npos &&
+        contents.find("water_reflections_enabled = false") !=
+            std::string::npos &&
+        contents.find("clear-depth skybox fallback") != std::string::npos &&
         contents.find("bloom_threshold_percent = 55") !=
             std::string::npos &&
         contents.find("bloom_intensity_percent = 70") !=

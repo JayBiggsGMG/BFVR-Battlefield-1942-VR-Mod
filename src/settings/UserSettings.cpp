@@ -44,6 +44,8 @@ constexpr std::string_view kAmbientOcclusionRadiusKey =
     "ambient_occlusion_radius_centimeters";
 constexpr std::string_view kAmbientOcclusionStrengthKey =
     "ambient_occlusion_strength_percent";
+constexpr std::string_view kWaterReflectionsEnabledKey =
+    "water_reflections_enabled";
 constexpr std::string_view kBloomEnabledKey = "bloom_enabled";
 constexpr std::string_view kBloomThresholdKey = "bloom_threshold_percent";
 constexpr std::string_view kBloomIntensityKey = "bloom_intensity_percent";
@@ -560,6 +562,15 @@ UserSettingsSchema SeededUserSettingsSchema()
             IsAmbientOcclusionStrength
         },
         {
+            std::string(kWaterReflectionsEnabledKey),
+            "true",
+            {
+                "Enables BFVR's water-only per-eye screen-space reflections, including finite scene geometry and the clear-depth skybox fallback. Only BF1942's exact depth-writing additive/specular WaterSurface pass can receive the effect.",
+                "Accepted values: true or false. Changing this setting requires restarting BFVR after Save because the x86 producer negotiates the packed depth/water-mask resources and the x64 reflection shader at startup. Off-screen or occluded source detail remains unavailable."
+            },
+            IsBoolean
+        },
+        {
             std::string(kBloomEnabledKey),
             "true",
             {
@@ -670,6 +681,9 @@ UserSettingsValues DecodeUserSettings(const UserSettings& settings) noexcept
     result.fxaaEnabled = readBoolean(kFxaaEnabledKey, true);
     result.ambientOcclusionEnabled = readBoolean(
         kAmbientOcclusionEnabledKey,
+        true);
+    result.waterReflectionsEnabled = readBoolean(
+        kWaterReflectionsEnabledKey,
         true);
     result.bloomEnabled = readBoolean(kBloomEnabledKey, true);
     const auto readUnsigned = [&settings](
@@ -797,6 +811,8 @@ void EncodeUserSettings(
         values.fxaaEnabled ? "true" : "false";
     settings.values[std::string(kAmbientOcclusionEnabledKey)] =
         values.ambientOcclusionEnabled ? "true" : "false";
+    settings.values[std::string(kWaterReflectionsEnabledKey)] =
+        values.waterReflectionsEnabled ? "true" : "false";
     settings.values[std::string(kBloomEnabledKey)] =
         values.bloomEnabled ? "true" : "false";
     const auto snap = [](std::uint32_t value,
@@ -853,6 +869,15 @@ void EncodeUserSettings(
             kMinimumBloomIntensityPercent,
             kMaximumBloomIntensityPercent,
             kBloomIntensityStepPercent));
+}
+
+bool UserSettingsRequireRestart(
+    const UserSettingsValues& startup,
+    const UserSettingsValues& saved) noexcept
+{
+    return saved.ambientOcclusionEnabled != startup.ambientOcclusionEnabled ||
+        saved.bloomEnabled != startup.bloomEnabled ||
+        saved.waterReflectionsEnabled != startup.waterReflectionsEnabled;
 }
 
 float ComputeManualHeightAdjustmentMeters(

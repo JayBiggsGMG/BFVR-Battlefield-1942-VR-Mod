@@ -574,19 +574,25 @@ One-handed fire affects the right controller only. When BFVR's
 actual off-hand weapon-support binding is acquired, firing affects both
 controllers; raw grip-button state alone does not select both hands.
 
-The per-eye water surface-reflection pass is experimental and default-off in
-code. Set `BFVR_OPENXR_WATER_SSR=1` to request it; the normal launcher currently
-does this explicitly. `BFVR_OPENXR_WATER_SSR_INTENSITY` defaults to `1.0` and
-accepts `0.0..2.0`. Set only `BFVR_OPENXR_WATER_SSR=0` for a matched native-water
-A/B.
+The per-eye water surface-reflection pass is controlled by the default-on
+`Water SSR` checkbox on VR Settings > Graphics. Saving a changed enable state
+shows `Settings saved - restart required`; the next BFVR launch uses the
+persisted `water_reflections_enabled = true|false` value because packed depth,
+the water mask, and reflection resources are negotiated at startup. The legacy
+`BFVR_OPENXR_WATER_SSR` environment opt-in remains only as a fallback for
+standalone probes that have no initialized `UserConfig.txt`.
+`BFVR_OPENXR_WATER_SSR_INTENSITY` defaults to `1.0` and accepts `0.0..2.0`.
 
 The x86 renderer derives a dedicated per-eye mask only from BF1942's exact
 depth-writing additive/specular `WaterSurface` replay. It writes that material's
 own alpha to the alpha channel of the packed-depth texture while the ordinary
 depth resolve writes RGB only. The x64 pass reconstructs view space from each
 eye's projection and estimates a water normal from nearby masked depths. Valid
-SSR hits use a conservative 24-step spatial ray march with six-step
-depth-crossing refinement, fixed roughness, and physical Schlick weighting.
+SSR hits use a conservative 24-step near-field spatial ray march followed by an
+eight-step expanding long-range tail, with six-step depth-crossing refinement,
+fixed roughness, and physical Schlick weighting. The longer bounded tail and
+matching confidence fade recover substantially taller or more distant finite
+geometry without making the per-water-pixel search unbounded.
 That reflection is blended only into the corresponding world eye, on top of
 the native normal-mapped, map-authored sun shine.
 There is no temporal history or motion-vector dependency, and Ref2 UI is never
@@ -602,10 +608,21 @@ required for other maps and mods. As with all screen-space reflection methods,
 off-screen or occluded source detail cannot be reflected and shallow-angle
 disocclusions can create misses.
 
+When finite-depth tracing misses, the shader can also reflect the authored
+skybox already present in that eye's world-color texture. It projects the
+infinite reflected direction and accepts the color only when the location is
+inside the current eye image, retains clear/far depth, and has no water mask.
+No separate sky render or replacement texture is used, and finite geometry
+always takes precedence when the marcher hits. Sky directions outside the
+current eye image remain ordinary screen-space misses.
+
 The focused GPU control also enforces intersection density. Its synthetic
 masked water plane must reflect a dry wall across at least 75% of the pixels in
 its active rows, with no empty row inside the reflection band. This prevents a
 coarse one-sample thickness test from regressing into horizontal stipple bands.
+Separate z=20 finite-wall and clear-depth blue-sky cases require continuous
+long-range coverage, finite-source color retention, and sky color only on
+masked water; an empty water mask must still leave the output completely clear.
 
 Live bloom is a new default-off, world-only experiment. Set
 `BFVR_OPENXR_BLOOM=1` to request it; the comparison launcher currently does
