@@ -32,4 +32,12 @@ void ClearAcceptedControllerInput() noexcept;
     LONG& generation,
     DWORD maximumAgeMs) noexcept;
 
+// Publishes only the controller-authored infantry yaw that BFVR also submits
+// through BF1942's native logical mouse-look path. The cumulative fixed-point
+// value lets the render thread apply the same artificial turn to the shared
+// headset/controller anchor without delaying or rewriting game/network state.
+void PublishControllerInfantryTurnIntent(float degrees) noexcept;
+
+[[nodiscard]] LONG ReadControllerInfantryTurnIntentMillidegrees() noexcept;
+
 } // namespace bfvr

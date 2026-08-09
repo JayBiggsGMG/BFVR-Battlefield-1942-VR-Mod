@@ -66,4 +66,9 @@ void ShutdownMountedWeaponAimResolver() noexcept;
 [[nodiscard]] bool ReadLocalInfantryBodyPose(
     LocalInfantryBodyPose& bodyPose) noexcept;
 
+// Reads the same authoritative/root soldier transform as the camera comfort
+// path, but returns only its normalized horizontal heading. This is distinct
+// from BF1942's faster first-person look/aim heading.
+[[nodiscard]] bool ReadLocalInfantryBodyYaw(float& yawRadians) noexcept;
+
 } // namespace bfvr

@@ -121,6 +121,10 @@ void PrepareRuntimeRenderRequestPose()
         trackingContext.token = reinterpret_cast<std::uintptr_t>(
             playerContext.currentControlObject);
     }
+    float infantryBodyYawRadians = 0.0F;
+    const bool infantryBodyYawValid =
+        trackingContext.kind == bfvr::D3D8TrackingContextKind::Infantry &&
+        bfvr::ReadLocalInfantryBodyYaw(infantryBodyYawRadians);
     const bool standingMode = g_trackingUserSettings.playMode ==
         bfvr::settings::PlayMode::Standing;
     const float manualHeightAdjustmentMeters =
@@ -139,7 +143,11 @@ void PrepareRuntimeRenderRequestPose()
         g_runtimeRenderRequest.standingHeightMeters,
         static_cast<float>(
             g_trackingUserSettings.standingEyeHeightCentimeters) / 100.0F,
-        manualHeightAdjustmentMeters);
+        manualHeightAdjustmentMeters,
+        {
+            bfvr::ReadControllerInfantryTurnIntentMillidegrees(),
+            infantryBodyYawRadians,
+            infantryBodyYawValid});
     const bool seatedPostureTransitionIsActive =
         g_trackingAnchor.IsSeatedPostureTransitionActive();
     if (seatedPostureTransitionWasActive !=

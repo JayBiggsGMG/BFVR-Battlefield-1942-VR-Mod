@@ -589,7 +589,7 @@ private:
             {
                 InterlockedIncrement(&trackingContextChanges);
                 WriteLog(
-                    L"Infantry camera tracking context synchronized to committed handoff generation=%ld (previous=%ld). The headset and controllers change anchors on this boundary; infantry view heading is stateless and always follows the current body heading.",
+                    L"Infantry camera tracking context synchronized to committed handoff generation=%ld (previous=%ld). The headset and controllers change anchors on this boundary; the camera uses current body heading plus only the bounded controller-authored artificial-turn lead while the body catches up.",
                     trackingContextGeneration,
                     priorTrackingContextGeneration);
             }

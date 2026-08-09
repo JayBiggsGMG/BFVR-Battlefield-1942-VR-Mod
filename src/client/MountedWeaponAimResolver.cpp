@@ -210,6 +210,25 @@ bool ReadLocalInfantryBodyPose(LocalInfantryBodyPose& bodyPose) noexcept
     return true;
 }
 
+bool ReadLocalInfantryBodyYaw(float& yawRadians) noexcept
+{
+    yawRadians = 0.0F;
+    LocalInfantryBodyPose bodyPose = {};
+    if (!ReadLocalInfantryBodyPose(bodyPose))
+    {
+        return false;
+    }
+    const float forwardX = bodyPose.world.values[2][0];
+    const float forwardZ = bodyPose.world.values[2][2];
+    const float horizontalLength = std::hypot(forwardX, forwardZ);
+    if (!std::isfinite(horizontalLength) || horizontalLength < 0.5F)
+    {
+        return false;
+    }
+    yawRadians = std::atan2(forwardX, forwardZ);
+    return std::isfinite(yawRadians);
+}
+
 bool InitializeMountedWeaponAimResolver(
     void* gameImage,
     void (*appendLog)(const wchar_t* message)) noexcept

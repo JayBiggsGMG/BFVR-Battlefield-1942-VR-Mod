@@ -29,6 +29,27 @@ bool NearlyEqual(float left, float right) noexcept
     return std::fabs(left - right) <= 0.0001F;
 }
 
+float ViewYaw(const bfvr::D3D8RuntimeView& view) noexcept
+{
+    return std::atan2(
+        2.0F * (view.orientationW * view.orientationY +
+                view.orientationX * view.orientationZ),
+        1.0F - 2.0F *
+            (view.orientationY * view.orientationY +
+             view.orientationZ * view.orientationZ));
+}
+
+float ControllerYaw(
+    const bfvr::D3D8RuntimeControllerPose& pose) noexcept
+{
+    return std::atan2(
+        2.0F * (pose.orientationW * pose.orientationY +
+                pose.orientationX * pose.orientationZ),
+        1.0F - 2.0F *
+            (pose.orientationY * pose.orientationY +
+             pose.orientationZ * pose.orientationZ));
+}
+
 bool TestMenuAnchorAndControllerUseOneRebasedSpace() noexcept
 {
     bfvr::D3D8RuntimeView head = {};
@@ -202,13 +223,89 @@ bool TestVehicleSeatChangeAndExitShareCommittedGeneration() noexcept
         anchor.Context().kind == bfvr::D3D8TrackingContextKind::Infantry &&
         NearlyEqual(anchor.RebaseView(head).positionX, 0.0F);
 }
+
+
+bool TestArtificialTurnLeadsBodyWithoutDoubleTurning() noexcept
+{
+    constexpr float degreesToRadians = 0.01745329251994329577F;
+    bfvr::D3D8RuntimeView head = {};
+    head.orientationW = 1.0F;
+    bfvr::D3D8TrackingAnchor anchor = {};
+    const bfvr::D3D8TrackingContext infantry = {
+        bfvr::D3D8TrackingContextKind::Infantry, 0x1000};
+    const auto update = [&](LONG intentMillidegrees,
+                            float bodyDegrees,
+                            LONG recenterSequence = 0) {
+        anchor.Update(
+            head,
+            true,
+            infantry,
+            1'000'000'000,
+            recenterSequence,
+            false,
+            true,
+            1.10F,
+            1.70F,
+            0.0F,
+            {
+                intentMillidegrees,
+                bodyDegrees * degreesToRadians,
+                true});
+    };
+
+    update(0, 0.0F);
+    update(45'000, 0.0F);
+    bfvr::D3D8RuntimeControllerSample controller = {};
+    controller.hands[1].aimPose.orientationW = 1.0F;
+    auto rebasedHead = anchor.RebaseView(head);
+    auto rebasedController = anchor.RebaseControllerSample(controller);
+    if (!NearlyEqual(ViewYaw(rebasedHead), -45.0F * degreesToRadians) ||
+        !NearlyEqual(
+            ControllerYaw(rebasedController.hands[1].aimPose),
+            -45.0F * degreesToRadians))
+    {
+        return false;
+    }
+
+    // The first-person frame remains at +45 degrees while the authoritative
+    // root/third-person soldier advances through +15 and finally catches up.
+    update(45'000, 15.0F);
+    rebasedHead = anchor.RebaseView(head);
+    if (!NearlyEqual(
+            15.0F * degreesToRadians - ViewYaw(rebasedHead),
+            45.0F * degreesToRadians))
+    {
+        return false;
+    }
+    update(45'000, 45.0F);
+    if (!NearlyEqual(ViewYaw(anchor.RebaseView(head)), 0.0F))
+    {
+        return false;
+    }
+
+    // Movement can make the root consume the complete turn in one update.
+    // That must not add the same 30-degree controller turn a second time.
+    update(75'000, 75.0F);
+    if (!NearlyEqual(ViewYaw(anchor.RebaseView(head)), 0.0F))
+    {
+        return false;
+    }
+
+    // Recenter keeps the outstanding first-person lead relative to the root;
+    // it must not expose the lagging third-person heading mid-turn.
+    update(120'000, 75.0F, 1);
+    return NearlyEqual(
+        ViewYaw(anchor.RebaseView(head)),
+        -45.0F * degreesToRadians);
+}
 } // namespace
 
 int main()
 {
     if (!TestMenuAnchorAndControllerUseOneRebasedSpace() ||
         !TestTransientVehicleContextsDoNotPinHeadPose() ||
-        !TestVehicleSeatChangeAndExitShareCommittedGeneration())
+        !TestVehicleSeatChangeAndExitShareCommittedGeneration() ||
+        !TestArtificialTurnLeadsBodyWithoutDoubleTurning())
     {
         std::fprintf(
             stderr,

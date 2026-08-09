@@ -20,6 +20,13 @@ struct D3D8TrackingContext
     std::uintptr_t token = 0;
 };
 
+struct D3D8ArtificialTurnInput
+{
+    LONG cumulativeIntentMillidegrees = 0;
+    float infantryBodyYawRadians = 0.0F;
+    bool infantryBodyYawValid = false;
+};
+
 // Keeps OpenXR's runtime-owned tracking origin immutable and supplies a
 // local, context-specific neutral pose to the Battlefield camera, hands, and
 // input consumers. Seated/Standing vertical placement and manual trim remain
@@ -38,7 +45,8 @@ public:
         bool standingHeightValid,
         float standingHeightMeters,
         float calibratedStandingHeightMeters,
-        float manualHeightAdjustmentMeters) noexcept;
+        float manualHeightAdjustmentMeters,
+        D3D8ArtificialTurnInput artificialTurn = {}) noexcept;
 
     [[nodiscard]] D3D8RuntimeView ReferenceHead(
         const D3D8RuntimeView& fallbackHead) const noexcept;
@@ -61,6 +69,9 @@ private:
         const D3D8RuntimeView& currentHead,
         D3D8TrackingContext context) noexcept;
     void ClearPendingContext() noexcept;
+    void UpdateArtificialTurn(
+        const D3D8ArtificialTurnInput& artificialTurn) noexcept;
+    void ResetArtificialTurnState(LONG cumulativeIntentMillidegrees) noexcept;
 
     D3D8RuntimeView baseReference_ = {};
     D3D8TrackingContext context_ = {};
@@ -71,12 +82,16 @@ private:
     float standingReferenceY_ = 0.0F;
     float manualHeightAdjustmentMeters_ = 0.0F;
     float lastSeatedStageHeightMeters_ = 0.0F;
+    float observedInfantryBodyYawRadians_ = 0.0F;
+    float artificialTurnLeadRadians_ = 0.0F;
     std::int64_t lastSeatedVerticalMotionTime_ = 0;
+    LONG consumedArtificialTurnMillidegrees_ = 0;
     bool standingMode_ = false;
     bool standingReferenceValid_ = false;
     bool infantryModeInitialized_ = false;
     bool seatedPostureTransitionActive_ = false;
     bool seatedDescentObserved_ = false;
+    bool artificialTurnInitialized_ = false;
     bool valid_ = false;
 };
 

@@ -73,12 +73,14 @@ player-facing throw. These aim changes do not rotate the first-person item
 model, either hand, or hand IK; knives retain their existing behavior.
 
 For alive infantry, the VR camera excludes BF1942's legacy recoil/shake view
-rotation. Accepted local shots also open a two-second render-only isolation
-window for delayed multiplayer body-heading corrections. Those yaw deltas are
-consumed without moving the HMD camera and without being replayed afterward;
-an actual BFVR Snap/Smooth turn passes through immediately. This does not
-freeze locomotion or camera position and does not alter weapon state, firing,
-packets, projectile direction, models, or IK.
+rotation. Snap and Smooth turns immediately rotate one shared local tracking
+anchor for the HMD, controllers, arms, and weapon while the same native input
+continues turning BF1942's authoritative soldier body. As that body catches up,
+the temporary local lead is consumed without producing a second visible turn.
+Multiplayer still uses the stock PlayerAction route; snap turns are divided
+into network-valid axis samples instead of being clipped by the compact packet
+encoder. BFVR does not write the replicated body transform or change weapon
+state, firing, packets, projectile direction, models, or IK.
 
 ## Player-input boundary trace
 

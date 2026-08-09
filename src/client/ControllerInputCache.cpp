@@ -1,7 +1,9 @@
 #include "client/ControllerInputCache.h"
 
+#include <algorithm>
 #include <array>
 #include <climits>
+#include <cmath>
 
 namespace
 {
@@ -15,6 +17,7 @@ struct ControllerInputCacheSlot
 
 std::array<ControllerInputCacheSlot, 2> g_slots = {};
 volatile LONG g_publishedGeneration = 0;
+volatile LONG g_controllerInfantryTurnMillidegrees = 0;
 
 LONG NextGeneration(LONG current) noexcept
 {
@@ -124,5 +127,36 @@ bool ReadFreshAcceptedWeaponTracking(
         return true;
     }
     return false;
+}
+
+void PublishControllerInfantryTurnIntent(float degrees) noexcept
+{
+    if (!std::isfinite(degrees) || degrees == 0.0F)
+    {
+        return;
+    }
+    // A single comfort-turn request is capped at 90 degrees, but cancelling a
+    // queued multiplayer turn can legitimately unwind several queued requests.
+    constexpr float kMaximumPublishedTurnDegrees = 720.0F;
+    const LONG millidegrees = static_cast<LONG>(std::lround(
+        std::clamp(
+            degrees,
+            -kMaximumPublishedTurnDegrees,
+            kMaximumPublishedTurnDegrees) *
+        1000.0F));
+    if (millidegrees != 0)
+    {
+        InterlockedExchangeAdd(
+            &g_controllerInfantryTurnMillidegrees,
+            millidegrees);
+    }
+}
+
+LONG ReadControllerInfantryTurnIntentMillidegrees() noexcept
+{
+    return InterlockedCompareExchange(
+        &g_controllerInfantryTurnMillidegrees,
+        0,
+        0);
 }
 } // namespace bfvr
