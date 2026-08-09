@@ -1199,7 +1199,13 @@ private:
                     IdentityMatrix(),
                     controllerWeaponPose,
                     kBf1942WorldUnitsPerMeter);
-            if (!controllerTarget.has_value())
+            const auto controllerAimPointerTarget =
+                bfvr::stereo::MakeD3D8AbsoluteGripWeaponDelta(
+                    IdentityMatrix(),
+                    currentAimPose,
+                    kBf1942WorldUnitsPerMeter);
+            if (!controllerTarget.has_value() ||
+                !controllerAimPointerTarget.has_value())
             {
                 ResetLifetimeBinding();
                 InterlockedIncrement(&matrixRejected_);
@@ -1213,6 +1219,15 @@ private:
             controllerGunLocal.values[3][2] = grip->values[3][2] +
                 kTrackingToSkeletonPositionOffset[2];
             controllerGunLocal.values[3][3] = 1.0F;
+            Matrix4 controllerAimPointerLocal =
+                *controllerAimPointerTarget;
+            controllerAimPointerLocal.values[3][0] +=
+                kTrackingToSkeletonPositionOffset[0];
+            controllerAimPointerLocal.values[3][1] +=
+                kTrackingToSkeletonPositionOffset[1];
+            controllerAimPointerLocal.values[3][2] +=
+                kTrackingToSkeletonPositionOffset[2];
+            controllerAimPointerLocal.values[3][3] = 1.0F;
 
             std::array<float, 3> stanceTranslation = {};
             const auto poseCameraTranslation =
@@ -1224,6 +1239,8 @@ private:
                     stanceTranslation[axis] =
                         poseCameraTranslation->localDelta[axis];
                     controllerGunLocal.values[3][axis] +=
+                        stanceTranslation[axis];
+                    controllerAimPointerLocal.values[3][axis] +=
                         stanceTranslation[axis];
                 }
                 if (poseCameraTranslation->pose != kStandingPose)
@@ -1250,12 +1267,15 @@ private:
                 InterlockedIncrement(&stanceReadFailures_);
             }
 
-            // Slot 3 keeps the proven OpenXR-aim gun contract. Its result also
-            // establishes one anatomical grip-to-wrist reference; other items
-            // use that reference first, then invert their authored relation to
-            // recover the corresponding functional basis.
+            // Keep the held-item functional basis and raw OpenXR aim pointer
+            // separate. Slot 3's basis also establishes one anatomical
+            // grip-to-wrist reference; other visual items may recover their
+            // authored functional basis without changing the pointer ray.
             Matrix4 controllerGunWorld = Multiply(
                 controllerGunLocal,
+                *soldierTransform);
+            const Matrix4 controllerAimPointerWorld = Multiply(
+                controllerAimPointerLocal,
                 *soldierTransform);
             const Matrix4 controllerGripWorld = Multiply(*grip, *soldierTransform);
             ActiveItemAlignmentSnapshot alignment = {};
@@ -1274,6 +1294,7 @@ private:
                     nativeTargetWorld,
                     nativeTargetWorld,
                     controllerGunWorld,
+                    controllerAimPointerWorld,
                     soldier, nullptr, -1, generation);
                 return false;
             }
@@ -1396,7 +1417,8 @@ private:
             const Matrix4 nativeTargetWorld = Multiply(nativeTarget, *soldierTransform);
             const Matrix4 targetWorld = Multiply(target, *soldierTransform);
             const auto inverseNativeTargetWorld = Invert(nativeTargetWorld);
-            if (!IsFinite(controllerGunWorld) || !IsFinite(target) ||
+            if (!IsFinite(controllerGunWorld) ||
+                !IsFinite(controllerAimPointerWorld) || !IsFinite(target) ||
                 !inverseNativeTargetWorld.has_value())
             {
                 ResetLifetimeBinding();
@@ -1506,6 +1528,7 @@ private:
                 nativeTargetWorld,
                 targetWorld,
                 controllerGunWorld,
+                controllerAimPointerWorld,
                 soldier, alignment.activeItem,
                 alignment.activeItemIndex, generation);
             frame.soldier = soldier;

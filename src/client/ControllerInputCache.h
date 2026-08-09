@@ -22,6 +22,14 @@ void ClearAcceptedControllerInput() noexcept;
     LONG& generation,
     DWORD maximumAgeMs) noexcept;
 
+// Published only when ControllerInputOverlay actually writes a snap/smooth
+// infantry turn into BF1942's native mouse-look slot. The render camera uses
+// this narrow intent edge to preserve explicit turning during fire isolation.
+void NotifyControllerInfantryTurnApplied() noexcept;
+
+[[nodiscard]] bool WasControllerInfantryTurnAppliedRecently(
+    DWORD maximumAgeMs) noexcept;
+
 // Returns the same focused controller sample together with the centre-head
 // pose derived from the exact render request that accepted it. This keeps the
 // grip/HMD relation at one OpenXR predicted display time for weapon-pose

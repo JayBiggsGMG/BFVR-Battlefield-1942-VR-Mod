@@ -24,6 +24,12 @@ struct LocalPlayerMotionPose
     stereo::Vec3 worldPosition = {};
 };
 
+struct LocalInfantryBodyPose
+{
+    const void* controlObject = nullptr;
+    stereo::Matrix4 world = {};
+};
+
 // Resolves the occupied PlayerControlObject's first native weapon and samples
 // the same nominal FireArms transformation selected by the firing path.
 [[nodiscard]] bool InitializeMountedWeaponAimResolver(
@@ -53,5 +59,11 @@ void ShutdownMountedWeaponAimResolver() noexcept;
 // place cannot drive the comfort vignette.
 [[nodiscard]] bool ReadLocalPlayerMotionPose(
     LocalPlayerMotionPose& motionPose) noexcept;
+
+// Samples the alive local infantry control object's complete world transform.
+// The RenderView comfort path consumes only its horizontal facing direction;
+// weapon, input, networking, and the native source camera remain unchanged.
+[[nodiscard]] bool ReadLocalInfantryBodyPose(
+    LocalInfantryBodyPose& bodyPose) noexcept;
 
 } // namespace bfvr

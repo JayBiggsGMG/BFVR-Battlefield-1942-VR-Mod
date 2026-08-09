@@ -400,6 +400,26 @@ struct WorldCrosshairFrameTransforms
 
 WorldCrosshairFrameTransforms g_worldCrosshairFrame = {};
 
+constexpr DWORD kFireReplayTraceWindowMs = 2500;
+constexpr DWORD kFireReplayTraceSampleIntervalMs = 50;
+
+struct FireReplayTraceState
+{
+    D3DMatrix lastGameView = {};
+    D3DMatrix lastLeftView = {};
+    D3DMatrix lastRightView = {};
+    D3DMatrix baselineGameView = {};
+    D3DMatrix baselineLeftView = {};
+    D3DMatrix baselineRightView = {};
+    LONG lastRequestSequence = 0;
+    LONG fireSequence = 0;
+    LONG framesLogged = 0;
+    DWORD lastLoggedAt = 0;
+    bool lastValid = false;
+};
+
+FireReplayTraceState g_fireReplayTrace = {};
+
 void ResetWorldCrosshairFrameTransforms() noexcept
 {
     g_worldCrosshairFrame = {};
@@ -431,6 +451,160 @@ void AppendLog(const wchar_t* format, ...)
     _vsnwprintf_s(message, std::size(message), _TRUNCATE, format, arguments);
     va_end(arguments);
     g_callbacks.appendLog(message);
+}
+
+float ReplayVectorAngleDegrees(
+    float ax,
+    float ay,
+    float az,
+    float bx,
+    float by,
+    float bz) noexcept
+{
+    const float aLength = std::sqrt(ax * ax + ay * ay + az * az);
+    const float bLength = std::sqrt(bx * bx + by * by + bz * bz);
+    if (!std::isfinite(aLength) || !std::isfinite(bLength) ||
+        aLength <= 0.000001F || bLength <= 0.000001F)
+    {
+        return -1.0F;
+    }
+    const float cosine = std::clamp(
+        (ax * bx + ay * by + az * bz) / (aLength * bLength),
+        -1.0F,
+        1.0F);
+    return std::acos(cosine) * 57.29577951308232F;
+}
+
+float ReplayBasisAngleDegrees(
+    const D3DMatrix& a,
+    const D3DMatrix& b,
+    std::size_t row) noexcept
+{
+    return ReplayVectorAngleDegrees(
+        a.values[row][0],
+        a.values[row][1],
+        a.values[row][2],
+        b.values[row][0],
+        b.values[row][1],
+        b.values[row][2]);
+}
+
+float ReplayTranslationDistance(
+    const D3DMatrix& a,
+    const D3DMatrix& b) noexcept
+{
+    const float x = a.values[3][0] - b.values[3][0];
+    const float y = a.values[3][1] - b.values[3][1];
+    const float z = a.values[3][2] - b.values[3][2];
+    return std::sqrt(x * x + y * y + z * z);
+}
+
+void TraceWeaponFireStereoReplay(const DrawStateSnapshot& snapshot) noexcept
+{
+    const LONG requestSequence = g_runtimeRenderRequest.sequence;
+    if (requestSequence <= 0 ||
+        requestSequence == g_fireReplayTrace.lastRequestSequence)
+    {
+        return;
+    }
+
+    const D3DMatrix previousGameView = g_fireReplayTrace.lastGameView;
+    const D3DMatrix previousLeftView = g_fireReplayTrace.lastLeftView;
+    const D3DMatrix previousRightView = g_fireReplayTrace.lastRightView;
+    const bool previousValid = g_fireReplayTrace.lastValid;
+    g_fireReplayTrace.lastGameView = snapshot.view;
+    g_fireReplayTrace.lastLeftView = snapshot.leftView;
+    g_fireReplayTrace.lastRightView = snapshot.rightView;
+    g_fireReplayTrace.lastRequestSequence = requestSequence;
+    g_fireReplayTrace.lastValid = true;
+
+    bfvr::BFSoldierVrFireCameraTrace trace = {};
+    if (!bfvr::ReadActiveBFSoldierVrFireCameraTrace(
+            trace,
+            kFireReplayTraceWindowMs))
+    {
+        return;
+    }
+    if (trace.fireSequence != g_fireReplayTrace.fireSequence)
+    {
+        g_fireReplayTrace.fireSequence = trace.fireSequence;
+        g_fireReplayTrace.framesLogged = 0;
+        g_fireReplayTrace.lastLoggedAt = 0;
+        g_fireReplayTrace.baselineGameView = previousValid
+            ? previousGameView
+            : snapshot.view;
+        g_fireReplayTrace.baselineLeftView = previousValid
+            ? previousLeftView
+            : snapshot.leftView;
+        g_fireReplayTrace.baselineRightView = previousValid
+            ? previousRightView
+            : snapshot.rightView;
+        AppendLog(
+            L"Weapon stereo-replay trace opened for shot=%ld. Representative world-draw View plus composed left/right views will be sampled for %lu ms.",
+            trace.fireSequence,
+            kFireReplayTraceWindowMs);
+    }
+
+    const DWORD now = GetTickCount();
+    if (g_fireReplayTrace.framesLogged > 0 &&
+        now - g_fireReplayTrace.lastLoggedAt <
+            kFireReplayTraceSampleIntervalMs)
+    {
+        return;
+    }
+    g_fireReplayTrace.lastLoggedAt = now;
+    const LONG frame = ++g_fireReplayTrace.framesLogged;
+    AppendLog(
+        L"Weapon stereo-replay trace shot=%ld frame=%ld dt=%lu ms request=%ld gameViewDelta(pos=%.6f basisDeg=%.5f/%.5f/%.5f) leftViewDelta(pos=%.6f basisDeg=%.5f/%.5f/%.5f) rightViewDelta(pos=%.6f basisDeg=%.5f/%.5f/%.5f).",
+        trace.fireSequence,
+        frame,
+        static_cast<unsigned long>(now - trace.firedAt),
+        requestSequence,
+        ReplayTranslationDistance(
+            snapshot.view,
+            g_fireReplayTrace.baselineGameView),
+        ReplayBasisAngleDegrees(
+            snapshot.view,
+            g_fireReplayTrace.baselineGameView,
+            0),
+        ReplayBasisAngleDegrees(
+            snapshot.view,
+            g_fireReplayTrace.baselineGameView,
+            1),
+        ReplayBasisAngleDegrees(
+            snapshot.view,
+            g_fireReplayTrace.baselineGameView,
+            2),
+        ReplayTranslationDistance(
+            snapshot.leftView,
+            g_fireReplayTrace.baselineLeftView),
+        ReplayBasisAngleDegrees(
+            snapshot.leftView,
+            g_fireReplayTrace.baselineLeftView,
+            0),
+        ReplayBasisAngleDegrees(
+            snapshot.leftView,
+            g_fireReplayTrace.baselineLeftView,
+            1),
+        ReplayBasisAngleDegrees(
+            snapshot.leftView,
+            g_fireReplayTrace.baselineLeftView,
+            2),
+        ReplayTranslationDistance(
+            snapshot.rightView,
+            g_fireReplayTrace.baselineRightView),
+        ReplayBasisAngleDegrees(
+            snapshot.rightView,
+            g_fireReplayTrace.baselineRightView,
+            0),
+        ReplayBasisAngleDegrees(
+            snapshot.rightView,
+            g_fireReplayTrace.baselineRightView,
+            1),
+        ReplayBasisAngleDegrees(
+            snapshot.rightView,
+            g_fireReplayTrace.baselineRightView,
+            2));
 }
 
 #include "client/internal/D3D8StereoPairWaterDiagnostics.inl"
@@ -909,6 +1083,7 @@ FrameMirrorResult MirrorDrawIntoFrame(
         snapshot.semanticClass !=
             bfvr::stereo::D3D8SemanticDrawClass::WaterSurface)
     {
+        TraceWeaponFireStereoReplay(snapshot);
         g_worldCrosshairFrame.eyeViews[0] = snapshot.leftView;
         g_worldCrosshairFrame.eyeViews[1] = snapshot.rightView;
         g_worldCrosshairFrame.eyeProjections[0] = snapshot.leftProjection;

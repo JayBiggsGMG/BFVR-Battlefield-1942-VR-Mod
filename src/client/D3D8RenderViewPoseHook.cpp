@@ -1,9 +1,12 @@
 #include "client/D3D8RenderViewPoseHook.h"
 
+#include "client/BFSoldierVrMotionFilter.h"
+#include "client/ControllerInputCache.h"
 #include "client/MountedWeaponAimResolver.h"
 #include "client/ScopeViewOverlay.h"
 
 #include "stereo/MountedCameraMath.h"
+#include "stereo/InfantryCameraMath.h"
 #include "stereo/ScopeViewMath.h"
 #include "stereo/StereoMath.h"
 
@@ -40,6 +43,12 @@ constexpr float kVerticalFrustumHalfAngleScale = 1.50F;
 // BFVR request and the exact active RenderView; scope-specific camera/FOV work
 // still additionally requires a fresh useScope-enabled local handweapon.
 constexpr bool kEnableFrustumHook = true;
+constexpr DWORD kFireCameraTraceWindowMs = 2500;
+constexpr DWORD kFireCameraTraceSampleIntervalMs = 50;
+constexpr LONG kMaximumFireCameraTraceFramesPerShot = 48;
+constexpr DWORD kInfantryFireHeadingSuppressionMs = 2000;
+constexpr DWORD kInfantryTurnIntentGraceMs = 250;
+constexpr float kRadiansToDegrees = 57.29577951308232F;
 
 bfvr::stereo::Pose ToPose(const bfvr::D3D8RuntimeView& view)
 {
@@ -50,6 +59,109 @@ bfvr::stereo::Pose ToPose(const bfvr::D3D8RuntimeView& view)
             view.orientationY,
             view.orientationZ,
             view.orientationW}};
+}
+
+float VectorAngleDegrees(
+    float ax,
+    float ay,
+    float az,
+    float bx,
+    float by,
+    float bz) noexcept
+{
+    const float aLength = std::sqrt(ax * ax + ay * ay + az * az);
+    const float bLength = std::sqrt(bx * bx + by * by + bz * bz);
+    if (!std::isfinite(aLength) || !std::isfinite(bLength) ||
+        aLength <= 0.000001F || bLength <= 0.000001F)
+    {
+        return -1.0F;
+    }
+    const float cosine = std::clamp(
+        (ax * bx + ay * by + az * bz) / (aLength * bLength),
+        -1.0F,
+        1.0F);
+    return std::acos(cosine) * kRadiansToDegrees;
+}
+
+float MatrixBasisAngleDegrees(
+    const bfvr::stereo::Matrix4& a,
+    const bfvr::stereo::Matrix4& b,
+    std::size_t row) noexcept
+{
+    return VectorAngleDegrees(
+        a.values[row][0],
+        a.values[row][1],
+        a.values[row][2],
+        b.values[row][0],
+        b.values[row][1],
+        b.values[row][2]);
+}
+
+float MatrixTranslationDistance(
+    const bfvr::stereo::Matrix4& a,
+    const bfvr::stereo::Matrix4& b) noexcept
+{
+    const float x = a.values[3][0] - b.values[3][0];
+    const float y = a.values[3][1] - b.values[3][1];
+    const float z = a.values[3][2] - b.values[3][2];
+    return std::sqrt(x * x + y * y + z * z);
+}
+
+float ViewPositionDistance(
+    const bfvr::D3D8RuntimeView& a,
+    const bfvr::D3D8RuntimeView& b) noexcept
+{
+    const float x = a.positionX - b.positionX;
+    const float y = a.positionY - b.positionY;
+    const float z = a.positionZ - b.positionZ;
+    return std::sqrt(x * x + y * y + z * z);
+}
+
+float ViewOrientationAngleDegrees(
+    const bfvr::D3D8RuntimeView& a,
+    const bfvr::D3D8RuntimeView& b) noexcept
+{
+    const float aLength = std::sqrt(
+        a.orientationX * a.orientationX +
+        a.orientationY * a.orientationY +
+        a.orientationZ * a.orientationZ +
+        a.orientationW * a.orientationW);
+    const float bLength = std::sqrt(
+        b.orientationX * b.orientationX +
+        b.orientationY * b.orientationY +
+        b.orientationZ * b.orientationZ +
+        b.orientationW * b.orientationW);
+    if (!std::isfinite(aLength) || !std::isfinite(bLength) ||
+        aLength <= 0.000001F || bLength <= 0.000001F)
+    {
+        return -1.0F;
+    }
+    const float dot = std::fabs(
+        (a.orientationX * b.orientationX +
+         a.orientationY * b.orientationY +
+         a.orientationZ * b.orientationZ +
+         a.orientationW * b.orientationW) /
+        (aLength * bLength));
+    return 2.0F * std::acos(std::clamp(dot, 0.0F, 1.0F)) *
+        kRadiansToDegrees;
+}
+
+bfvr::stereo::Matrix4 MatrixFromFlatArray(
+    const std::array<float, 16>& values) noexcept
+{
+    bfvr::stereo::Matrix4 matrix = {};
+    std::memcpy(&matrix, values.data(), sizeof(matrix));
+    return matrix;
+}
+
+bfvr::stereo::Matrix4 IdentityMatrix() noexcept
+{
+    bfvr::stereo::Matrix4 identity = {};
+    identity.values[0][0] = 1.0F;
+    identity.values[1][1] = 1.0F;
+    identity.values[2][2] = 1.0F;
+    identity.values[3][3] = 1.0F;
+    return identity;
 }
 
 bool IsVerifiedSetterTarget(const void* target)
@@ -224,8 +336,19 @@ public:
         referenceHead = {};
         currentHead = {};
         lastSource = {};
+        lastCameraSource = {};
         appliedSourceCamera = {};
         lastSourceValid = false;
+        lastCameraSourceValid = false;
+        lastPresentedHead = {};
+        lastPresentedHeadValid = false;
+        tracedFireSequence = 0;
+        tracedFireFrames = 0;
+        tracedFireLastLoggedAt = 0;
+        tracedFireBaselineSource = {};
+        tracedFireBaselineHead = {};
+        infantryHeadingState = {};
+        infantryHeadingControlObject = nullptr;
         ResetMountedCameraAnchor(false);
         MemoryBarrier();
         InterlockedExchange(&requestedSequence, 0);
@@ -309,6 +432,9 @@ public:
         gameImage = nullptr;
         appliedSourceCamera = {};
         lastSourceValid = false;
+        lastCameraSourceValid = false;
+        infantryHeadingState = {};
+        infantryHeadingControlObject = nullptr;
         ResetMountedCameraAnchor(false);
         MemoryBarrier();
         InterlockedExchange(&appliedSourceSequence, 0);
@@ -320,10 +446,13 @@ public:
     void LogSummary() const
     {
         WriteLog(
-            L"RenderView pose/frustum-hook summary: setterMatches=%ld setterApplied=%ld setterRejected=%ld scopedApplied=%ld scopedRejected=%ld frustumMatches=%ld frustumApplied=%ld frustumNoSource=%ld frustumRejected=%ld mountedAnchorCaptures=%ld mountedDecoupled=%ld mountedRejected=%ld mountedResets=%ld mountedToggles=%ld mountedToggleIgnored=%ld lastRequested=%ld lastApplied=%ld lastFrustum=%ld.",
+            L"RenderView pose/frustum-hook summary: setterMatches=%ld setterApplied=%ld setterRejected=%ld infantryComfortApplied=%ld infantryComfortRejected=%ld infantryFireHeadingSuppressed=%ld scopedApplied=%ld scopedRejected=%ld frustumMatches=%ld frustumApplied=%ld frustumNoSource=%ld frustumRejected=%ld mountedAnchorCaptures=%ld mountedDecoupled=%ld mountedRejected=%ld mountedResets=%ld mountedToggles=%ld mountedToggleIgnored=%ld fireCameraTraceFrames=%ld lastRequested=%ld lastApplied=%ld lastFrustum=%ld.",
             matchingCalls,
             appliedCalls,
             rejectedTransforms,
+            infantryComfortApplied,
+            infantryComfortRejected,
+            infantryFireHeadingSuppressed,
             scopedCalls,
             scopedRejected,
             frustumMatchingCalls,
@@ -336,6 +465,7 @@ public:
             mountedResets,
             mountedToggles,
             mountedToggleIgnored,
+            fireCameraTraceFrames,
             requestedSequence,
             appliedSequence,
             appliedFrustumSequence);
@@ -391,6 +521,8 @@ private:
 
         InterlockedIncrement(&matchingCalls);
         stereo::Matrix4 source = {};
+        const stereo::Matrix4 previousSource = lastSource;
+        const bool previousSourceValid = lastSourceValid;
         bool readable = false;
         __try
         {
@@ -416,6 +548,54 @@ private:
         }
 
         stereo::Matrix4 cameraSource = source;
+        LocalInfantryBodyPose infantryBody = {};
+        if (readable && ReadLocalInfantryBodyPose(infantryBody))
+        {
+            if (infantryHeadingControlObject != infantryBody.controlObject)
+            {
+                infantryHeadingState = {};
+                infantryHeadingControlObject = infantryBody.controlObject;
+            }
+            BFSoldierVrLocalWeaponFire fire = {};
+            const bool recentLocalFire =
+                ReadFreshBFSoldierVrLocalWeaponFire(
+                    fire,
+                    kInfantryFireHeadingSuppressionMs) &&
+                fire.soldier == infantryBody.controlObject;
+            const bool intentionalTurn =
+                WasControllerInfantryTurnAppliedRecently(
+                    kInfantryTurnIntentGraceMs);
+            const bool suppressFireHeading =
+                recentLocalFire && !intentionalTurn;
+            const auto comfortCamera =
+                stereo::MakeD3D8FilteredInfantryComfortCamera(
+                    source,
+                    infantryBody.world,
+                    suppressFireHeading,
+                    infantryHeadingState);
+            if (comfortCamera.has_value())
+            {
+                cameraSource = *comfortCamera;
+                InterlockedIncrement(&infantryComfortApplied);
+                if (suppressFireHeading)
+                {
+                    InterlockedIncrement(&infantryFireHeadingSuppressed);
+                }
+                if (InterlockedCompareExchange(
+                        &firstInfantryComfortLogged,
+                        1,
+                        0) == 0)
+                {
+                    WriteLog(
+                        L"Infantry VR camera now uses BF1942 source position plus a filtered alive-local-soldier heading. Native camera pitch/roll/view recoil is excluded, and accepted local fire consumes delayed MP body-heading corrections without replaying them; explicit right-stick turns pass through. Position, movement, weapon state, firing, networking, models, and IK remain game-owned. controlObject=%p.",
+                        infantryBody.controlObject);
+                }
+            }
+            else
+            {
+                InterlockedIncrement(&infantryComfortRejected);
+            }
+        }
         MountedWeaponStationPose station = {};
         const bool stationValid = readable &&
             ReadOccupiedMountedWeaponStationPose(station);
@@ -513,6 +693,9 @@ private:
             }
         }
 
+        lastCameraSource = cameraSource;
+        lastCameraSourceValid = true;
+
         const auto adjusted = readable
             ? stereo::ComposeRuntimeHeadWithD3D8Camera(
                 cameraSource,
@@ -547,6 +730,14 @@ private:
             }
         }
 
+        TraceFireCameraFrame(
+            source,
+            finalCamera,
+            previousSource,
+            previousSourceValid);
+        lastPresentedHead = currentHead;
+        lastPresentedHeadValid = true;
+
         original(renderView, &finalCamera);
         appliedSourceCamera = source;
         MemoryBarrier();
@@ -574,10 +765,10 @@ private:
             std::isfinite(scope.normalFov) && scope.normalFov > 0.0F;
         InterlockedIncrement(&frustumMatchingCalls);
         bool poseApplied = false;
-        if (lastSourceValid)
+        if (lastCameraSourceValid)
         {
             const auto adjusted = stereo::ComposeRuntimeHeadWithD3D8Camera(
-                lastSource,
+                lastCameraSource,
                 ToPose(referenceHead),
                 ToPose(currentHead),
                 kWorldUnitsPerMeter);
@@ -723,6 +914,89 @@ private:
         }
     }
 
+    void TraceFireCameraFrame(
+        const stereo::Matrix4& source,
+        const stereo::Matrix4& finalCamera,
+        const stereo::Matrix4& previousSource,
+        bool previousSourceValid) noexcept
+    {
+        BFSoldierVrFireCameraTrace trace = {};
+        if (!ReadActiveBFSoldierVrFireCameraTrace(
+                trace,
+                kFireCameraTraceWindowMs))
+        {
+            return;
+        }
+
+        if (trace.fireSequence != tracedFireSequence)
+        {
+            tracedFireSequence = trace.fireSequence;
+            tracedFireFrames = 0;
+            tracedFireLastLoggedAt = 0;
+            tracedFireBaselineSource = previousSourceValid
+                ? previousSource
+                : source;
+            tracedFireBaselineHead = lastPresentedHeadValid
+                ? lastPresentedHead
+                : currentHead;
+            WriteLog(
+                L"Weapon fire-camera trace opened for accepted local shot=%ld soldier=%p. Up to %ld source-camera frames over %lu ms will correlate raw OpenXR head motion, native recoil, and the generated pre-neutralization shake matrix.",
+                trace.fireSequence,
+                trace.soldier,
+                kMaximumFireCameraTraceFramesPerShot,
+                kFireCameraTraceWindowMs);
+        }
+        if (tracedFireFrames >= kMaximumFireCameraTraceFramesPerShot)
+        {
+            return;
+        }
+
+        const DWORD now = GetTickCount();
+        if (tracedFireFrames > 0 &&
+            now - tracedFireLastLoggedAt < kFireCameraTraceSampleIntervalMs)
+        {
+            return;
+        }
+        tracedFireLastLoggedAt = now;
+        const stereo::Matrix4 generatedShake = trace.shakeValid
+            ? MatrixFromFlatArray(trace.generatedShake)
+            : IdentityMatrix();
+        const stereo::Matrix4 identity = IdentityMatrix();
+        const LONG shakeAge = trace.shakeValid
+            ? static_cast<LONG>(now - trace.shakeUpdatedAt)
+            : -1;
+        const LONG frame = ++tracedFireFrames;
+        InterlockedIncrement(&fireCameraTraceFrames);
+        WriteLog(
+            L"Weapon fire-camera trace shot=%ld frame=%ld dt=%lu ms soldier=%p sourceDelta(pos=%.6f basisDeg=%.5f/%.5f/%.5f) hmdDelta(pos=%.6f angleDeg=%.5f) recoil(valid=%d/%d pitch=%.7f yaw=%.7f) generatedShake(valid=%d ageMs=%ld pos=%.6f basisDeg=%.5f/%.5f/%.5f) sourceFwd=(%.6f,%.6f,%.6f) finalFwd=(%.6f,%.6f,%.6f).",
+            trace.fireSequence,
+            frame,
+            static_cast<unsigned long>(now - trace.firedAt),
+            trace.soldier,
+            MatrixTranslationDistance(source, tracedFireBaselineSource),
+            MatrixBasisAngleDegrees(source, tracedFireBaselineSource, 0),
+            MatrixBasisAngleDegrees(source, tracedFireBaselineSource, 1),
+            MatrixBasisAngleDegrees(source, tracedFireBaselineSource, 2),
+            ViewPositionDistance(currentHead, tracedFireBaselineHead),
+            ViewOrientationAngleDegrees(currentHead, tracedFireBaselineHead),
+            trace.pitchValid ? 1 : 0,
+            trace.yawValid ? 1 : 0,
+            trace.pitch,
+            trace.yaw,
+            trace.shakeValid ? 1 : 0,
+            shakeAge,
+            MatrixTranslationDistance(generatedShake, identity),
+            MatrixBasisAngleDegrees(generatedShake, identity, 0),
+            MatrixBasisAngleDegrees(generatedShake, identity, 1),
+            MatrixBasisAngleDegrees(generatedShake, identity, 2),
+            source.values[2][0],
+            source.values[2][1],
+            source.values[2][2],
+            finalCamera.values[2][0],
+            finalCamera.values[2][1],
+            finalCamera.values[2][2]);
+    }
+
     void ResetMountedCameraAnchor(bool logReset) noexcept
     {
         if (mountedCameraAnchorValid)
@@ -769,10 +1043,18 @@ private:
     D3D8RuntimeView referenceHead = {};
     D3D8RuntimeView currentHead = {};
     stereo::Matrix4 lastSource = {};
+    stereo::Matrix4 lastCameraSource = {};
+    stereo::Matrix4 tracedFireBaselineSource = {};
     stereo::Matrix4 appliedSourceCamera = {};
     stereo::Matrix4 mountedCameraInStation = {};
+    stereo::InfantryCameraHeadingState infantryHeadingState = {};
     const void* mountedControlObject = nullptr;
+    const void* infantryHeadingControlObject = nullptr;
     bool lastSourceValid = false;
+    bool lastCameraSourceValid = false;
+    D3D8RuntimeView lastPresentedHead = {};
+    D3D8RuntimeView tracedFireBaselineHead = {};
+    bool lastPresentedHeadValid = false;
     bool mountedCameraAnchorValid = false;
     volatile LONG requestedSequence = 0;
     volatile LONG appliedSequence = 0;
@@ -782,6 +1064,9 @@ private:
     volatile LONG rejectedTransforms = 0;
     volatile LONG scopedCalls = 0;
     volatile LONG scopedRejected = 0;
+    volatile LONG infantryComfortApplied = 0;
+    volatile LONG infantryComfortRejected = 0;
+    volatile LONG infantryFireHeadingSuppressed = 0;
     volatile LONG frustumMatchingCalls = 0;
     volatile LONG frustumAppliedCalls = 0;
     volatile LONG frustumNoSource = 0;
@@ -792,11 +1077,16 @@ private:
     volatile LONG mountedResets = 0;
     volatile LONG mountedToggles = 0;
     volatile LONG mountedToggleIgnored = 0;
+    volatile LONG fireCameraTraceFrames = 0;
     volatile LONG requestedMountedCameraToggleSequence = 0;
     volatile LONG mountedCameraDecoupled = 0;
     volatile LONG appliedFrustumSequence = 0;
     volatile LONG firstScopedFrustumLogged = 0;
     volatile LONG firstOrdinaryFrustumLogged = 0;
+    volatile LONG firstInfantryComfortLogged = 0;
+    LONG tracedFireSequence = 0;
+    LONG tracedFireFrames = 0;
+    DWORD tracedFireLastLoggedAt = 0;
     stereo::MountedCameraControlState mountedCameraControl = {};
     bool created = false;
     bool frustumCreated = false;

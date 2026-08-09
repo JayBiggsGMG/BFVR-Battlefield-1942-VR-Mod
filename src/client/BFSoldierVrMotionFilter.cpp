@@ -20,6 +20,8 @@ constexpr std::ptrdiff_t kUpdateCameraShakeRva = 0x000FACD0;
 constexpr std::ptrdiff_t kPitchRecoilRva = 0x000F6E70;
 constexpr std::ptrdiff_t kYawRecoilRva = 0x000F6DE0;
 constexpr std::size_t kCameraShakeMatrixOffset = 0x54C;
+constexpr DWORD kFireCameraTracePublicationWindowMs = 3000;
+constexpr LONG kMaximumFireCameraTraceShots = 12;
 
 constexpr BYTE kUpdateCameraShakePrefix[] = {
     0x81, 0xEC, 0x80, 0x00, 0x00, 0x00, 0x53, 0x56, 0x8B,
@@ -64,6 +66,97 @@ LegacyRecoilState g_legacyRecoil = {};
 volatile LONG g_legacyRecoilSequence = 0;
 PVOID g_currentCameraSoldier = nullptr;
 
+struct FireCameraTraceState
+{
+    std::array<float, 16> generatedShake = {};
+    const void* soldier = nullptr;
+    DWORD firedAt = 0;
+    DWORD shakeUpdatedAt = 0;
+    LONG fireSequence = 0;
+    float pitch = 0.0F;
+    float yaw = 0.0F;
+    bool pitchValid = false;
+    bool yawValid = false;
+    bool shakeValid = false;
+};
+
+SRWLOCK g_fireCameraTraceLock = SRWLOCK_INIT;
+FireCameraTraceState g_fireCameraTrace = {};
+volatile LONG g_fireCameraTraceSequence = 0;
+
+SRWLOCK g_localWeaponFireLock = SRWLOCK_INIT;
+bfvr::BFSoldierVrLocalWeaponFire g_localWeaponFire = {};
+volatile LONG g_localWeaponFireSequence = 0;
+
+bool IsActiveFireCameraTraceForSoldier(
+    const FireCameraTraceState& trace,
+    const void* soldier,
+    DWORD now) noexcept
+{
+    return trace.fireSequence > 0 && trace.soldier == soldier &&
+        now - trace.firedAt <= kFireCameraTracePublicationWindowMs;
+}
+
+void PublishFireCameraTracePitch(void* soldier, float pitch) noexcept
+{
+    const DWORD now = GetTickCount();
+    AcquireSRWLockExclusive(&g_fireCameraTraceLock);
+    if (IsActiveFireCameraTraceForSoldier(g_fireCameraTrace, soldier, now))
+    {
+        g_fireCameraTrace.pitch = pitch;
+        g_fireCameraTrace.pitchValid = std::isfinite(pitch);
+    }
+    ReleaseSRWLockExclusive(&g_fireCameraTraceLock);
+}
+
+void PublishFireCameraTraceYaw(void* soldier, float yaw) noexcept
+{
+    const DWORD now = GetTickCount();
+    AcquireSRWLockExclusive(&g_fireCameraTraceLock);
+    if (IsActiveFireCameraTraceForSoldier(g_fireCameraTrace, soldier, now))
+    {
+        g_fireCameraTrace.yaw = yaw;
+        g_fireCameraTrace.yawValid = std::isfinite(yaw);
+    }
+    ReleaseSRWLockExclusive(&g_fireCameraTraceLock);
+}
+
+void PublishFireCameraTraceShake(void* soldier) noexcept
+{
+    if (soldier == nullptr)
+    {
+        return;
+    }
+    std::array<float, 16> generatedShake = {};
+    bool readable = false;
+    __try
+    {
+        std::memcpy(
+            generatedShake.data(),
+            static_cast<std::byte*>(soldier) + kCameraShakeMatrixOffset,
+            sizeof(generatedShake));
+        readable = true;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        readable = false;
+    }
+    if (!readable)
+    {
+        return;
+    }
+
+    const DWORD now = GetTickCount();
+    AcquireSRWLockExclusive(&g_fireCameraTraceLock);
+    if (IsActiveFireCameraTraceForSoldier(g_fireCameraTrace, soldier, now))
+    {
+        g_fireCameraTrace.generatedShake = generatedShake;
+        g_fireCameraTrace.shakeUpdatedAt = now;
+        g_fireCameraTrace.shakeValid = true;
+    }
+    ReleaseSRWLockExclusive(&g_fireCameraTraceLock);
+}
+
 void PublishLegacyPitchRecoil(void* soldier, float pitch) noexcept
 {
     AcquireSRWLockExclusive(&g_legacyRecoilLock);
@@ -76,6 +169,7 @@ void PublishLegacyPitchRecoil(void* soldier, float pitch) noexcept
     g_legacyRecoil.pitchUpdatedAt = GetTickCount();
     g_legacyRecoil.pitchValid = true;
     ReleaseSRWLockExclusive(&g_legacyRecoilLock);
+    PublishFireCameraTracePitch(soldier, pitch);
 }
 
 void PublishLegacyYawRecoil(void* soldier, float yaw) noexcept
@@ -97,6 +191,7 @@ void PublishLegacyYawRecoil(void* soldier, float yaw) noexcept
     g_legacyRecoil.sequence =
         InterlockedIncrement(&g_legacyRecoilSequence);
     ReleaseSRWLockExclusive(&g_legacyRecoilLock);
+    PublishFireCameraTraceYaw(soldier, yaw);
 }
 
 void ClearLegacyRecoil() noexcept
@@ -104,6 +199,12 @@ void ClearLegacyRecoil() noexcept
     AcquireSRWLockExclusive(&g_legacyRecoilLock);
     g_legacyRecoil = {};
     ReleaseSRWLockExclusive(&g_legacyRecoilLock);
+    AcquireSRWLockExclusive(&g_fireCameraTraceLock);
+    g_fireCameraTrace = {};
+    ReleaseSRWLockExclusive(&g_fireCameraTraceLock);
+    AcquireSRWLockExclusive(&g_localWeaponFireLock);
+    g_localWeaponFire = {};
+    ReleaseSRWLockExclusive(&g_localWeaponFireLock);
     InterlockedExchangePointer(&g_currentCameraSoldier, nullptr);
 }
 
@@ -142,6 +243,89 @@ bool ReadFreshBFSoldierVrLegacyRecoil(
 void* ReadCurrentBFSoldierVrCameraSoldier() noexcept
 {
     return InterlockedCompareExchangePointer(&g_currentCameraSoldier, nullptr, nullptr);
+}
+
+void NotifyBFSoldierVrLocalWeaponFired() noexcept
+{
+    const void* const soldier = InterlockedCompareExchangePointer(
+        &g_currentCameraSoldier,
+        nullptr,
+        nullptr);
+    const LONG liveSequence = InterlockedIncrement(&g_localWeaponFireSequence);
+    if (liveSequence > 0)
+    {
+        BFSoldierVrLocalWeaponFire fire = {};
+        fire.soldier = soldier;
+        fire.firedAt = GetTickCount();
+        fire.sequence = liveSequence;
+        AcquireSRWLockExclusive(&g_localWeaponFireLock);
+        g_localWeaponFire = fire;
+        ReleaseSRWLockExclusive(&g_localWeaponFireLock);
+    }
+
+    const LONG traceSequence = InterlockedIncrement(&g_fireCameraTraceSequence);
+    if (traceSequence <= 0 || traceSequence > kMaximumFireCameraTraceShots)
+    {
+        return;
+    }
+    FireCameraTraceState trace = {};
+    trace.soldier = soldier;
+    trace.firedAt = GetTickCount();
+    trace.fireSequence = traceSequence;
+    AcquireSRWLockExclusive(&g_fireCameraTraceLock);
+    g_fireCameraTrace = trace;
+    ReleaseSRWLockExclusive(&g_fireCameraTraceLock);
+}
+
+bool ReadFreshBFSoldierVrLocalWeaponFire(
+    BFSoldierVrLocalWeaponFire& fire,
+    DWORD maximumAgeMs) noexcept
+{
+    fire = {};
+    if (maximumAgeMs == 0)
+    {
+        return false;
+    }
+    AcquireSRWLockShared(&g_localWeaponFireLock);
+    const BFSoldierVrLocalWeaponFire snapshot = g_localWeaponFire;
+    ReleaseSRWLockShared(&g_localWeaponFireLock);
+    if (snapshot.sequence <= 0 || snapshot.soldier == nullptr ||
+        GetTickCount() - snapshot.firedAt > maximumAgeMs)
+    {
+        return false;
+    }
+    fire = snapshot;
+    return true;
+}
+
+bool ReadActiveBFSoldierVrFireCameraTrace(
+    BFSoldierVrFireCameraTrace& trace,
+    DWORD maximumAgeMs) noexcept
+{
+    trace = {};
+    if (maximumAgeMs == 0)
+    {
+        return false;
+    }
+    AcquireSRWLockShared(&g_fireCameraTraceLock);
+    const FireCameraTraceState snapshot = g_fireCameraTrace;
+    ReleaseSRWLockShared(&g_fireCameraTraceLock);
+    if (snapshot.fireSequence <= 0 ||
+        GetTickCount() - snapshot.firedAt > maximumAgeMs)
+    {
+        return false;
+    }
+    trace.generatedShake = snapshot.generatedShake;
+    trace.soldier = snapshot.soldier;
+    trace.firedAt = snapshot.firedAt;
+    trace.shakeUpdatedAt = snapshot.shakeUpdatedAt;
+    trace.fireSequence = snapshot.fireSequence;
+    trace.pitch = snapshot.pitch;
+    trace.yaw = snapshot.yaw;
+    trace.pitchValid = snapshot.pitchValid;
+    trace.yawValid = snapshot.yawValid;
+    trace.shakeValid = snapshot.shakeValid;
+    return true;
 }
 
 class BFSoldierVrMotionFilter::Impl
@@ -323,6 +507,7 @@ private:
         self->originalUpdateCameraShake(soldier, elapsedSeconds);
         InterlockedExchangePointer(&g_currentCameraSoldier, soldier);
         InterlockedIncrement(&self->updateCameraShakeCalls);
+        PublishFireCameraTraceShake(soldier);
         if (!self->WriteIdentityShakeMatrix(soldier))
         {
             InterlockedIncrement(&self->shakeMatrixWriteFailures);

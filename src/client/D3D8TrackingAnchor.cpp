@@ -108,6 +108,7 @@ void D3D8TrackingAnchor::Reset() noexcept
 {
     baseReference_ = {};
     context_ = {};
+    ClearPendingContext();
     consumedRecenterSequence_ = 0;
     standingReferenceY_ = 0.0F;
     manualHeightAdjustmentMeters_ = 0.0F;
@@ -119,6 +120,12 @@ void D3D8TrackingAnchor::Reset() noexcept
     seatedPostureTransitionActive_ = false;
     seatedDescentObserved_ = false;
     valid_ = false;
+}
+
+void D3D8TrackingAnchor::ClearPendingContext() noexcept
+{
+    pendingContext_ = {};
+    pendingContextSamples_ = 0;
 }
 
 void D3D8TrackingAnchor::Capture(
@@ -136,6 +143,7 @@ void D3D8TrackingAnchor::Capture(
     baseReference_ = currentHead;
     SetYaw(baseReference_, yaw);
     context_ = context;
+    ClearPendingContext();
     standingReferenceValid_ = false;
     infantryModeInitialized_ = false;
     seatedPostureTransitionActive_ = false;
@@ -169,12 +177,47 @@ void D3D8TrackingAnchor::Update(
 
     const bool concreteContext =
         context.kind != D3D8TrackingContextKind::Unavailable;
-    const bool contextChanged = concreteContext &&
-        (!valid_ || context.kind != context_.kind ||
-         context.token != context_.token);
-    if (!valid_ || contextChanged)
+    if (!valid_)
     {
         Capture(currentHead, context);
+    }
+    else if (!concreteContext)
+    {
+        // A failed ownership read is not a new camera context. Requiring the
+        // next concrete value to start a fresh stability window prevents a
+        // partial BF1942 enter/exit transaction from redefining head zero.
+        ClearPendingContext();
+    }
+    else if (context.kind == context_.kind && context.token == context_.token)
+    {
+        ClearPendingContext();
+    }
+    else
+    {
+        const bool sameCandidate =
+            context.kind == pendingContext_.kind &&
+            context.token == pendingContext_.token;
+        if (!sameCandidate)
+        {
+            pendingContext_ = context;
+            pendingContextSamples_ = 1;
+        }
+        else if (pendingContextSamples_ < kContextStabilitySamples)
+        {
+            ++pendingContextSamples_;
+        }
+
+        // BF1942 updates player/control/camera ownership as a transaction.
+        // During vehicle entry those pointers may expose transient values.
+        // Capturing every value makes inverse(currentHead) * currentHead the
+        // camera delta on consecutive frames, suppressing head motion and
+        // pinning the image to the headset. Keep the established anchor live
+        // until one concrete context survives several render requests, then
+        // perform exactly one intended neutral-pose handoff.
+        if (pendingContextSamples_ >= kContextStabilitySamples)
+        {
+            Capture(currentHead, pendingContext_);
+        }
     }
 
     if (valid_ && context_.kind == D3D8TrackingContextKind::Infantry)

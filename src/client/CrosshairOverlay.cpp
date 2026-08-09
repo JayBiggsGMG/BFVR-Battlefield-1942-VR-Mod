@@ -31,6 +31,7 @@ constexpr std::size_t kBFPlayerIsAliveOffset = 0xA9;
 constexpr std::size_t kBFPlayerCurrentControlObjectOffset = 0x64;
 constexpr std::size_t kBFPlayerDefaultControlObjectOffset = 0x98;
 constexpr std::size_t kBFPlayerHitIndicationTimerOffset = 0x1CC;
+constexpr std::size_t kSoldierActiveItemIndexOffset = 0x3E8;
 constexpr DWORD kNativeArmPoseMaximumAgeMs = 125;
 constexpr float kDefaultMaximumDistance = 50.0F;
 constexpr float kMinimumMaximumDistance = 2.0F;
@@ -128,7 +129,7 @@ public:
         hookEnabled_ = true;
         bfvr::InitializeD3D8WorldCrosshairRenderer(log);
         WriteLog(
-            L"Native flat crosshair suppression and 3D reticle state armed at 0x006A97B0; maximumDistance=%.2f m angularDiameter=%.2f degrees. Ordinary HudManager requests are forced off, while a verified active exact scope forces BF1942's native CrossHair visible even through contradictory multiplayer HUD requests; global HUD and unrelated Ref2 draw families remain unchanged.",
+            L"Native flat crosshair suppression and 3D reticle state armed at 0x006A97B0; maximumDistance=%.2f m angularDiameter=%.2f degrees. Gadget slots 4/5/6 use the raw OpenXR aim-pointer origin/direction independently of item and hand orientation; shooting and mounted routes retain their established fire bases. Ordinary HudManager requests are forced off, while a verified active exact scope forces BF1942's native CrossHair visible even through contradictory multiplayer HUD requests; global HUD and unrelated Ref2 draw families remain unchanged.",
             maximumDistance_,
             angularDiameterDegrees_);
     }
@@ -201,6 +202,13 @@ public:
             const bool controlsReadable =
                 currentControlObject != nullptr &&
                 defaultControlObject != nullptr;
+            const int activeItemIndex =
+                controlsReadable &&
+                    currentControlObject == defaultControlObject
+                ? *reinterpret_cast<const int*>(
+                    static_cast<const std::byte*>(currentControlObject) +
+                    kSoldierActiveItemIndexOffset)
+                : -1;
             bfvr::NativeArmWeaponVisualPose nativeArmPose = {};
             const bool nativeArmPoseFresh =
                 controlsReadable &&
@@ -208,8 +216,7 @@ public:
                 bfvr::ReadFreshNativeArmWeaponVisualPose(
                     nativeArmPose,
                     kNativeArmPoseMaximumAgeMs) &&
-                nativeArmPose.soldier == currentControlObject &&
-                nativeArmPose.activeItem != nullptr;
+                nativeArmPose.soldier == currentControlObject;
             const bool nativeCrosshairRequested =
                 InterlockedCompareExchange(
                     &requestedVisible_, 0, 0) != 0;
@@ -229,9 +236,7 @@ public:
                 nativeCrosshairRequested,
                 nativeArmPoseFresh,
                 mountedFirePoseReadable,
-                nativeArmPoseFresh
-                    ? nativeArmPose.activeItemIndex
-                    : -1};
+                nativeArmPoseFresh ? activeItemIndex : -1};
             const bfvr::stereo::WorldCrosshairAimSource source =
                 bfvr::stereo::SelectWorldCrosshairAimSource(eligibility);
             const bfvr::settings::UserSettingsValues settings =
@@ -249,8 +254,11 @@ public:
                 return false;
             }
             const auto endpoint =
-                source == bfvr::stereo::WorldCrosshairAimSource::GadgetController ||
-                    source == bfvr::stereo::WorldCrosshairAimSource::HandWeapon
+                source == bfvr::stereo::WorldCrosshairAimSource::GadgetController
+                ? bfvr::stereo::MakeWorldCrosshairEndpointFromFirePose(
+                    nativeArmPose.controllerAimPointerWorld,
+                    maximumDistance_)
+                : source == bfvr::stereo::WorldCrosshairAimSource::HandWeapon
                 ? bfvr::stereo::MakeWorldCrosshairEndpointFromFirePose(
                     nativeArmPose.controllerGunWorld,
                     maximumDistance_)

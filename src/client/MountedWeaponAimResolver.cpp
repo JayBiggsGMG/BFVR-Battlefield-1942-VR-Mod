@@ -83,6 +83,44 @@ bool IsFinite(const bfvr::stereo::Matrix4& matrix) noexcept
     return true;
 }
 
+bool ReadObjectTransformation(
+    const void* object,
+    bfvr::stereo::Matrix4& world) noexcept
+{
+    world = {};
+    if (object == nullptr)
+    {
+        return false;
+    }
+    __try
+    {
+        void* const mutableObject = const_cast<void*>(object);
+        void* const vtable = *reinterpret_cast<void* const*>(mutableObject);
+        void* const target = vtable == nullptr
+            ? nullptr
+            : *reinterpret_cast<void* const*>(
+                static_cast<const std::byte*>(vtable) +
+                kGetTransformationVtableOffset);
+        const auto getTransformation =
+            reinterpret_cast<GetTransformationFn>(target);
+        const bfvr::stereo::Matrix4* const source =
+            getTransformation == nullptr
+                ? nullptr
+                : getTransformation(mutableObject);
+        if (source == nullptr)
+        {
+            return false;
+        }
+        std::memcpy(&world, source, sizeof(world));
+        return IsFinite(world);
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        world = {};
+        return false;
+    }
+}
+
 } // namespace
 
 namespace bfvr
@@ -134,42 +172,42 @@ bool ReadLocalPlayerMotionPose(LocalPlayerMotionPose& motionPose) noexcept
     {
         return false;
     }
-    __try
+    stereo::Matrix4 world = {};
+    if (!ReadObjectTransformation(context.currentControlObject, world))
     {
-        void* const object = const_cast<void*>(context.currentControlObject);
-        void* const vtable = *reinterpret_cast<void* const*>(object);
-        void* const target = vtable == nullptr
-            ? nullptr
-            : *reinterpret_cast<void* const*>(
-                static_cast<const std::byte*>(vtable) +
-                kGetTransformationVtableOffset);
-        const auto getTransformation =
-            reinterpret_cast<GetTransformationFn>(target);
-        const stereo::Matrix4* const world = getTransformation == nullptr
-            ? nullptr
-            : getTransformation(object);
-        if (world == nullptr || !IsFinite(*world))
-        {
-            return false;
-        }
-        const stereo::Vec3 position = {
-            world->values[3][0],
-            world->values[3][1],
-            world->values[3][2]};
-        if (!std::isfinite(position.x) || !std::isfinite(position.y) ||
-            !std::isfinite(position.z))
-        {
-            return false;
-        }
-        motionPose.controlObject = context.currentControlObject;
-        motionPose.worldPosition = position;
-        return true;
-    }
-    __except (EXCEPTION_EXECUTE_HANDLER)
-    {
-        motionPose = {};
         return false;
     }
+    const stereo::Vec3 position = {
+        world.values[3][0],
+        world.values[3][1],
+        world.values[3][2]};
+    if (!std::isfinite(position.x) || !std::isfinite(position.y) ||
+        !std::isfinite(position.z))
+    {
+        return false;
+    }
+    motionPose.controlObject = context.currentControlObject;
+    motionPose.worldPosition = position;
+    return true;
+}
+
+bool ReadLocalInfantryBodyPose(LocalInfantryBodyPose& bodyPose) noexcept
+{
+    bodyPose = {};
+    LocalPlayerControlContext context = {};
+    if (!ReadLocalPlayerControlContext(context) || !context.alive ||
+        context.currentControlObject != context.defaultControlObject)
+    {
+        return false;
+    }
+    stereo::Matrix4 world = {};
+    if (!ReadObjectTransformation(context.currentControlObject, world))
+    {
+        return false;
+    }
+    bodyPose.controlObject = context.currentControlObject;
+    bodyPose.world = world;
+    return true;
 }
 
 bool InitializeMountedWeaponAimResolver(

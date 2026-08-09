@@ -2,6 +2,7 @@
 
 #include <windows.h>
 
+#include <array>
 #include <memory>
 
 namespace bfvr
@@ -29,6 +30,47 @@ struct BFSoldierVrLegacyRecoil
 // compare this pointer with their current callback argument, but must not
 // dereference it outside that current callback.
 void* ReadCurrentBFSoldierVrCameraSoldier() noexcept;
+
+// Bounded diagnostic snapshot for correlating an accepted local weapon shot
+// with BF1942's raw recoil queries and the camera-shake matrix generated before
+// BFVR neutralizes it. The matrix is row-major and remains diagnostic-only;
+// recoil and shake continue to be suppressed from the HMD camera.
+struct BFSoldierVrFireCameraTrace
+{
+    std::array<float, 16> generatedShake = {};
+    const void* soldier = nullptr;
+    DWORD firedAt = 0;
+    DWORD shakeUpdatedAt = 0;
+    LONG fireSequence = 0;
+    float pitch = 0.0F;
+    float yaw = 0.0F;
+    bool pitchValid = false;
+    bool yawValid = false;
+    bool shakeValid = false;
+};
+
+// Unbounded process-lifetime publication of the newest accepted local shot.
+// Unlike the diagnostic trace below, this remains active after its bounded
+// logging quota so the live HMD camera can reject delayed MP fire corrections.
+struct BFSoldierVrLocalWeaponFire
+{
+    const void* soldier = nullptr;
+    DWORD firedAt = 0;
+    LONG sequence = 0;
+};
+
+// WeaponFire_Core is the accepted local firing boundary. Only the first few
+// process-lifetime shots open a short trace window, keeping normal logs bounded
+// even for automatic weapons.
+void NotifyBFSoldierVrLocalWeaponFired() noexcept;
+
+[[nodiscard]] bool ReadFreshBFSoldierVrLocalWeaponFire(
+    BFSoldierVrLocalWeaponFire& fire,
+    DWORD maximumAgeMs) noexcept;
+
+[[nodiscard]] bool ReadActiveBFSoldierVrFireCameraTrace(
+    BFSoldierVrFireCameraTrace& trace,
+    DWORD maximumAgeMs) noexcept;
 
 // Removes only the legacy player-camera recoil and shake contributions while
 // BFVR is presenting. Weapon recoil state, animation, firing, spread, and the

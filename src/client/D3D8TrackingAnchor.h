@@ -51,12 +51,17 @@ public:
     [[nodiscard]] bool IsSeatedPostureTransitionActive() const noexcept;
 
 private:
+    static constexpr std::uint32_t kContextStabilitySamples = 3;
+
     void Capture(
         const D3D8RuntimeView& currentHead,
         D3D8TrackingContext context) noexcept;
+    void ClearPendingContext() noexcept;
 
     D3D8RuntimeView baseReference_ = {};
     D3D8TrackingContext context_ = {};
+    D3D8TrackingContext pendingContext_ = {};
+    std::uint32_t pendingContextSamples_ = 0;
     LONG consumedRecenterSequence_ = 0;
     float standingReferenceY_ = 0.0F;
     float manualHeightAdjustmentMeters_ = 0.0F;

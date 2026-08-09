@@ -1096,6 +1096,7 @@ private:
                                 userSettings.snapTurnAngleDegrees),
                             snapAxis);
                         AddInfantrySnapTurnInput(destination, degrees);
+                        bfvr::NotifyControllerInfantryTurnApplied();
                         mouseLookEnabled = true;
                         snapTurnArmed = false;
                     }
@@ -1119,6 +1120,7 @@ private:
                 if (turnInput != 0.0F)
                 {
                     AddInfantryTurnInput(destination, turnInput);
+                    bfvr::NotifyControllerInfantryTurnApplied();
                     mouseLookEnabled = true;
                 }
 

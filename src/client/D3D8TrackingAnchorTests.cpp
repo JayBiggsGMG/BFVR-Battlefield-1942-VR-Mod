@@ -79,11 +79,74 @@ bool TestMenuAnchorAndControllerUseOneRebasedSpace() noexcept
             rebasedRelative->position.z,
             rawRelative->position.z);
 }
+
+bool TestTransientVehicleContextsDoNotPinHeadPose() noexcept
+{
+    bfvr::D3D8RuntimeView head = {};
+    head.positionY = 0.30F;
+    head.orientationW = 1.0F;
+
+    bfvr::D3D8TrackingAnchor anchor = {};
+    anchor.Update(
+        head,
+        true,
+        {bfvr::D3D8TrackingContextKind::Infantry, 0x1000},
+        1'000'000'000,
+        0,
+        false,
+        true,
+        1.10F,
+        1.70F,
+        0.0F);
+
+    // BF1942 may expose different current-control pointers while its seat
+    // assignment transaction is incomplete. None may repeatedly redefine
+    // the current headset pose as zero.
+    head.positionX = 0.10F;
+    anchor.Update(
+        head, true, {bfvr::D3D8TrackingContextKind::Seat, 0x2000},
+        2'000'000'000, 0, false, true, 1.10F, 1.70F, 0.0F);
+    head.positionX = 0.20F;
+    anchor.Update(
+        head, true, {bfvr::D3D8TrackingContextKind::Seat, 0x2001},
+        3'000'000'000, 0, false, true, 1.10F, 1.70F, 0.0F);
+    head.positionX = 0.30F;
+    anchor.Update(
+        head, true, {bfvr::D3D8TrackingContextKind::Seat, 0x2000},
+        4'000'000'000, 0, false, true, 1.10F, 1.70F, 0.0F);
+    if (!NearlyEqual(anchor.RebaseView(head).positionX, 0.30F) ||
+        anchor.Context().kind != bfvr::D3D8TrackingContextKind::Infantry)
+    {
+        return false;
+    }
+
+    // One stable seat commits one neutral pose after three samples. Further
+    // physical motion must immediately remain visible relative to it.
+    head.positionX = 0.40F;
+    anchor.Update(
+        head, true, {bfvr::D3D8TrackingContextKind::Seat, 0x2000},
+        5'000'000'000, 0, false, true, 1.10F, 1.70F, 0.0F);
+    head.positionX = 0.50F;
+    anchor.Update(
+        head, true, {bfvr::D3D8TrackingContextKind::Seat, 0x2000},
+        6'000'000'000, 0, false, true, 1.10F, 1.70F, 0.0F);
+    if (!NearlyEqual(anchor.RebaseView(head).positionX, 0.0F) ||
+        anchor.Context().kind != bfvr::D3D8TrackingContextKind::Seat)
+    {
+        return false;
+    }
+    head.positionX = 0.60F;
+    anchor.Update(
+        head, true, {bfvr::D3D8TrackingContextKind::Seat, 0x2000},
+        7'000'000'000, 0, false, true, 1.10F, 1.70F, 0.0F);
+    return NearlyEqual(anchor.RebaseView(head).positionX, 0.10F);
+}
 } // namespace
 
 int main()
 {
-    if (!TestMenuAnchorAndControllerUseOneRebasedSpace())
+    if (!TestMenuAnchorAndControllerUseOneRebasedSpace() ||
+        !TestTransientVehicleContextsDoNotPinHeadPose())
     {
         std::fprintf(
             stderr,

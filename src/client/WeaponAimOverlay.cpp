@@ -6,6 +6,7 @@
 #include "client/WeaponPoseRuntimeCache.h"
 #include "stereo/ScopeViewMath.h"
 #include "stereo/WeaponFireAimMath.h"
+#include "stereo/WorldCrosshairMath.h"
 
 #include <MinHook.h>
 
@@ -41,6 +42,7 @@ constexpr std::array<std::ptrdiff_t, 5> kExpectedCallerReturnRvas = {
 constexpr std::ptrdiff_t kPlayerManagerGlobalRva = 0x0057D76C;
 constexpr std::size_t kPlayerManagerLocalPlayerOffset = 0x54;
 constexpr std::size_t kBFPlayerIsAliveOffset = 0xA9;
+constexpr std::size_t kSoldierActiveItemIndexOffset = 0x3E8;
 constexpr DWORD kVisualWeaponPoseMaximumAgeMs = 125;
 constexpr std::size_t kRecordCapacity = 16;
 constexpr BYTE kWeaponFireCorePrefix[] = {
@@ -74,6 +76,29 @@ bool HasExpectedPrefix(
     }
     __except (EXCEPTION_EXECUTE_HANDLER)
     {
+        return false;
+    }
+}
+
+bool ReadActiveItemIndex(
+    const void* soldier,
+    int& activeItemIndex) noexcept
+{
+    activeItemIndex = -1;
+    if (soldier == nullptr)
+    {
+        return false;
+    }
+    __try
+    {
+        activeItemIndex = *reinterpret_cast<const int*>(
+            static_cast<const std::byte*>(soldier) +
+            kSoldierActiveItemIndexOffset);
+        return true;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        activeItemIndex = -1;
         return false;
     }
 }
@@ -171,7 +196,7 @@ public:
             !weaponMotionEnabled
                 ? L"Local WeaponFire_Core haptic observer armed at 0x0053CDB0. Weapon motion is disabled, so every call forwards unchanged after publishing only accepted local firing feedback."
                 : moveNativeFireOrigin
-                ? L"Controller-directed fire overlay armed at 0x0053CDB0 for native 1P arms. The five verified ordinary-infantry branches receive the same direct tracked OpenXR-aim gun basis used by the solved hand, with the fire parent origin moved to that held-gun pose. During an exact validated useScope view whose hidden native arm is stale, WeaponFire_Core instead shares the visible scoped basis while retaining BF1942's native projectile origin. BF1942 retains weapon/barrel offsets, spread, cadence, projectile creation, and networking; unsupported calls forward unchanged."
+                ? L"Controller-directed fire overlay armed at 0x0053CDB0 for native 1P arms. Exact current gadget slots 4/5/6 use the raw OpenXR aim-pointer origin and direction without changing the held item or hand; knives and ordinary shooting items retain the established held-gun basis. During an exact validated useScope view whose hidden native arm is stale, WeaponFire_Core instead shares the visible scoped basis while retaining BF1942's native projectile origin. BF1942 retains weapon/barrel offsets, spread, cadence, projectile creation, and networking; unsupported calls forward unchanged."
                 : L"Controller-directed fire overlay armed at 0x0053CDB0. Only the five verified branches in WeaponFire_Ordinary can receive the fresh displayed-weapon rotation for the alive local infantry player; native fire position and unsupported calls remain unchanged.");
     }
 
@@ -244,6 +269,7 @@ private:
             // here preserves native cadence for semi-automatic, automatic,
             // and multi-barrel weapons instead of approximating trigger edges.
             bfvr::NotifyControllerWeaponFired();
+            bfvr::NotifyBFSoldierVrLocalWeaponFired();
         }
         if (!weaponMotionEnabled)
         {
@@ -297,7 +323,9 @@ private:
         float nativeFireToHandDistance = 0.0F;
         float solvedHandDisplacement = 0.0F;
         float nativeFireToHandLimit = 0.0F;
+        int selectedItemIndex = -1;
         bool exactCurrentActiveItemReceiver = false;
+        bool gadgetPointerAim = false;
         bool scopedDirectionOnly = false;
         if (moveNativeFireOrigin)
         {
@@ -360,6 +388,9 @@ private:
                 exactCurrentActiveItemReceiver =
                     nativeArmPose.activeItem != nullptr &&
                     nativeArmPose.activeItem == weapon;
+                const bool selectedItemReadable = ReadActiveItemIndex(
+                    nativeArmPose.soldier,
+                    selectedItemIndex);
                 nativeFireToHandLimit =
                     bfvr::stereo::SelectD3D8NativeArmFireToHandLimit(
                         exactCurrentActiveItemReceiver);
@@ -382,7 +413,15 @@ private:
                     originalFire(weapon, actor, matrix, barrelIndex);
                     return;
                 }
-                controllerGunWorld = nativeArmPose.controllerGunWorld;
+                const bool alignmentWarmup =
+                    nativeArmPose.activeItem == nullptr;
+                gadgetPointerAim = selectedItemReadable &&
+                    bfvr::stereo::IsWorldCrosshairGadgetItemIndex(
+                        selectedItemIndex) &&
+                    (exactCurrentActiveItemReceiver || alignmentWarmup);
+                controllerGunWorld = gadgetPointerAim
+                    ? nativeArmPose.controllerAimPointerWorld
+                    : nativeArmPose.controllerGunWorld;
                 visualControllerGeneration =
                     nativeArmPose.controllerGeneration;
             }
@@ -426,6 +465,10 @@ private:
         {
             InterlockedIncrement(&scopedDirectionOnlyCalls);
         }
+        if (gadgetPointerAim)
+        {
+            InterlockedIncrement(&gadgetPointerAimCalls);
+        }
 
         Record(
             nativeMatrix,
@@ -457,12 +500,14 @@ private:
             else
             {
                 WriteLog(
-                    L"Controller-directed fire applied direct OpenXR-aim gun pose: generation=%ld fireToHand=%.3f m handDisplacement=%.3f m nativeLimit=%.3f m exactActiveItem=%d nativeOrigin=(%.3f,%.3f,%.3f) heldGunOrigin=(%.3f,%.3f,%.3f) nativeForward=(%.5f,%.5f,%.5f) heldGunForward=(%.5f,%.5f,%.5f).",
+                    L"Controller-directed fire applied direct OpenXR aim: generation=%ld fireToHand=%.3f m handDisplacement=%.3f m nativeLimit=%.3f m exactActiveItem=%d selectedItemIndex=%d gadgetPointerAim=%d nativeOrigin=(%.3f,%.3f,%.3f) aimOrigin=(%.3f,%.3f,%.3f) nativeForward=(%.5f,%.5f,%.5f) aimForward=(%.5f,%.5f,%.5f).",
                     visualControllerGeneration,
                     nativeFireToHandDistance,
                     solvedHandDisplacement,
                     nativeFireToHandLimit,
                     exactCurrentActiveItemReceiver ? 1 : 0,
+                    selectedItemIndex,
+                    gadgetPointerAim ? 1 : 0,
                     nativeMatrix.values[3][0],
                     nativeMatrix.values[3][1],
                     nativeMatrix.values[3][2],
@@ -565,10 +610,11 @@ private:
     void Report() const
     {
         WriteLog(
-            L"Controller-directed fire overlay stopped: observed=%ld adjusted=%ld scopedDirectionOnly=%ld wrongCaller=%ld nonLocalOrDead=%ld unreadable=%ld missingVisualWeaponPose=%ld missingNativeArmPose=%ld cameraLifetimeMismatch=%ld anchorDistanceRejected=%ld mathRejected=%ld.",
+            L"Controller-directed fire overlay stopped: observed=%ld adjusted=%ld scopedDirectionOnly=%ld gadgetPointerAim=%ld wrongCaller=%ld nonLocalOrDead=%ld unreadable=%ld missingVisualWeaponPose=%ld missingNativeArmPose=%ld cameraLifetimeMismatch=%ld anchorDistanceRejected=%ld mathRejected=%ld.",
             observedCalls,
             adjustedCalls,
             scopedDirectionOnlyCalls,
+            gadgetPointerAimCalls,
             wrongCallerCalls,
             nonLocalOrDeadCalls,
             unreadableMatrices,
@@ -670,6 +716,7 @@ private:
     volatile LONG observedCalls = 0;
     volatile LONG adjustedCalls = 0;
     volatile LONG scopedDirectionOnlyCalls = 0;
+    volatile LONG gadgetPointerAimCalls = 0;
     volatile LONG wrongCallerCalls = 0;
     volatile LONG nonLocalOrDeadCalls = 0;
     volatile LONG unreadableMatrices = 0;

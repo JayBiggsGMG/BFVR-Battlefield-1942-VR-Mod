@@ -42,9 +42,12 @@ struct WorldCrosshairProjection
 [[nodiscard]] bool IsWorldCrosshairShootingWeaponItemIndex(
     int itemIndex) noexcept;
 
-// Infantry must have an exact fresh native-arm item pose in one of the three
-// allowed shooting-weapon or gadget slots. Modded items which reuse those
-// slots remain eligible by design; unknown slots do not. A non-default PlayerControlObject
+// Infantry must have a fresh controller-gun publication for the current
+// soldier, while the soldier's authoritative selected-item index must be one
+// of the allowed shooting-weapon or gadget slots. Reading the selected slot
+// independently keeps the reticle alive through the native-arm alignment
+// warm-up, when its item pointer is deliberately unpublished. Modded items
+// which reuse those slots remain eligible by design; unknown slots do not. A non-default PlayerControlObject
 // is eligible only while BF1942's own HudManager requests its crosshair and an
 // exact current weapon-fire pose is readable. Dead, stale, unarmed, unknown
 // hand-item, and unresolved mounted states fail closed.

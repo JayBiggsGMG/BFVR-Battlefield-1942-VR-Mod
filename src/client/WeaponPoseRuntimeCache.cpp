@@ -10,6 +10,7 @@ struct WeaponViewOffsetState
     bfvr::stereo::Matrix4 nativeHandWorld = {};
     bfvr::stereo::Matrix4 targetHandWorld = {};
     bfvr::stereo::Matrix4 controllerGunWorld = {};
+    bfvr::stereo::Matrix4 controllerAimPointerWorld = {};
     const void* soldier = nullptr;
     const void* activeItem = nullptr;
     int activeItemIndex = -1;
@@ -32,6 +33,7 @@ void Publish(
     const bfvr::stereo::Matrix4& nativeHandWorld = {},
     const bfvr::stereo::Matrix4& targetHandWorld = {},
     const bfvr::stereo::Matrix4& controllerGunWorld = {},
+    const bfvr::stereo::Matrix4& controllerAimPointerWorld = {},
     const void* soldier = nullptr,
     const void* activeItem = nullptr,
     int activeItemIndex = -1,
@@ -43,6 +45,7 @@ void Publish(
     g_state.nativeHandWorld = nativeHandWorld;
     g_state.targetHandWorld = targetHandWorld;
     g_state.controllerGunWorld = controllerGunWorld;
+    g_state.controllerAimPointerWorld = controllerAimPointerWorld;
     g_state.soldier = soldier;
     g_state.activeItem = activeItem;
     g_state.activeItemIndex = activeItemIndex;
@@ -78,6 +81,7 @@ void PublishNativeArmWeaponVisualPose(
     const stereo::Matrix4& nativeHandWorld,
     const stereo::Matrix4& targetHandWorld,
     const stereo::Matrix4& controllerGunWorld,
+    const stereo::Matrix4& controllerAimPointerWorld,
     const void* soldier,
     const void* activeItem,
     int activeItemIndex,
@@ -92,6 +96,7 @@ void PublishNativeArmWeaponVisualPose(
         nativeHandWorld,
         targetHandWorld,
         controllerGunWorld,
+        controllerAimPointerWorld,
         soldier,
         activeItem,
         activeItemIndex,
@@ -169,6 +174,7 @@ bool ReadFreshNativeArmWeaponVisualPose(
         g_state.nativeHandWorld,
         g_state.targetHandWorld,
         g_state.controllerGunWorld,
+        g_state.controllerAimPointerWorld,
         g_state.soldier,
         g_state.activeItem,
         g_state.activeItemIndex,

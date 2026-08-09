@@ -13,6 +13,7 @@ struct NativeArmWeaponVisualPose
     stereo::Matrix4 nativeHandWorld = {};
     stereo::Matrix4 targetHandWorld = {};
     stereo::Matrix4 controllerGunWorld = {};
+    stereo::Matrix4 controllerAimPointerWorld = {};
     const void* soldier = nullptr;
     const void* activeItem = nullptr;
     int activeItemIndex = -1;
@@ -30,15 +31,17 @@ void PublishWeaponVisualPose(
     LONG controllerGeneration) noexcept;
 
 // Native-arm publication additionally carries the source/solved hand anchors,
-// the unmodified controller gun pose, and their BFSoldier lifetime. WeaponFire
-// can reject an unrelated cinematic/death-camera matrix and still consume the
-// gun basis rather than mistaking the anatomical hand-bone basis for a barrel.
+// the held item's functional basis, the raw OpenXR aim-pointer basis, and their
+// BFSoldier lifetime. WeaponFire can reject an unrelated cinematic/death-camera
+// matrix and select pointer aim for gadgets without changing the anatomical
+// hand, item model, or ordinary held-weapon basis.
 void PublishNativeArmWeaponVisualPose(
     const stereo::Matrix4& viewOffset,
     const stereo::Matrix4& worldAttachment,
     const stereo::Matrix4& nativeHandWorld,
     const stereo::Matrix4& targetHandWorld,
     const stereo::Matrix4& controllerGunWorld,
+    const stereo::Matrix4& controllerAimPointerWorld,
     const void* soldier,
     const void* activeItem,
     int activeItemIndex,

@@ -3054,6 +3054,28 @@ void TestContextTrackingAnchors()
         1.20F,
         1.70F,
         0.30F);
+    anchor.Update(
+        head,
+        true,
+        {bfvr::D3D8TrackingContextKind::Seat, 0x2000},
+        8'100'000'000,
+        0,
+        false,
+        true,
+        1.20F,
+        1.70F,
+        0.30F);
+    anchor.Update(
+        head,
+        true,
+        {bfvr::D3D8TrackingContextKind::Seat, 0x2000},
+        8'200'000'000,
+        0,
+        false,
+        true,
+        1.20F,
+        1.70F,
+        0.30F);
     const auto seatReference = anchor.ReferenceHead({});
     ExpectNear(test, seatReference.positionX, 8.0F);
     ExpectNear(test, seatReference.positionY, 1.20F);
@@ -3089,6 +3111,28 @@ void TestContextTrackingAnchors()
         true,
         {bfvr::D3D8TrackingContextKind::Infantry, 0x3000},
         10'000'000'000,
+        7,
+        false,
+        true,
+        1.15F,
+        1.70F,
+        0.0F);
+    anchor.Update(
+        head,
+        true,
+        {bfvr::D3D8TrackingContextKind::Infantry, 0x3000},
+        10'100'000'000,
+        7,
+        false,
+        true,
+        1.15F,
+        1.70F,
+        0.0F);
+    anchor.Update(
+        head,
+        true,
+        {bfvr::D3D8TrackingContextKind::Infantry, 0x3000},
+        10'200'000'000,
         7,
         false,
         true,
