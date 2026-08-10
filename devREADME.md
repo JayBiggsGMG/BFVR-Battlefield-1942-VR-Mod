@@ -29,24 +29,10 @@ patch, including fan builds that restore hardware audio or provide HRTF.
 
 ## Multiplayer compatibility and throwable items
 
-BFVR supports multiplayer, including motion-controller aiming for firearms. It
-leaves the stock multiplayer look path unchanged for grenades, TNT, mines, and
-similar physical items. Those gadgets therefore throw from the player's native
-facing direction; controller aim is not written into multiplayer look input and
-does not rotate the camera or character body.
-
-This limitation comes from Battlefield 1942's original multiplayer design. The
-server creates and controls these persistent physical items, while the stock
-network protocol provides no separate VR hand direction or projectile transform.
-BFVR remains compatible with ordinary, unmodified servers and does not require
-special BFVR server software. Exact body-independent multiplayer gadget aim is
-therefore unavailable on an unmodified server.
-
-Offline single-player gadget fire uses the pointer's origin and direction
-directly. Gadget crosshairs use that same pointer ray in every mode, so in
-multiplayer the visible crosshair can intentionally differ from the stock
-player-facing throw. These aim changes do not rotate the first-person item
-model, either hand, or hand IK; knives retain their existing behavior.
+BFVR supports multiplayer motion-controller aiming for firearms and throwable
+items such as grenades, TNT, mines, and similar gadgets. It remains compatible
+with ordinary, unmodified servers and does not require special BFVR server
+software.
 
 For alive infantry, the VR camera excludes BF1942's legacy recoil/shake view
 rotation. Snap and Smooth turns immediately rotate one shared local tracking
