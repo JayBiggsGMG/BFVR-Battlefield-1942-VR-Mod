@@ -291,7 +291,7 @@ public:
         }
         ClearAll();
         WriteLog(
-            L"Scoped-view activation stopped: zoomCalls=%ld stateBitsCalls=%ld activations=%ld deactivations=%ld lifecycleReleases=%ld lifecycleNativeUnzoomFailures=%ld nonScopeZoomsIgnored=%ld localReceiverRejects=%ld freshAimUpdates=%ld trackedAimUpdates=%ld trackedOffHandSteeringUpdates=%ld latchedAimFallbacks=%ld trackedAimCorrectionFailures=%ld scopeIntentToggles=%ld zoomOverrides=%ld stateBitOverrides=%ld ownedZoomLifetimePreservations=%ld ownedPoseContradictionFallbacks=%ld.",
+            L"Scoped-view activation stopped: zoomCalls=%ld stateBitsCalls=%ld activations=%ld deactivations=%ld lifecycleReleases=%ld lifecycleNativeUnzoomFailures=%ld postShotNativeDecisionsArmed=%ld postShotNativeUnzoomReleases=%ld nonScopeZoomsIgnored=%ld localReceiverRejects=%ld freshAimUpdates=%ld trackedAimUpdates=%ld trackedOffHandSteeringUpdates=%ld latchedAimFallbacks=%ld trackedAimCorrectionFailures=%ld scopeIntentToggles=%ld zoomOverrides=%ld stateBitOverrides=%ld ownedZoomLifetimePreservations=%ld ownedPoseContradictionFallbacks=%ld.",
             InterlockedCompareExchange(&zoomCalls_, 0, 0),
             InterlockedCompareExchange(&stateBitsCalls_, 0, 0),
             InterlockedCompareExchange(&activations_, 0, 0),
@@ -299,6 +299,10 @@ public:
             InterlockedCompareExchange(&lifecycleReleases_, 0, 0),
             InterlockedCompareExchange(
                 &lifecycleNativeUnzoomFailures_, 0, 0),
+            InterlockedCompareExchange(
+                &postShotNativeDecisionsArmed_, 0, 0),
+            InterlockedCompareExchange(
+                &postShotNativeUnzoomReleases_, 0, 0),
             InterlockedCompareExchange(&ignoredNonScopeZooms_, 0, 0),
             InterlockedCompareExchange(&localReceiverRejects_, 0, 0),
             InterlockedCompareExchange(&freshAimUpdates_, 0, 0),
@@ -667,7 +671,8 @@ public:
             std::memory_order_acquire);
         const void* const ownedSoldier = ownedScopeSoldier_.load(
             std::memory_order_acquire);
-        if (!bfvr::stereo::ShouldReleaseD3D8OwnedScopeOnAcceptedShot(
+        if (!bfvr::stereo::
+                ShouldAwaitD3D8NativeScopeDecisionAfterAcceptedShot(
                 requestedWeapon_.load(std::memory_order_acquire),
                 ownedWeapon,
                 ownedSoldier,
@@ -677,18 +682,10 @@ public:
         {
             return;
         }
-        void* expectedWeapon = const_cast<void*>(weapon);
-        if (!ownedScopeWeapon_.compare_exchange_strong(
-                expectedWeapon,
-                nullptr,
-                std::memory_order_acq_rel))
-        {
-            return;
-        }
-        ownedScopeSoldier_.store(nullptr, std::memory_order_relaxed);
-        ownedScopeDesiredEnabled_.store(false, std::memory_order_relaxed);
+        postShotNativeDecisionAwaited_.store(true, std::memory_order_release);
+        InterlockedIncrement(&postShotNativeDecisionsArmed_);
         WriteLog(
-            L"Accepted local scoped shot released BFVR's exact zoom override ownership for weapon=%p soldier=%p. BF1942's native post-fire FireArms::setZoom and soldier zoom-bit transitions now pass through unchanged, matching each weapon's native behavior without a weapon timer.",
+            L"Accepted local scoped shot armed native zoom-state observation for weapon=%p soldier=%p while retaining BFVR's input latch. A native post-fire zoom-bit drop will release the scope; a weapon which retains native zoom will remain scoped.",
             weapon,
             soldier);
     }
@@ -1029,6 +1026,24 @@ private:
 
         const bool desiredEnabled = ownedScopeDesiredEnabled_.load(
             std::memory_order_acquire);
+        const bool nativeZoomEnabled =
+            (nativeStateBits & kBFSoldierZoomStateBit) != 0;
+        if (bfvr::stereo::
+                ShouldReleaseD3D8OwnedScopeForNativePostShotState(
+                    postShotNativeDecisionAwaited_.load(
+                        std::memory_order_acquire),
+                    desiredEnabled,
+                    nativeZoomEnabled))
+        {
+            ReleaseOwnedScopePolicy(policyWeapon);
+            InterlockedIncrement(&postShotNativeUnzoomReleases_);
+            WriteLog(
+                L"Exact native post-shot soldier zoom state requested OFF for weapon=%p soldier=%p callerReturn=%p. BFVR released its input latch and is passing the weapon-governed scope exit through unchanged.",
+                policyWeapon,
+                soldier,
+                returnAddress);
+            return nativeStateBits;
+        }
         const unsigned int resolvedStateBits = desiredEnabled
             ? nativeStateBits | kBFSoldierZoomStateBit
             : nativeStateBits & ~kBFSoldierZoomStateBit;
@@ -1111,6 +1126,9 @@ private:
                         std::memory_order_relaxed);
                     ownedScopeDesiredEnabled_.store(
                         desiredEnabled,
+                        std::memory_order_relaxed);
+                    postShotNativeDecisionAwaited_.store(
+                        false,
                         std::memory_order_relaxed);
                     ownedScopeWeapon_.store(
                         weapon,
@@ -1515,6 +1533,9 @@ private:
         ownedScopeWeapon_.store(nullptr, std::memory_order_release);
         ownedScopeSoldier_.store(nullptr, std::memory_order_relaxed);
         ownedScopeDesiredEnabled_.store(false, std::memory_order_relaxed);
+        postShotNativeDecisionAwaited_.store(
+            false,
+            std::memory_order_relaxed);
     }
 
     bool HasExpectedPrefix(
@@ -1594,6 +1615,8 @@ private:
     volatile LONG deactivations_ = 0;
     volatile LONG lifecycleReleases_ = 0;
     volatile LONG lifecycleNativeUnzoomFailures_ = 0;
+    volatile LONG postShotNativeDecisionsArmed_ = 0;
+    volatile LONG postShotNativeUnzoomReleases_ = 0;
     volatile LONG ignoredNonScopeZooms_ = 0;
     volatile LONG localReceiverRejects_ = 0;
     volatile LONG freshAimUpdates_ = 0;
@@ -1621,6 +1644,7 @@ private:
     std::atomic<void*> ownedScopeWeapon_ = nullptr;
     std::atomic<const void*> ownedScopeSoldier_ = nullptr;
     std::atomic<bool> ownedScopeDesiredEnabled_ = false;
+    std::atomic<bool> postShotNativeDecisionAwaited_ = false;
     std::atomic<void*> pendingOwnedScopeActivation_ = nullptr;
     std::atomic<void*> requestedWeapon_ = nullptr;
     std::atomic<float> normalFov_ = -1.0F;

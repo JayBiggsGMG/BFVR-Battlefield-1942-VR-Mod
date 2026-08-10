@@ -483,7 +483,7 @@ void ResetD3D8ScopeAimSmoothing(
     state = {};
 }
 
-bool ShouldReleaseD3D8OwnedScopeOnAcceptedShot(
+bool ShouldAwaitD3D8NativeScopeDecisionAfterAcceptedShot(
     const void* const requestedWeapon,
     const void* const ownedWeapon,
     const void* const ownedSoldier,
@@ -495,6 +495,14 @@ bool ShouldReleaseD3D8OwnedScopeOnAcceptedShot(
         ownedSoldier != nullptr && ownedScopeEnabled &&
         requestedWeapon == ownedWeapon && ownedWeapon == shotWeapon &&
         ownedSoldier == shotSoldier;
+}
+
+bool ShouldReleaseD3D8OwnedScopeForNativePostShotState(
+    const bool nativeDecisionAwaited,
+    const bool ownedScopeEnabled,
+    const bool nativeZoomEnabled) noexcept
+{
+    return nativeDecisionAwaited && ownedScopeEnabled && !nativeZoomEnabled;
 }
 
 bool ShouldReleaseD3D8ScopeForPlayerLifecycle(

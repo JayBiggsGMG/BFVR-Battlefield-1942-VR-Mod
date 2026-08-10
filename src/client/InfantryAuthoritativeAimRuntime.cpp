@@ -3,6 +3,7 @@
 #include "client/MountedWeaponAimResolver.h"
 #include "client/ScopeViewOverlay.h"
 #include "client/WeaponPoseRuntimeCache.h"
+#include "stereo/InfantryItemAimPolicy.h"
 
 #include <cmath>
 #include <cstddef>
@@ -98,12 +99,6 @@ bool ReadFreshNativeAimCamera(
     renderSequence = snapshot.renderSequence;
     ageMs = age;
     return true;
-}
-
-bool IsGadgetPointerSlot(const int activeItemIndex) noexcept
-{
-    return activeItemIndex == 4 || activeItemIndex == 5 ||
-        activeItemIndex == 6;
 }
 
 } // namespace
@@ -211,15 +206,16 @@ bool ReadInfantryAuthoritativeAimRuntimeSample(
         {
             return false;
         }
-        const bool gadgetPointer =
-            IsGadgetPointerSlot(nativePose.activeItemIndex);
-        target = gadgetPointer
+        const bool controllerPointer =
+            stereo::IsInfantryControllerPointerItemIndex(
+                nativePose.activeItemIndex);
+        target = controllerPointer
             ? nativePose.controllerAimPointerWorld
             : nativePose.controllerGunWorld;
         item = nativePose.activeItem;
         targetControllerGeneration = nativePose.controllerGeneration;
-        targetKind = gadgetPointer
-            ? InfantryAuthoritativeAimTargetKind::GadgetPointer
+        targetKind = controllerPointer
+            ? InfantryAuthoritativeAimTargetKind::ControllerPointer
             : InfantryAuthoritativeAimTargetKind::FunctionalWeapon;
     }
 
@@ -267,8 +263,8 @@ const wchar_t* InfantryAuthoritativeAimTargetKindName(
     {
     case InfantryAuthoritativeAimTargetKind::FunctionalWeapon:
         return L"functional-weapon";
-    case InfantryAuthoritativeAimTargetKind::GadgetPointer:
-        return L"gadget-pointer";
+    case InfantryAuthoritativeAimTargetKind::ControllerPointer:
+        return L"controller-pointer";
     case InfantryAuthoritativeAimTargetKind::ScopedWeapon:
         return L"scoped-weapon";
     default:

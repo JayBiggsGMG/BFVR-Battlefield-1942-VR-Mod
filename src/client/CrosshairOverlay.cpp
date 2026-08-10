@@ -254,7 +254,7 @@ public:
                 return false;
             }
             const auto endpoint =
-                source == bfvr::stereo::WorldCrosshairAimSource::GadgetController
+                source == bfvr::stereo::WorldCrosshairAimSource::ControllerPointer
                 ? bfvr::stereo::MakeWorldCrosshairEndpointFromFirePose(
                     nativeArmPose.controllerAimPointerWorld,
                     maximumDistance_)

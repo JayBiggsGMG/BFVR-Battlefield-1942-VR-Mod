@@ -73,16 +73,24 @@ struct ScopeAimSmoothingState
 void ResetD3D8ScopeAimSmoothing(
     ScopeAimSmoothingState& state) noexcept;
 
-// Accepted fire releases only the exact currently owned scope lifetime.
-// BF1942's native post-fire zoom decision then passes through unchanged,
-// matching vanilla and mod-specific behavior without a weapon timer.
-[[nodiscard]] bool ShouldReleaseD3D8OwnedScopeOnAcceptedShot(
+// Accepted fire arms native post-shot observation only for the exact currently
+// owned scope lifetime. Ownership remains active so the synthetic alt-fire
+// button-up cannot manufacture an unzoom before the weapon makes its decision.
+[[nodiscard]] bool ShouldAwaitD3D8NativeScopeDecisionAfterAcceptedShot(
     const void* requestedWeapon,
     const void* ownedWeapon,
     const void* ownedSoldier,
     bool ownedScopeEnabled,
     const void* shotWeapon,
     const void* shotSoldier) noexcept;
+
+// Once armed by an exact accepted shot, a native authoritative zoom-state drop
+// is the weapon/gameplay request to leave secondary-fire zoom. A retained true
+// state means that a modded weapon stays scoped.
+[[nodiscard]] bool ShouldReleaseD3D8OwnedScopeForNativePostShotState(
+    bool nativeDecisionAwaited,
+    bool ownedScopeEnabled,
+    bool nativeZoomEnabled) noexcept;
 
 // Death is a hard scope lifetime boundary even when BF1942 temporarily keeps
 // the old soldier and weapon pointers alive for the deploy-menu transition.

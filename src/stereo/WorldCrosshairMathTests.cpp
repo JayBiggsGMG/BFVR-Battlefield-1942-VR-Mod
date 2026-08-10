@@ -1,5 +1,7 @@
 #include "stereo/WorldCrosshairMath.h"
 
+#include "stereo/InfantryItemAimPolicy.h"
+
 #include <cmath>
 #include <cstdio>
 
@@ -33,11 +35,12 @@ bool TestStrictEligibility()
     input.controlObjectsReadable = true;
     input.currentIsDefaultControlObject = true;
     input.nativeArmPoseFresh = true;
-    for (int itemIndex : {4, 5, 6})
+    for (int itemIndex : {1, 4, 5, 6})
     {
         input.activeItemIndex = itemIndex;
         if (bfvr::stereo::SelectWorldCrosshairAimSource(input) !=
-            GadgetController)
+                ControllerPointer ||
+            !bfvr::stereo::IsInfantryControllerPointerItemIndex(itemIndex))
         {
             return false;
         }
@@ -50,10 +53,11 @@ bool TestStrictEligibility()
             return false;
         }
     }
-    for (int itemIndex : {1, 11})
+    for (int itemIndex : {0, 11})
     {
         input.activeItemIndex = itemIndex;
-        if (bfvr::stereo::SelectWorldCrosshairAimSource(input) != None)
+        if (bfvr::stereo::SelectWorldCrosshairAimSource(input) != None ||
+            bfvr::stereo::IsInfantryControllerPointerItemIndex(itemIndex))
         {
             return false;
         }

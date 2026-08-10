@@ -517,23 +517,37 @@ bool TestScopeAimSmoothingIsFrameRateAware() noexcept
     return std::fabs(ninetyYaw - oneEightyYaw) < 0.00005F;
 }
 
-bool TestAcceptedShotReleasesOnlyExactOwnedScope() noexcept
+bool TestAcceptedShotAwaitsOnlyExactOwnedScopeDecision() noexcept
 {
     const void* const weapon = reinterpret_cast<const void*>(0x1000);
     const void* const soldier = reinterpret_cast<const void*>(0x2000);
     const void* const otherWeapon = reinterpret_cast<const void*>(0x3000);
     const void* const otherSoldier = reinterpret_cast<const void*>(0x4000);
-    using bfvr::stereo::ShouldReleaseD3D8OwnedScopeOnAcceptedShot;
-    return ShouldReleaseD3D8OwnedScopeOnAcceptedShot(
+    using bfvr::stereo::ShouldAwaitD3D8NativeScopeDecisionAfterAcceptedShot;
+    return ShouldAwaitD3D8NativeScopeDecisionAfterAcceptedShot(
                weapon, weapon, soldier, true, weapon, soldier) &&
-        !ShouldReleaseD3D8OwnedScopeOnAcceptedShot(
+        !ShouldAwaitD3D8NativeScopeDecisionAfterAcceptedShot(
             weapon, weapon, soldier, false, weapon, soldier) &&
-        !ShouldReleaseD3D8OwnedScopeOnAcceptedShot(
+        !ShouldAwaitD3D8NativeScopeDecisionAfterAcceptedShot(
             weapon, weapon, soldier, true, otherWeapon, soldier) &&
-        !ShouldReleaseD3D8OwnedScopeOnAcceptedShot(
+        !ShouldAwaitD3D8NativeScopeDecisionAfterAcceptedShot(
             weapon, weapon, soldier, true, weapon, otherSoldier) &&
-        !ShouldReleaseD3D8OwnedScopeOnAcceptedShot(
+        !ShouldAwaitD3D8NativeScopeDecisionAfterAcceptedShot(
             nullptr, weapon, soldier, true, weapon, soldier);
+}
+
+bool TestPostShotScopeDecisionPreservesOrReleasesNativePolicy() noexcept
+{
+    using bfvr::stereo::
+        ShouldReleaseD3D8OwnedScopeForNativePostShotState;
+    return ShouldReleaseD3D8OwnedScopeForNativePostShotState(
+               true, true, false) &&
+        !ShouldReleaseD3D8OwnedScopeForNativePostShotState(
+            true, true, true) &&
+        !ShouldReleaseD3D8OwnedScopeForNativePostShotState(
+            false, true, false) &&
+        !ShouldReleaseD3D8OwnedScopeForNativePostShotState(
+            true, false, false);
 }
 
 bool TestInvalidCameraAndProjectionFailClosed() noexcept
@@ -623,7 +637,8 @@ int main()
         !TestScopeAimSmoothingHandlesSustainedMotionAndBypassesAtBound() ||
         !TestScopeAimSmoothingResetsAtEveryDiscontinuity() ||
         !TestScopeAimSmoothingIsFrameRateAware() ||
-        !TestAcceptedShotReleasesOnlyExactOwnedScope() ||
+        !TestAcceptedShotAwaitsOnlyExactOwnedScopeDecision() ||
+        !TestPostShotScopeDecisionPreservesOrReleasesNativePolicy() ||
         !TestProjectionScalePreservesCentreAndDepth() ||
         !TestInvalidCameraAndProjectionFailClosed() ||
         !TestEyeFillingScopeQuadCoversAsymmetricFov() ||

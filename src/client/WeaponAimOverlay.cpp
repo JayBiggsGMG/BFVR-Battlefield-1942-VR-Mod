@@ -9,6 +9,7 @@
 #include "client/ScopeViewOverlay.h"
 #include "client/WeaponPoseRuntimeCache.h"
 #include "stereo/ScopeViewMath.h"
+#include "stereo/InfantryItemAimPolicy.h"
 #include "stereo/WeaponFireAimMath.h"
 #include "stereo/WorldCrosshairMath.h"
 
@@ -466,7 +467,7 @@ private:
         float nativeFireToHandLimit = 0.0F;
         int selectedItemIndex = -1;
         bool exactCurrentActiveItemReceiver = false;
-        bool gadgetPointerAim = false;
+        bool controllerPointerAim = false;
         bool scopedDirectionOnly = false;
         if (moveNativeFireOrigin)
         {
@@ -564,11 +565,11 @@ private:
                 }
                 const bool alignmentWarmup =
                     nativeArmPose.activeItem == nullptr;
-                gadgetPointerAim = selectedItemReadable &&
-                    bfvr::stereo::IsWorldCrosshairGadgetItemIndex(
+                controllerPointerAim = selectedItemReadable &&
+                    bfvr::stereo::IsInfantryControllerPointerItemIndex(
                         selectedItemIndex) &&
                     (exactCurrentActiveItemReceiver || alignmentWarmup);
-                controllerGunWorld = gadgetPointerAim
+                controllerGunWorld = controllerPointerAim
                     ? nativeArmPose.controllerAimPointerWorld
                     : nativeArmPose.controllerGunWorld;
                 visualControllerGeneration =
@@ -630,9 +631,9 @@ private:
         {
             InterlockedIncrement(&scopedDirectionOnlyCalls);
         }
-        if (gadgetPointerAim)
+        if (controllerPointerAim)
         {
-            InterlockedIncrement(&gadgetPointerAimCalls);
+            InterlockedIncrement(&controllerPointerAimCalls);
         }
 
         Record(
@@ -665,14 +666,14 @@ private:
             else
             {
                 WriteLog(
-                    L"Controller-directed fire applied direct OpenXR aim: generation=%ld fireToHand=%.3f m handDisplacement=%.3f m nativeLimit=%.3f m exactActiveItem=%d selectedItemIndex=%d gadgetPointerAim=%d nativeOrigin=(%.3f,%.3f,%.3f) aimOrigin=(%.3f,%.3f,%.3f) nativeForward=(%.5f,%.5f,%.5f) aimForward=(%.5f,%.5f,%.5f).",
+                    L"Controller-directed fire applied direct OpenXR aim: generation=%ld fireToHand=%.3f m handDisplacement=%.3f m nativeLimit=%.3f m exactActiveItem=%d selectedItemIndex=%d controllerPointerAim=%d nativeOrigin=(%.3f,%.3f,%.3f) aimOrigin=(%.3f,%.3f,%.3f) nativeForward=(%.5f,%.5f,%.5f) aimForward=(%.5f,%.5f,%.5f).",
                     visualControllerGeneration,
                     nativeFireToHandDistance,
                     solvedHandDisplacement,
                     nativeFireToHandLimit,
                     exactCurrentActiveItemReceiver ? 1 : 0,
                     selectedItemIndex,
-                    gadgetPointerAim ? 1 : 0,
+                    controllerPointerAim ? 1 : 0,
                     nativeMatrix.values[3][0],
                     nativeMatrix.values[3][1],
                     nativeMatrix.values[3][2],
@@ -775,12 +776,12 @@ private:
     void Report() const
     {
         WriteLog(
-            L"WeaponFire observer stopped: observed=%ld nativeAuthorityForwarded=%ld adjusted=%ld scopedDirectionOnly=%ld gadgetPointerAim=%ld wrongCaller=%ld nonLocalOrDead=%ld unreadable=%ld missingVisualWeaponPose=%ld missingNativeArmPose=%ld cameraLifetimeMismatch=%ld anchorDistanceRejected=%ld mathRejected=%ld.",
+            L"WeaponFire observer stopped: observed=%ld nativeAuthorityForwarded=%ld adjusted=%ld scopedDirectionOnly=%ld controllerPointerAim=%ld wrongCaller=%ld nonLocalOrDead=%ld unreadable=%ld missingVisualWeaponPose=%ld missingNativeArmPose=%ld cameraLifetimeMismatch=%ld anchorDistanceRejected=%ld mathRejected=%ld.",
             observedCalls,
             nativeAuthorityForwardedCalls,
             adjustedCalls,
             scopedDirectionOnlyCalls,
-            gadgetPointerAimCalls,
+            controllerPointerAimCalls,
             wrongCallerCalls,
             nonLocalOrDeadCalls,
             unreadableMatrices,
@@ -884,7 +885,7 @@ private:
     volatile LONG nativeAuthorityShotDiagnostics = 0;
     volatile LONG adjustedCalls = 0;
     volatile LONG scopedDirectionOnlyCalls = 0;
-    volatile LONG gadgetPointerAimCalls = 0;
+    volatile LONG controllerPointerAimCalls = 0;
     volatile LONG wrongCallerCalls = 0;
     volatile LONG nonLocalOrDeadCalls = 0;
     volatile LONG unreadableMatrices = 0;

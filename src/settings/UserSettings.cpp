@@ -495,7 +495,7 @@ UserSettingsSchema SeededUserSettingsSchema()
             std::string(kSniperScopeSmoothingEnabledKey),
             "true",
             {
-                "Softens scoped micro-motion with a frame-time-aware bounded angular stabilizer. Filtering applies only while total stabilized-to-raw error is below 0.25 degrees; deliberate movement catches up to raw immediately at that boundary. The same result drives aim and scope presentation, while current weapon translation stays raw. Controls > Save applies the toggle live. After a scoped shot, BFVR releases zoom override ownership so each weapon's native post-fire scope behavior passes through.",
+                "Softens scoped micro-motion with a frame-time-aware bounded angular stabilizer. Filtering applies only while total stabilized-to-raw error is below 0.25 degrees; deliberate movement catches up to raw immediately at that boundary. The same result drives aim and scope presentation, while current weapon translation stays raw. Controls > Save applies the toggle live. After a scoped shot, the weapon's native zoom state decides whether the scope exits or remains active.",
                 "Accepted values: true or false. Applied after Controls > Save without a restart."
             },
             IsBoolean

@@ -11,7 +11,7 @@ enum class WorldCrosshairAimSource
 {
     None,
     HandWeapon,
-    GadgetController,
+    ControllerPointer,
     MountedWeapon
 };
 
@@ -34,20 +34,16 @@ struct WorldCrosshairProjection
     float halfExtentPixels = 0.0F;
 };
 
-// The installed stock content assigns all requested throwables/tools/support
-// gadgets to slots 4, 5, and 6. Slot 11 is the TNT detonator and is
-// deliberately excluded: the owner requested the placement gadget, not an
-// unrestricted reticle for every hand item.
-[[nodiscard]] bool IsWorldCrosshairGadgetItemIndex(int itemIndex) noexcept;
 [[nodiscard]] bool IsWorldCrosshairShootingWeaponItemIndex(
     int itemIndex) noexcept;
 
 // Infantry must have a fresh controller-gun publication for the current
 // soldier, while the soldier's authoritative selected-item index must be one
-// of the allowed shooting-weapon or gadget slots. Reading the selected slot
-// independently keeps the reticle alive through the native-arm alignment
+// of the allowed shooting-weapon, knife, or gadget slots. Reading the selected
+// slot independently keeps the reticle alive through the native-arm alignment
 // warm-up, when its item pointer is deliberately unpublished. Modded items
-// which reuse those slots remain eligible by design; unknown slots do not. A non-default PlayerControlObject
+// which reuse those slots remain eligible by design; unknown slots do not. A
+// non-default PlayerControlObject
 // is eligible only while BF1942's own HudManager requests its crosshair and an
 // exact current weapon-fire pose is readable. Dead, stale, unarmed, unknown
 // hand-item, and unresolved mounted states fail closed.

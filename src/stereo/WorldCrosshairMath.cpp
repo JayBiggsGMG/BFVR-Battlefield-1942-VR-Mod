@@ -1,5 +1,7 @@
 #include "stereo/WorldCrosshairMath.h"
 
+#include "stereo/InfantryItemAimPolicy.h"
+
 #include <algorithm>
 #include <cmath>
 
@@ -78,11 +80,6 @@ bool IsRigid(const Matrix4& matrix) noexcept
 namespace bfvr::stereo
 {
 
-bool IsWorldCrosshairGadgetItemIndex(int itemIndex) noexcept
-{
-    return itemIndex == 4 || itemIndex == 5 || itemIndex == 6;
-}
-
 bool IsWorldCrosshairShootingWeaponItemIndex(int itemIndex) noexcept
 {
     return itemIndex == 2 || itemIndex == 3;
@@ -107,9 +104,9 @@ WorldCrosshairAimSource SelectWorldCrosshairAimSource(
     {
         return WorldCrosshairAimSource::None;
     }
-    if (IsWorldCrosshairGadgetItemIndex(eligibility.activeItemIndex))
+    if (IsInfantryControllerPointerItemIndex(eligibility.activeItemIndex))
     {
-        return WorldCrosshairAimSource::GadgetController;
+        return WorldCrosshairAimSource::ControllerPointer;
     }
     return IsWorldCrosshairShootingWeaponItemIndex(
             eligibility.activeItemIndex)

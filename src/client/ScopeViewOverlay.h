@@ -53,9 +53,10 @@ void NotifyMultiplayerNativeAltFireInput() noexcept;
 // fresh exact scoped samples without carrying an old direction across it.
 void SetSniperScopeSmoothingEnabled(bool enabled) noexcept;
 
-// Releases BFVR's exact zoom override ownership at the accepted local shot
-// boundary. BF1942's native post-fire zoom decision then passes through,
-// matching vanilla or mod-specific behavior without changing weapon timing.
+// Arms observation of BF1942's native post-fire zoom decision for the exact
+// owned scope lifetime. BFVR retains its input latch until the weapon/gameplay
+// state itself requests zoom-off, so a synthetic alt-fire release cannot force
+// a modded weapon out of a scope it natively retains.
 void NotifyScopeViewLocalWeaponFired(
     const void* soldier,
     const void* weapon) noexcept;

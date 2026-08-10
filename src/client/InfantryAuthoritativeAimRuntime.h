@@ -12,7 +12,7 @@ namespace bfvr
 enum class InfantryAuthoritativeAimTargetKind
 {
     FunctionalWeapon,
-    GadgetPointer,
+    ControllerPointer,
     ScopedWeapon,
 };
 
@@ -36,8 +36,9 @@ struct InfantryAuthoritativeAimRuntimeSample
 
 // Resolves one exact local-infantry lifetime. The target is the same final
 // functional gun basis used by visual arms/scope presentation, including
-// established two-hand steering and weapon recoil. Gadget slots retain the
-// established raw aim-pointer policy because they have no functional barrel.
+// established two-hand steering and weapon recoil. Knife slot 1 and gadget
+// slots 4/5/6 use the raw aim pointer because they have no firearm barrel
+// basis suitable for driving BF1942's native look authority.
 // Current authority comes from BF1942's untouched pre-VR source camera. Live
 // accepted-shot correlation proves that forward is the local direction passed
 // to WeaponFire_Core, while root plus replicated relative yaw is not a complete
