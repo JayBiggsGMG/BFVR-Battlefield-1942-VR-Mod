@@ -7,6 +7,7 @@
 namespace
 {
 using bfvr::stereo::Matrix4;
+using bfvr::stereo::Quaternion;
 
 constexpr float kPi = 3.14159265358979323846F;
 constexpr float kAffineTolerance = 0.001F;
@@ -79,6 +80,278 @@ bool IsRigidAffine(const Matrix4& matrix) noexcept
         determinant < 1.02F;
 }
 
+struct BasisVector
+{
+    float x = 0.0F;
+    float y = 0.0F;
+    float z = 0.0F;
+};
+
+float Dot(const BasisVector& left, const BasisVector& right) noexcept
+{
+    return left.x * right.x + left.y * right.y + left.z * right.z;
+}
+
+BasisVector Cross(
+    const BasisVector& left,
+    const BasisVector& right) noexcept
+{
+    return {
+        left.y * right.z - left.z * right.y,
+        left.z * right.x - left.x * right.z,
+        left.x * right.y - left.y * right.x};
+}
+
+bool Normalize(BasisVector& value) noexcept
+{
+    const float lengthSquared = Dot(value, value);
+    if (!std::isfinite(lengthSquared) || lengthSquared < 0.000001F)
+    {
+        return false;
+    }
+    const float inverseLength = 1.0F / std::sqrt(lengthSquared);
+    value.x *= inverseLength;
+    value.y *= inverseLength;
+    value.z *= inverseLength;
+    return std::isfinite(value.x) && std::isfinite(value.y) &&
+        std::isfinite(value.z);
+}
+
+std::optional<Quaternion> NormalizeQuaternion(
+    const Quaternion& value) noexcept
+{
+    const float lengthSquared = value.x * value.x + value.y * value.y +
+        value.z * value.z + value.w * value.w;
+    if (!std::isfinite(lengthSquared) || lengthSquared < 0.000001F)
+    {
+        return std::nullopt;
+    }
+    const float inverseLength = 1.0F / std::sqrt(lengthSquared);
+    const Quaternion result = {
+        value.x * inverseLength,
+        value.y * inverseLength,
+        value.z * inverseLength,
+        value.w * inverseLength};
+    return std::isfinite(result.x) && std::isfinite(result.y) &&
+            std::isfinite(result.z) && std::isfinite(result.w)
+        ? std::optional<Quaternion>(result)
+        : std::nullopt;
+}
+
+std::optional<Quaternion> QuaternionFromMatrix(
+    const Matrix4& matrix) noexcept
+{
+    if (!IsRigidAffine(matrix))
+    {
+        return std::nullopt;
+    }
+    const float m00 = matrix.values[0][0];
+    const float m01 = matrix.values[1][0];
+    const float m02 = matrix.values[2][0];
+    const float m10 = matrix.values[0][1];
+    const float m11 = matrix.values[1][1];
+    const float m12 = matrix.values[2][1];
+    const float m20 = matrix.values[0][2];
+    const float m21 = matrix.values[1][2];
+    const float m22 = matrix.values[2][2];
+    const float trace = m00 + m11 + m22;
+    Quaternion result = {};
+    if (trace > 0.0F)
+    {
+        const float scale = std::sqrt(trace + 1.0F) * 2.0F;
+        result = {
+            (m21 - m12) / scale,
+            (m02 - m20) / scale,
+            (m10 - m01) / scale,
+            0.25F * scale};
+    }
+    else if (m00 > m11 && m00 > m22)
+    {
+        const float scale = std::sqrt(1.0F + m00 - m11 - m22) * 2.0F;
+        result = {
+            0.25F * scale,
+            (m01 + m10) / scale,
+            (m02 + m20) / scale,
+            (m21 - m12) / scale};
+    }
+    else if (m11 > m22)
+    {
+        const float scale = std::sqrt(1.0F + m11 - m00 - m22) * 2.0F;
+        result = {
+            (m01 + m10) / scale,
+            0.25F * scale,
+            (m12 + m21) / scale,
+            (m02 - m20) / scale};
+    }
+    else
+    {
+        const float scale = std::sqrt(1.0F + m22 - m00 - m11) * 2.0F;
+        result = {
+            (m02 + m20) / scale,
+            (m12 + m21) / scale,
+            0.25F * scale,
+            (m10 - m01) / scale};
+    }
+    return NormalizeQuaternion(result);
+}
+
+Quaternion SlerpQuaternion(
+    const Quaternion& source,
+    Quaternion target,
+    const float amount) noexcept
+{
+    float dot = source.x * target.x + source.y * target.y +
+        source.z * target.z + source.w * target.w;
+    if (dot < 0.0F)
+    {
+        target = {-target.x, -target.y, -target.z, -target.w};
+        dot = -dot;
+    }
+    dot = std::clamp(dot, -1.0F, 1.0F);
+    const float clampedAmount = std::clamp(amount, 0.0F, 1.0F);
+    if (dot > 0.9995F)
+    {
+        return NormalizeQuaternion({
+            source.x + (target.x - source.x) * clampedAmount,
+            source.y + (target.y - source.y) * clampedAmount,
+            source.z + (target.z - source.z) * clampedAmount,
+            source.w + (target.w - source.w) * clampedAmount})
+            .value_or(source);
+    }
+    const float angle = std::acos(dot);
+    const float sine = std::sin(angle);
+    if (sine < 0.000001F)
+    {
+        return source;
+    }
+    const float sourceWeight =
+        std::sin((1.0F - clampedAmount) * angle) / sine;
+    const float targetWeight = std::sin(clampedAmount * angle) / sine;
+    return NormalizeQuaternion({
+        source.x * sourceWeight + target.x * targetWeight,
+        source.y * sourceWeight + target.y * targetWeight,
+        source.z * sourceWeight + target.z * targetWeight,
+        source.w * sourceWeight + target.w * targetWeight})
+        .value_or(source);
+}
+
+float QuaternionAngle(
+    const Quaternion& left,
+    const Quaternion& right) noexcept
+{
+    const Quaternion relative = {
+        left.w * right.x - left.x * right.w - left.y * right.z +
+            left.z * right.y,
+        left.w * right.y + left.x * right.z - left.y * right.w -
+            left.z * right.x,
+        left.w * right.z - left.x * right.y + left.y * right.x -
+            left.z * right.w,
+        left.w * right.w + left.x * right.x + left.y * right.y +
+            left.z * right.z};
+    const float vectorLength = std::sqrt(
+        relative.x * relative.x + relative.y * relative.y +
+        relative.z * relative.z);
+    return 2.0F * std::atan2(
+        vectorLength,
+        std::fabs(relative.w));
+}
+
+BasisVector RotateBasisVector(
+    const Quaternion& orientation,
+    const BasisVector& value) noexcept
+{
+    const BasisVector axis = {
+        orientation.x, orientation.y, orientation.z};
+    const BasisVector doubledCross = {
+        2.0F * (axis.y * value.z - axis.z * value.y),
+        2.0F * (axis.z * value.x - axis.x * value.z),
+        2.0F * (axis.x * value.y - axis.y * value.x)};
+    const BasisVector axisCross = Cross(axis, doubledCross);
+    return {
+        value.x + orientation.w * doubledCross.x + axisCross.x,
+        value.y + orientation.w * doubledCross.y + axisCross.y,
+        value.z + orientation.w * doubledCross.z + axisCross.z};
+}
+
+std::optional<Matrix4> SlerpScopeAimRotation(
+    const Matrix4& previous,
+    const Matrix4& current,
+    const float currentWeight) noexcept
+{
+    if (!IsRigidAffine(previous) || !IsRigidAffine(current) ||
+        !std::isfinite(currentWeight) || currentWeight < 0.0F ||
+        currentWeight > 1.0F)
+    {
+        return std::nullopt;
+    }
+    const auto previousQuaternion = QuaternionFromMatrix(previous);
+    const auto currentQuaternion = QuaternionFromMatrix(current);
+    if (!previousQuaternion.has_value() || !currentQuaternion.has_value())
+    {
+        return std::nullopt;
+    }
+    const Quaternion filtered = SlerpQuaternion(
+        *previousQuaternion,
+        *currentQuaternion,
+        currentWeight);
+    const BasisVector right = RotateBasisVector(filtered, {1.0F, 0.0F, 0.0F});
+    const BasisVector up = RotateBasisVector(filtered, {0.0F, 1.0F, 0.0F});
+    const BasisVector forward = RotateBasisVector(filtered, {0.0F, 0.0F, 1.0F});
+    Matrix4 result = current;
+    result.values[0][0] = right.x;
+    result.values[0][1] = right.y;
+    result.values[0][2] = right.z;
+    result.values[1][0] = up.x;
+    result.values[1][1] = up.y;
+    result.values[1][2] = up.z;
+    result.values[2][0] = forward.x;
+    result.values[2][1] = forward.y;
+    result.values[2][2] = forward.z;
+    return IsRigidAffine(result)
+        ? std::optional<Matrix4>(result)
+        : std::nullopt;
+}
+
+std::optional<float> RotationAngle(
+    const Matrix4& previous,
+    const Matrix4& current) noexcept
+{
+    const auto previousQuaternion = QuaternionFromMatrix(previous);
+    const auto currentQuaternion = QuaternionFromMatrix(current);
+    if (!previousQuaternion.has_value() || !currentQuaternion.has_value())
+    {
+        return std::nullopt;
+    }
+    return QuaternionAngle(*previousQuaternion, *currentQuaternion);
+}
+
+float CalculateScopeAimStabilizedLerp(
+    const float normalizedDistance,
+    const float elapsedSeconds) noexcept
+{
+    if (normalizedDistance >= 1.0F)
+    {
+        return 1.0F;
+    }
+    if (normalizedDistance <= 0.0F || elapsedSeconds <= 0.0F)
+    {
+        return 0.0F;
+    }
+    constexpr float kNinetyHertzSliceSeconds = 1.0F / 90.0F;
+    const float secondSliceLerp = normalizedDistance -
+        normalizedDistance * normalizedDistance;
+    const float thirdSliceLerp = secondSliceLerp * secondSliceLerp;
+    const float sliceCount = elapsedSeconds / kNinetyHertzSliceSeconds;
+    const float firstSlice = std::clamp(sliceCount, 0.0F, 1.0F);
+    const float secondSlice = std::clamp(sliceCount - 1.0F, 0.0F, 1.0F);
+    const float thirdSlice = std::clamp(sliceCount - 2.0F, 0.0F, 1.0F);
+    return std::clamp(
+        normalizedDistance * firstSlice +
+            secondSliceLerp * secondSlice + thirdSliceLerp * thirdSlice,
+        0.0F,
+        1.0F);
+}
+
 Matrix4 MultiplyMatrices(
     const Matrix4& left,
     const Matrix4& right) noexcept
@@ -128,6 +401,101 @@ std::optional<Matrix4> InvertRigidAffine(const Matrix4& matrix) noexcept
 
 namespace bfvr::stereo
 {
+
+std::optional<Matrix4> UpdateD3D8ScopeAimSmoothing(
+    ScopeAimSmoothingState& state,
+    const Matrix4& currentGunWorld,
+    const void* const weapon,
+    const void* const soldier,
+    const std::int32_t controllerGeneration,
+    const std::int64_t predictedDisplayTime,
+    const bool enabled) noexcept
+{
+    if (!IsRigidAffine(currentGunWorld))
+    {
+        ResetD3D8ScopeAimSmoothing(state);
+        return std::nullopt;
+    }
+    if (!enabled || weapon == nullptr || soldier == nullptr ||
+        controllerGeneration <= 0 || predictedDisplayTime <= 0)
+    {
+        ResetD3D8ScopeAimSmoothing(state);
+        return currentGunWorld;
+    }
+
+    const bool sameLifetime = state.valid && state.weapon == weapon &&
+        state.soldier == soldier;
+    if (sameLifetime &&
+        state.controllerGeneration == controllerGeneration)
+    {
+        return state.filteredGunWorld;
+    }
+
+    Matrix4 filtered = currentGunWorld;
+    const std::int64_t elapsedNanoseconds = sameLifetime
+        ? predictedDisplayTime - state.predictedDisplayTime
+        : 0;
+    const bool continuousSample = sameLifetime &&
+        elapsedNanoseconds > 0 &&
+        elapsedNanoseconds <=
+            kScopeAimSmoothingMaximumSampleIntervalNanoseconds;
+    if (continuousSample)
+    {
+        const auto angularError = RotationAngle(
+            state.filteredGunWorld,
+            currentGunWorld);
+        if (!angularError.has_value())
+        {
+            ResetD3D8ScopeAimSmoothing(state);
+            return std::nullopt;
+        }
+        if (*angularError < kScopeAimSmoothingMaximumErrorRadians)
+        {
+            const float elapsedSeconds =
+                static_cast<float>(elapsedNanoseconds) * 0.000000001F;
+            const float currentWeight = CalculateScopeAimStabilizedLerp(
+                *angularError / kScopeAimSmoothingMaximumErrorRadians,
+                elapsedSeconds);
+            const auto stabilized = SlerpScopeAimRotation(
+                state.filteredGunWorld,
+                currentGunWorld,
+                currentWeight);
+            if (!stabilized.has_value())
+            {
+                ResetD3D8ScopeAimSmoothing(state);
+                return std::nullopt;
+            }
+            filtered = *stabilized;
+        }
+    }
+    state.filteredGunWorld = filtered;
+    state.weapon = weapon;
+    state.soldier = soldier;
+    state.predictedDisplayTime = predictedDisplayTime;
+    state.controllerGeneration = controllerGeneration;
+    state.valid = true;
+    return filtered;
+}
+
+void ResetD3D8ScopeAimSmoothing(
+    ScopeAimSmoothingState& state) noexcept
+{
+    state = {};
+}
+
+bool ShouldReleaseD3D8OwnedScopeOnAcceptedShot(
+    const void* const requestedWeapon,
+    const void* const ownedWeapon,
+    const void* const ownedSoldier,
+    const bool ownedScopeEnabled,
+    const void* const shotWeapon,
+    const void* const shotSoldier) noexcept
+{
+    return requestedWeapon != nullptr && ownedWeapon != nullptr &&
+        ownedSoldier != nullptr && ownedScopeEnabled &&
+        requestedWeapon == ownedWeapon && ownedWeapon == shotWeapon &&
+        ownedSoldier == shotSoldier;
+}
 
 bool ShouldReleaseD3D8ScopeForPlayerLifecycle(
     const bool localPlayerStateReadable,

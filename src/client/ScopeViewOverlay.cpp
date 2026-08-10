@@ -71,6 +71,7 @@ struct CachedScopeAim
     bfvr::stereo::Matrix4 offHandSupportFromGun = {};
     const void* soldier = nullptr;
     LONG controllerGeneration = 0;
+    std::int64_t predictedDisplayTime = 0;
     bool trackedAimCorrectionValid = false;
     bool offHandSupportValid = false;
 };
@@ -381,6 +382,8 @@ public:
             cachedAim.controllerGunWorld;
         const void* cachedSoldier = cachedAim.soldier;
         LONG controllerGeneration = cachedAim.controllerGeneration;
+        std::int64_t predictedDisplayTime =
+            cachedAim.predictedDisplayTime;
         bfvr::NativeArmWeaponVisualPose nativePose = {};
         const bool freshPose = bfvr::ReadFreshNativeArmWeaponVisualPose(
             nativePose,
@@ -500,6 +503,10 @@ public:
             controllerGunWorld = nativePose.controllerGunWorld;
             cachedSoldier = nativePose.soldier;
             controllerGeneration = nativePose.controllerGeneration;
+            predictedDisplayTime = rawTrackedPoseAvailable &&
+                    trackedPose.controllerGeneration == controllerGeneration
+                ? trackedPose.predictedDisplayTime
+                : 0;
             const auto trackedAimCorrection =
                 !cachedAim.trackedAimCorrectionValid &&
                     rawTrackedPoseAvailable &&
@@ -519,6 +526,7 @@ public:
                 cachedSoldier,
                 controllerGunWorld,
                 controllerGeneration,
+                predictedDisplayTime,
                 trackedAimCorrection.has_value()
                     ? &*trackedAimCorrection
                     : nullptr,
@@ -530,11 +538,13 @@ public:
         {
             controllerGunWorld = *continuousTrackedPose;
             controllerGeneration = trackedPose.controllerGeneration;
+            predictedDisplayTime = trackedPose.predictedDisplayTime;
             StoreCachedAim(
                 requested,
                 cachedSoldier,
                 controllerGunWorld,
                 controllerGeneration,
+                predictedDisplayTime,
                 nullptr,
                 nullptr,
                 false);
@@ -549,7 +559,7 @@ public:
                         0) == 0)
                 {
                     WriteLog(
-                        L"Scoped view is preserving the established primary two-hand support binding with fresh left-grip fixed-pivot steering; native grip ownership is unchanged and this exact scoped gun basis is available to WeaponFire_Core.");
+                        L"Scoped view is preserving the established primary two-hand support binding with fresh left-grip fixed-pivot steering; native grip ownership is unchanged and this scoped controller basis drives native authoritative aim feedback.");
                 }
             }
             if (InterlockedCompareExchange(
@@ -558,7 +568,7 @@ public:
                     0) == 0)
             {
                 WriteLog(
-                    L"Scoped view is consuming fresh accepted right-controller aim independently of BF1942's hidden native-arm publisher; the exact scoped camera and WeaponFire_Core fallback share this gun basis.");
+                    L"Scoped view is consuming fresh accepted right-controller aim independently of BF1942's hidden native-arm publisher; one bounded stabilized aim target drives both native authority and scoped presentation.");
             }
         }
         else if (aimSource == bfvr::stereo::ScopeAimSource::Latched)
@@ -573,6 +583,18 @@ public:
                     L"Scoped view retained its last valid gun direction through a transient native-arm pose-cache miss; native FireArms::setZoom remains authoritative for mode lifetime.");
             }
         }
+
+        const auto smoothedAim = ApplyAimSmoothing(
+            controllerGunWorld,
+            requested,
+            cachedSoldier,
+            controllerGeneration,
+            predictedDisplayTime);
+        if (!smoothedAim.has_value())
+        {
+            return false;
+        }
+        controllerGunWorld = *smoothedAim;
 
         const float projectionScale = projectionScale_.load(
             std::memory_order_acquire);
@@ -614,6 +636,61 @@ public:
     void NotifyNativeAltFireInput() noexcept
     {
         PublishScopeIntent(ScopeIntentSource::Native);
+    }
+
+    void SetAimSmoothingEnabled(const bool enabled) noexcept
+    {
+        const bool changed = aimSmoothingEnabled_.exchange(
+            enabled,
+            std::memory_order_acq_rel) != enabled;
+        if (!changed)
+        {
+            return;
+        }
+        AcquireSRWLockExclusive(&aimLock_);
+        bfvr::stereo::ResetD3D8ScopeAimSmoothing(aimSmoothingState_);
+        ReleaseSRWLockExclusive(&aimLock_);
+        WriteLog(
+            L"Sniper Aim Smoothing changed to %s from live UserConfig; bounded angular stabilization history was cleared and the next exact scoped sample starts raw.",
+            enabled ? L"ON" : L"OFF");
+    }
+
+    void NotifyLocalWeaponFired(
+        const void* soldier,
+        const void* weapon) noexcept
+    {
+        if (soldier == nullptr || weapon == nullptr)
+        {
+            return;
+        }
+        const void* const ownedWeapon = ownedScopeWeapon_.load(
+            std::memory_order_acquire);
+        const void* const ownedSoldier = ownedScopeSoldier_.load(
+            std::memory_order_acquire);
+        if (!bfvr::stereo::ShouldReleaseD3D8OwnedScopeOnAcceptedShot(
+                requestedWeapon_.load(std::memory_order_acquire),
+                ownedWeapon,
+                ownedSoldier,
+                ownedScopeDesiredEnabled_.load(std::memory_order_acquire),
+                weapon,
+                soldier))
+        {
+            return;
+        }
+        void* expectedWeapon = const_cast<void*>(weapon);
+        if (!ownedScopeWeapon_.compare_exchange_strong(
+                expectedWeapon,
+                nullptr,
+                std::memory_order_acq_rel))
+        {
+            return;
+        }
+        ownedScopeSoldier_.store(nullptr, std::memory_order_relaxed);
+        ownedScopeDesiredEnabled_.store(false, std::memory_order_relaxed);
+        WriteLog(
+            L"Accepted local scoped shot released BFVR's exact zoom override ownership for weapon=%p soldier=%p. BF1942's native post-fire FireArms::setZoom and soldier zoom-bit transitions now pass through unchanged, matching each weapon's native behavior without a weapon timer.",
+            weapon,
+            soldier);
     }
 
     bool IsActivationPending() const noexcept
@@ -1255,6 +1332,11 @@ private:
             nativePose.soldier,
             nativePose.controllerGunWorld,
             nativePose.controllerGeneration,
+            rawTrackedPoseAvailable &&
+                    trackedPose.controllerGeneration ==
+                        nativePose.controllerGeneration
+                ? trackedPose.predictedDisplayTime
+                : 0,
             trackedAimCorrection.has_value()
                 ? &*trackedAimCorrection
                 : nullptr,
@@ -1267,7 +1349,7 @@ private:
         {
             InterlockedIncrement(&activations_);
             WriteLog(
-                L"Scoped view activated for exact local weapon=%p by callerReturn=%p: normalFov=%.6f scopeFov=%.6f projectionScale=%.6f trackedAimCorrectionReady=%d trackedOffHandReady=%d; camera position remains head-based and direction follows the authoritative gun basis.",
+                L"Scoped view activated for exact local weapon=%p by callerReturn=%p: normalFov=%.6f scopeFov=%.6f projectionScale=%.6f trackedAimCorrectionReady=%d trackedOffHandReady=%d; camera position remains head-based while the bounded controller aim drives scoped direction and native-authority convergence.",
                 weapon,
                 returnAddress,
                 properties.normalFov,
@@ -1299,6 +1381,7 @@ private:
         const void* soldier,
         const bfvr::stereo::Matrix4& controllerGunWorld,
         LONG controllerGeneration,
+        std::int64_t predictedDisplayTime,
         const bfvr::stereo::Matrix4* trackedAimCorrection,
         const bfvr::stereo::Matrix4* offHandSupportFromGun,
         const bool resetTrackedCalibration) noexcept
@@ -1306,10 +1389,16 @@ private:
         AcquireSRWLockExclusive(&aimLock_);
         const bool sameLifetime = cachedAimValid_ &&
             cachedAimWeapon_ == weapon && cachedAimSoldier_ == soldier;
+        if (resetTrackedCalibration || !sameLifetime)
+        {
+            bfvr::stereo::ResetD3D8ScopeAimSmoothing(
+                aimSmoothingState_);
+        }
         cachedAimWeapon_ = weapon;
         cachedAimSoldier_ = soldier;
         cachedControllerGunWorld_ = controllerGunWorld;
         cachedControllerGeneration_ = controllerGeneration;
+        cachedPredictedDisplayTime_ = predictedDisplayTime;
         if (trackedAimCorrection != nullptr)
         {
             cachedTrackedAimCorrection_ = *trackedAimCorrection;
@@ -1334,6 +1423,26 @@ private:
         ReleaseSRWLockExclusive(&aimLock_);
     }
 
+    std::optional<bfvr::stereo::Matrix4> ApplyAimSmoothing(
+        const bfvr::stereo::Matrix4& controllerGunWorld,
+        const void* weapon,
+        const void* soldier,
+        LONG controllerGeneration,
+        std::int64_t predictedDisplayTime) noexcept
+    {
+        AcquireSRWLockExclusive(&aimLock_);
+        const auto result = bfvr::stereo::UpdateD3D8ScopeAimSmoothing(
+            aimSmoothingState_,
+            controllerGunWorld,
+            weapon,
+            soldier,
+            static_cast<std::int32_t>(controllerGeneration),
+            predictedDisplayTime,
+            aimSmoothingEnabled_.load(std::memory_order_acquire));
+        ReleaseSRWLockExclusive(&aimLock_);
+        return result;
+    }
+
     bool ReadCachedAim(
         const void* weapon,
         CachedScopeAim& aim) noexcept
@@ -1349,6 +1458,7 @@ private:
                 cachedOffHandSupportFromGun_;
             aim.soldier = cachedAimSoldier_;
             aim.controllerGeneration = cachedControllerGeneration_;
+            aim.predictedDisplayTime = cachedPredictedDisplayTime_;
             aim.trackedAimCorrectionValid =
                 cachedTrackedAimCorrectionValid_;
             aim.offHandSupportValid = cachedOffHandSupportValid_;
@@ -1366,11 +1476,14 @@ private:
             cachedAimSoldier_ = nullptr;
             cachedControllerGunWorld_ = {};
             cachedControllerGeneration_ = 0;
+            cachedPredictedDisplayTime_ = 0;
             cachedTrackedAimCorrection_ = {};
             cachedOffHandSupportFromGun_ = {};
             cachedTrackedAimCorrectionValid_ = false;
             cachedOffHandSupportValid_ = false;
             cachedAimValid_ = false;
+            bfvr::stereo::ResetD3D8ScopeAimSmoothing(
+                aimSmoothingState_);
         }
         ReleaseSRWLockExclusive(&aimLock_);
     }
@@ -1516,6 +1629,7 @@ private:
     std::atomic<LONG> projectionReplaySequence_ = 0;
     std::atomic<LONG> projectionReplayBuilds_ = 0;
     std::atomic<bool> projectionPublicationConfirmed_ = false;
+    std::atomic<bool> aimSmoothingEnabled_ = true;
     std::atomic<float> projectionSourceX_ = 0.0F;
     std::atomic<float> projectionSourceY_ = 0.0F;
     std::atomic<float> projectionLeftX_ = 0.0F;
@@ -1529,9 +1643,11 @@ private:
     const void* cachedAimWeapon_ = nullptr;
     const void* cachedAimSoldier_ = nullptr;
     LONG cachedControllerGeneration_ = 0;
+    std::int64_t cachedPredictedDisplayTime_ = 0;
     bool cachedAimValid_ = false;
     bool cachedTrackedAimCorrectionValid_ = false;
     bool cachedOffHandSupportValid_ = false;
+    bfvr::stereo::ScopeAimSmoothingState aimSmoothingState_ = {};
     void* setZoomTarget_ = nullptr;
     void* setStateBitsTarget_ = nullptr;
     SetZoomFn originalSetZoom_ = nullptr;
@@ -1586,6 +1702,18 @@ void NotifyMultiplayerInfantryAltFirePulse() noexcept
 void NotifyMultiplayerNativeAltFireInput() noexcept
 {
     g_scopeViewOverlay.NotifyNativeAltFireInput();
+}
+
+void SetSniperScopeSmoothingEnabled(const bool enabled) noexcept
+{
+    g_scopeViewOverlay.SetAimSmoothingEnabled(enabled);
+}
+
+void NotifyScopeViewLocalWeaponFired(
+    const void* soldier,
+    const void* weapon) noexcept
+{
+    g_scopeViewOverlay.NotifyLocalWeaponFired(soldier, weapon);
 }
 
 bool ReadScopeViewFrameState(ScopeViewFrameState& state) noexcept

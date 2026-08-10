@@ -14,10 +14,10 @@ using HandWeaponRecoilLogCallback = void (*)(const wchar_t* message);
 // Compile-time tuning boundary. Native BF1942 pitch/yaw values, sample order,
 // randomization, and table timing remain unchanged. Only the requested support
 // amplitude policy and post-native residual return are BFVR-owned.
-inline constexpr float kTwoHandPitchRecoilScale = 2.0F;
-inline constexpr float kTwoHandYawRecoilScale = 2.0F;
-inline constexpr float kOneHandPitchRecoilScale = 4.0F;
-inline constexpr float kOneHandYawRecoilScale = 4.0F;
+inline constexpr float kTwoHandPitchRecoilScale = 1.5F;
+inline constexpr float kTwoHandYawRecoilScale = 1.5F;
+inline constexpr float kOneHandPitchRecoilScale = 3.0F;
+inline constexpr float kOneHandYawRecoilScale = 3.0F;
 inline constexpr float kHandWeaponRecoilReturnHalfLifeSeconds = 0.10F;
 
 void StartHandWeaponRecoilRuntime(

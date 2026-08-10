@@ -320,6 +320,9 @@ private:
                     weapon,
                     bfvr::IsFreshCurrentOffHandSupportHeld(
                         kOffHandSupportMaximumAgeMs));
+                bfvr::NotifyScopeViewLocalWeaponFired(
+                    cameraSoldier,
+                    weapon);
             }
         }
         if (nativeInfantryAuthorityProofEnabled)

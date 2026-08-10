@@ -100,9 +100,9 @@ bool TestOneHandScalingAndContinuousRecovery() noexcept
     bfvr::stereo::HandWeaponRecoilState twoHand = {};
     bfvr::stereo::HandWeaponRecoilState oneHand = {};
     (void)bfvr::stereo::AccumulateHandWeaponRecoilStep(
-        twoHand, 1, -0.5F, 0.2F, 2.0F, 2.0F, 45.0F);
+        twoHand, 1, -0.5F, 0.2F, 1.5F, 1.5F, 45.0F);
     (void)bfvr::stereo::AccumulateHandWeaponRecoilStep(
-        oneHand, 1, -0.5F, 0.2F, 4.0F, 4.0F, 45.0F);
+        oneHand, 1, -0.5F, 0.2F, 3.0F, 3.0F, 45.0F);
     if (!NearlyEqual(
             oneHand.angles.pitchDegrees,
             twoHand.angles.pitchDegrees * 2.0F) ||
@@ -116,10 +116,10 @@ bool TestOneHandScalingAndContinuousRecovery() noexcept
         oneHand, 0.10F, 0.10F, 0.10F);
     const float recoveredPitch = oneHand.angles.pitchDegrees;
     (void)bfvr::stereo::AccumulateHandWeaponRecoilStep(
-        oneHand, 2, -0.25F, 0.0F, 4.0F, 4.0F, 45.0F);
+        oneHand, 2, -0.25F, 0.0F, 3.0F, 3.0F, 45.0F);
     return NearlyEqual(
         oneHand.angles.pitchDegrees,
-        recoveredPitch - 1.00F);
+        recoveredPitch - 0.75F);
 }
 
 bool TestSequenceAndSafetyBounds() noexcept

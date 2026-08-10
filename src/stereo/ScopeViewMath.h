@@ -2,6 +2,7 @@
 
 #include "stereo/StereoMath.h"
 
+#include <cstdint>
 #include <optional>
 
 namespace bfvr::stereo
@@ -37,6 +38,51 @@ enum class ScopeAimSource
     Tracked,
     Latched
 };
+
+// Unity-style bounded angular stabilization. History can influence the result
+// only while its total orientation error is below 0.25 degrees. At or beyond
+// that boundary, deliberate motion catches up to raw immediately.
+inline constexpr float kScopeAimSmoothingMaximumErrorRadians =
+    0.004363323F;
+inline constexpr std::int64_t
+    kScopeAimSmoothingMaximumSampleIntervalNanoseconds = 50'000'000;
+
+struct ScopeAimSmoothingState
+{
+    Matrix4 filteredGunWorld = {};
+    const void* weapon = nullptr;
+    const void* soldier = nullptr;
+    std::int64_t predictedDisplayTime = 0;
+    std::int32_t controllerGeneration = 0;
+    bool valid = false;
+};
+
+// Filters rotation only and always keeps the newest sample's translation.
+// Repeated reads of one controller generation return the identical result.
+// Disabling, changing weapon/soldier lifetime, or receiving an invalid sample
+// clears history and starts from the current sample without an entry hitch.
+[[nodiscard]] std::optional<Matrix4> UpdateD3D8ScopeAimSmoothing(
+    ScopeAimSmoothingState& state,
+    const Matrix4& currentGunWorld,
+    const void* weapon,
+    const void* soldier,
+    std::int32_t controllerGeneration,
+    std::int64_t predictedDisplayTime,
+    bool enabled) noexcept;
+
+void ResetD3D8ScopeAimSmoothing(
+    ScopeAimSmoothingState& state) noexcept;
+
+// Accepted fire releases only the exact currently owned scope lifetime.
+// BF1942's native post-fire zoom decision then passes through unchanged,
+// matching vanilla and mod-specific behavior without a weapon timer.
+[[nodiscard]] bool ShouldReleaseD3D8OwnedScopeOnAcceptedShot(
+    const void* requestedWeapon,
+    const void* ownedWeapon,
+    const void* ownedSoldier,
+    bool ownedScopeEnabled,
+    const void* shotWeapon,
+    const void* shotSoldier) noexcept;
 
 // Death is a hard scope lifetime boundary even when BF1942 temporarily keeps
 // the old soldier and weapon pointers alive for the deploy-menu transition.

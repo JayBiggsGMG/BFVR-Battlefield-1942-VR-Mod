@@ -105,6 +105,13 @@ bool TestBounds()
             SettingsMenuTab::Controls,
             false) == SettingsMenuSelection::InvertFlightPitch &&
         SettingsMenuSelectionAt(
+            0.57F,
+            0.796F,
+            false,
+            false,
+            SettingsMenuTab::Controls,
+            false) == SettingsMenuSelection::SniperScopeSmoothingEnabled &&
+        SettingsMenuSelectionAt(
             0.889F,
             0.322F,
             false,
@@ -431,6 +438,16 @@ bool TestInteractionAndPlacement()
     {
         return false;
     }
+    state = interaction.Snapshot();
+    AimAt(input, state.panelPose, state.widthMeters, 0.57F, 0.796F);
+    input.predictedDisplayTime += 11'111'111;
+    interaction.Update(input);
+    Click(interaction, input);
+    if (interaction.Snapshot().values.sniperScopeSmoothingEnabled ||
+        !interaction.TakeValuesChanged())
+    {
+        return false;
+    }
 
     state = interaction.Snapshot();
     AimAt(input, state.panelPose, state.widthMeters, 0.84F, 0.05F);
@@ -590,6 +607,7 @@ bool TestArt(const wchar_t* directory)
         bfvr::settings::WorldCrosshairMode::HitMarkerOnly;
     variant.values.invertFlightPitch = true;
     variant.values.controllerHapticsEnabled = false;
+    variant.values.sniperScopeSmoothingEnabled = false;
     if (!differs(variant))
     {
         return false;
@@ -723,6 +741,7 @@ bool CaptureArt(const wchar_t* assetDirectory, const wchar_t* outputDirectory)
         state.values.invertFlightPitch = checked;
         state.values.invertTurretPitch = checked;
         state.values.invertTurretYaw = checked;
+        state.values.sniperScopeSmoothingEnabled = checked;
         if (checked)
         {
             state.values.offHandGripStyle =

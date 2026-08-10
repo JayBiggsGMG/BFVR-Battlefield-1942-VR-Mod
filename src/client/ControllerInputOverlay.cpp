@@ -1045,6 +1045,19 @@ private:
                 bfvr::ReadInfantryAuthoritativeAimRuntimeSample(
                     currentControlObject,
                     aimRuntime);
+            bfvr::stereo::InfantryAuthoritativeAimConfiguration
+                aimConfiguration = {};
+            if (aimRuntimeAvailable && aimRuntime.targetKind ==
+                    bfvr::InfantryAuthoritativeAimTargetKind::ScopedWeapon)
+            {
+                // The stock normalized PlayerAction axis remains bounded to
+                // one. Keep it saturated until the native firing camera is
+                // within roughly 0.9 degrees of the direct scoped target,
+                // avoiding the default proportional tail without changing
+                // packets, fire matrices, or server authority.
+                aimConfiguration.inputPerRadian = 64.0F;
+                aimConfiguration.deadzoneRadians = 0.00075F;
+            }
             const auto authoritativeAim =
                 bfvr::stereo::UpdateInfantryAuthoritativeAim(
                     infantryAuthoritativeAim,
@@ -1055,7 +1068,8 @@ private:
                     aimRuntime.currentPitchRadians,
                     reinterpret_cast<std::uintptr_t>(currentControlObject),
                     reinterpret_cast<std::uintptr_t>(aimRuntime.item),
-                    static_cast<std::uint64_t>(controllerGeneration));
+                    static_cast<std::uint64_t>(controllerGeneration),
+                    aimConfiguration);
             if (authoritativeAim.lifetimeCaptured)
             {
                 InterlockedIncrement(

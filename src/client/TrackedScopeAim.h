@@ -2,6 +2,7 @@
 
 #include "stereo/StereoMath.h"
 
+#include <cstdint>
 #include <windows.h>
 
 namespace bfvr
@@ -13,6 +14,7 @@ struct TrackedScopeAimSample
     stereo::Matrix4 leftGripWorld = {};
     const void* soldier = nullptr;
     LONG controllerGeneration = 0;
+    std::int64_t predictedDisplayTime = 0;
     float leftSqueezeValue = 0.0F;
     bool sessionFocused = false;
     bool leftGripTracked = false;

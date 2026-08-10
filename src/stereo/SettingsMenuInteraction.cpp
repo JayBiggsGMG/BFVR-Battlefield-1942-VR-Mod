@@ -249,8 +249,8 @@ SettingsMenuSelection SettingsMenuSelectionAt(
         {
             if (pixelX >= kSettingsMenuControlColumnPixels &&
                 pixelX <= kSettingsMenuControlColumnPixels + 72.0F &&
-                pixelY >= kSettingsMenuControlsToggleRowCentersPixels[index] - 38.0F &&
-                pixelY <= kSettingsMenuControlsToggleRowCentersPixels[index] + 38.0F)
+                pixelY >= kSettingsMenuControlsToggleRowCentersPixels[index] - 32.0F &&
+                pixelY <= kSettingsMenuControlsToggleRowCentersPixels[index] + 32.0F)
             {
                 return static_cast<SettingsMenuSelection>(
                     static_cast<std::uint32_t>(
@@ -346,6 +346,8 @@ const wchar_t* SettingsMenuSelectionName(
         return L"Turret Yaw inversion";
     case SettingsMenuSelection::ControllerHapticsEnabled:
         return L"Controller Haptics";
+    case SettingsMenuSelection::SniperScopeSmoothingEnabled:
+        return L"Sniper Aim Smoothing";
     case SettingsMenuSelection::FxaaEnabled: return L"FXAA";
     case SettingsMenuSelection::FxaaSharpening:
         return L"FXAA Sharpening slider";
@@ -832,6 +834,12 @@ void SettingsMenuInteraction::Activate(
     case SettingsMenuSelection::ControllerHapticsEnabled:
         values_.controllerHapticsEnabled =
             !values_.controllerHapticsEnabled;
+        valuesChanged_ = true;
+        status_ = SettingsMenuStatus::SettingsNotSaved;
+        break;
+    case SettingsMenuSelection::SniperScopeSmoothingEnabled:
+        values_.sniperScopeSmoothingEnabled =
+            !values_.sniperScopeSmoothingEnabled;
         valuesChanged_ = true;
         status_ = SettingsMenuStatus::SettingsNotSaved;
         break;

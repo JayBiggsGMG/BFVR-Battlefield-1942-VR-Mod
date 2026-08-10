@@ -90,6 +90,25 @@ bool TestFeedbackConvergesAndDeadzoneSettles() noexcept
         Near(settled.mouseLookY, 0.0F);
 }
 
+bool TestSteepScopedGainRemainsBoundedButRemovesWideTail() noexcept
+{
+    bfvr::stereo::InfantryAuthoritativeAimConfiguration scoped = {};
+    scoped.inputPerRadian = 64.0F;
+    scoped.deadzoneRadians = 0.00075F;
+    bfvr::stereo::InfantryAuthoritativeAimState state = {};
+    (void)bfvr::stereo::UpdateInfantryAuthoritativeAim(
+        state, true, true, Forward(0.0F, 0.0F), 0.0F, 0.0F,
+        20, 21, 1, scoped);
+    const auto oneDegree = bfvr::stereo::UpdateInfantryAuthoritativeAim(
+        state, true, true, Forward(kPi / 180.0F, 0.0F), 0.0F, 0.0F,
+        20, 21, 2, scoped);
+    const auto quarterDegree = bfvr::stereo::UpdateInfantryAuthoritativeAim(
+        state, true, true, Forward(kPi / 720.0F, 0.0F), 0.0F, 0.0F,
+        20, 21, 3, scoped);
+    return Near(oneDegree.mouseLookX, 1.0F) &&
+        Near(quarterDegree.mouseLookX, 64.0F * kPi / 720.0F);
+}
+
 bool TestShortestYawWrapAndClamp() noexcept
 {
     bfvr::stereo::InfantryAuthoritativeAimState wrapState = {};
@@ -171,6 +190,7 @@ int main()
     if (!TestLifetimeAndDuplicateSequence() ||
         !TestAbsoluteYawAndPitchSigns() ||
         !TestFeedbackConvergesAndDeadzoneSettles() ||
+        !TestSteepScopedGainRemainsBoundedButRemovesWideTail() ||
         !TestShortestYawWrapAndClamp() ||
         !TestVerticalAimPreservesYaw() ||
         !TestLifetimeAndTrackingReset() ||

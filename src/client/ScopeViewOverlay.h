@@ -9,9 +9,10 @@ namespace bfvr
 
 struct ScopeViewFrameState
 {
-    // One validated item/soldier-scoped gun basis is shared by camera replay
-    // and the scoped WeaponFire_Core fallback. Consumers must verify both
-    // lifetime pointers before using it.
+    // Validated item/soldier-scoped aim target. When enabled, a bounded
+    // delta-time-aware angular stabilizer attenuates only micro-motion and
+    // catches up to raw at 0.25 degrees. This same ray drives scoped
+    // presentation and native-authority convergence.
     stereo::Matrix4 controllerGunWorld = {};
     const void* weapon = nullptr;
     const void* soldier = nullptr;
@@ -46,6 +47,18 @@ void PollScopeViewPlayerLifecycle() noexcept;
 // and local BFSoldier 0x20 state bit consistent until the next input edge.
 void NotifyMultiplayerInfantryAltFirePulse() noexcept;
 void NotifyMultiplayerNativeAltFireInput() noexcept;
+
+// Updated from the x86 process's live UserConfig polling path. Disabling the
+// feature immediately clears stabilization history; re-enabling starts from
+// fresh exact scoped samples without carrying an old direction across it.
+void SetSniperScopeSmoothingEnabled(bool enabled) noexcept;
+
+// Releases BFVR's exact zoom override ownership at the accepted local shot
+// boundary. BF1942's native post-fire zoom decision then passes through,
+// matching vanilla or mod-specific behavior without changing weapon timing.
+void NotifyScopeViewLocalWeaponFired(
+    const void* soldier,
+    const void* weapon) noexcept;
 
 [[nodiscard]] bool ReadScopeViewFrameState(
     ScopeViewFrameState& state) noexcept;

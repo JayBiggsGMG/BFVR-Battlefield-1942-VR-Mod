@@ -180,6 +180,7 @@ bool ReadFreshTrackedScopeAim(
     result.controllerGunWorld = controllerGunWorld;
     result.soldier = expectedSoldier;
     result.controllerGeneration = generation;
+    result.predictedDisplayTime = controller.predictedDisplayTime;
     result.sessionFocused = controller.sessionFocused;
 
     const D3D8RuntimeControllerHand& left = controller.hands[0];

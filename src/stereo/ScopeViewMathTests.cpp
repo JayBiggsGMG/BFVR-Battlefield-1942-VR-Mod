@@ -280,6 +280,262 @@ bool TestProjectionScalePreservesCentreAndDepth() noexcept
         NearlyEqual(projection.values[3][2], original.values[3][2]);
 }
 
+bool TestScopeAimSmoothingAttenuatesMicroMotionAndTranslation() noexcept
+{
+    bfvr::stereo::ScopeAimSmoothingState state = {};
+    const void* const weapon = reinterpret_cast<const void*>(0x1000);
+    const void* const soldier = reinterpret_cast<const void*>(0x2000);
+    constexpr std::int64_t firstTime = 1'000'000'000;
+    constexpr std::int64_t frameTime = 11'111'111;
+    Matrix4 initial = Yaw(0.0F);
+    initial.values[3][0] = 1.0F;
+    const auto first = bfvr::stereo::UpdateD3D8ScopeAimSmoothing(
+        state, initial, weapon, soldier, 10, firstTime, true);
+    Matrix4 smallMove = Yaw(0.001F);
+    smallMove.values[3][0] = 4.0F;
+    smallMove.values[3][1] = 5.0F;
+    smallMove.values[3][2] = 6.0F;
+    const auto stabilized = bfvr::stereo::UpdateD3D8ScopeAimSmoothing(
+        state, smallMove, weapon, soldier, 11, firstTime + frameTime, true);
+    const auto duplicate = bfvr::stereo::UpdateD3D8ScopeAimSmoothing(
+        state,
+        Yaw(0.018F),
+        weapon,
+        soldier,
+        11,
+        firstTime + frameTime,
+        true);
+    if (!first.has_value() || !stabilized.has_value() ||
+        !duplicate.has_value())
+    {
+        return false;
+    }
+    const float stabilizedYaw = std::atan2(
+        stabilized->values[2][0],
+        stabilized->values[2][2]);
+    return NearlyEqual(first->values[2][2], 1.0F) &&
+        stabilizedYaw > 0.00020F && stabilizedYaw < 0.00026F &&
+        NearlyEqual(stabilized->values[3][0], 4.0F) &&
+        NearlyEqual(stabilized->values[3][1], 5.0F) &&
+        NearlyEqual(stabilized->values[3][2], 6.0F) &&
+        NearlyEqual(
+            duplicate->values[2][0], stabilized->values[2][0]) &&
+        NearlyEqual(
+            duplicate->values[2][2], stabilized->values[2][2]);
+}
+
+bool TestScopeAimSmoothingHandlesSustainedMotionAndBypassesAtBound() noexcept
+{
+    bfvr::stereo::ScopeAimSmoothingState state = {};
+    const void* const weapon = reinterpret_cast<const void*>(0x1000);
+    const void* const soldier = reinterpret_cast<const void*>(0x2000);
+    constexpr std::int64_t firstTime = 1'000'000'000;
+    constexpr std::int64_t frameTime = 11'111'111;
+    const auto first = bfvr::stereo::UpdateD3D8ScopeAimSmoothing(
+        state, Yaw(0.0F), weapon, soldier, 1, firstTime, true);
+    const auto firstMove = bfvr::stereo::UpdateD3D8ScopeAimSmoothing(
+        state,
+        Yaw(0.001F),
+        weapon,
+        soldier,
+        2,
+        firstTime + frameTime,
+        true);
+    const auto secondMove = bfvr::stereo::UpdateD3D8ScopeAimSmoothing(
+        state,
+        Yaw(0.002F),
+        weapon,
+        soldier,
+        3,
+        firstTime + 2 * frameTime,
+        true);
+    const auto thirdMove = bfvr::stereo::UpdateD3D8ScopeAimSmoothing(
+        state,
+        Yaw(0.003F),
+        weapon,
+        soldier,
+        4,
+        firstTime + 3 * frameTime,
+        true);
+    const Matrix4 deliberateMove = Yaw(0.010F);
+    const auto bypassed = bfvr::stereo::UpdateD3D8ScopeAimSmoothing(
+        state,
+        deliberateMove,
+        weapon,
+        soldier,
+        5,
+        firstTime + 4 * frameTime,
+        true);
+    if (!first.has_value() || !firstMove.has_value() ||
+        !secondMove.has_value() || !thirdMove.has_value() ||
+        !bypassed.has_value())
+    {
+        return false;
+    }
+    const float firstYaw = std::atan2(
+        firstMove->values[2][0], firstMove->values[2][2]);
+    const float secondYaw = std::atan2(
+        secondMove->values[2][0], secondMove->values[2][2]);
+    const float thirdYaw = std::atan2(
+        thirdMove->values[2][0], thirdMove->values[2][2]);
+    return firstYaw > 0.0F && firstYaw < 0.001F &&
+        secondYaw > firstYaw && secondYaw < 0.002F &&
+        thirdYaw > secondYaw && thirdYaw < 0.003F &&
+        0.003F - thirdYaw <
+            bfvr::stereo::kScopeAimSmoothingMaximumErrorRadians &&
+        NearlyEqual(
+            bypassed->values[2][0], deliberateMove.values[2][0]) &&
+        NearlyEqual(
+            bypassed->values[2][2], deliberateMove.values[2][2]);
+}
+
+bool TestScopeAimSmoothingResetsAtEveryDiscontinuity() noexcept
+{
+    bfvr::stereo::ScopeAimSmoothingState state = {};
+    const void* const weapon = reinterpret_cast<const void*>(0x1000);
+    const void* const soldier = reinterpret_cast<const void*>(0x2000);
+    const void* const otherWeapon = reinterpret_cast<const void*>(0x3000);
+    constexpr std::int64_t firstTime = 1'000'000'000;
+    constexpr std::int64_t frameTime = 11'111'111;
+    const auto first = bfvr::stereo::UpdateD3D8ScopeAimSmoothing(
+        state, Yaw(0.0F), weapon, soldier, 1, firstTime, true);
+    const auto filtered = bfvr::stereo::UpdateD3D8ScopeAimSmoothing(
+        state,
+        Yaw(0.001F),
+        weapon,
+        soldier,
+        2,
+        firstTime + frameTime,
+        true);
+    const Matrix4 disabledMove = Yaw(0.002F);
+    const auto disabled = bfvr::stereo::UpdateD3D8ScopeAimSmoothing(
+        state,
+        disabledMove,
+        weapon,
+        soldier,
+        3,
+        firstTime + 2 * frameTime,
+        false);
+    const Matrix4 reenabledMove = Yaw(0.003F);
+    const auto reenabled = bfvr::stereo::UpdateD3D8ScopeAimSmoothing(
+        state,
+        reenabledMove,
+        weapon,
+        soldier,
+        4,
+        firstTime + 3 * frameTime,
+        true);
+    const Matrix4 reversedTimeMove = Yaw(0.004F);
+    const auto reversedTime = bfvr::stereo::UpdateD3D8ScopeAimSmoothing(
+        state,
+        reversedTimeMove,
+        weapon,
+        soldier,
+        5,
+        firstTime + 2 * frameTime,
+        true);
+    const Matrix4 lifetimeMove = Yaw(0.005F);
+    const auto lifetimeChanged =
+        bfvr::stereo::UpdateD3D8ScopeAimSmoothing(
+            state,
+            lifetimeMove,
+            otherWeapon,
+            soldier,
+            6,
+            firstTime + 4 * frameTime,
+            true);
+    const Matrix4 gapMove = Yaw(0.006F);
+    const auto gapReset = bfvr::stereo::UpdateD3D8ScopeAimSmoothing(
+        state,
+        gapMove,
+        otherWeapon,
+        soldier,
+        7,
+        firstTime + 100'000'000,
+        true);
+    return first.has_value() && filtered.has_value() &&
+        disabled.has_value() && reenabled.has_value() &&
+        reversedTime.has_value() && lifetimeChanged.has_value() &&
+        gapReset.has_value() &&
+        NearlyEqual(disabled->values[2][0], disabledMove.values[2][0]) &&
+        NearlyEqual(reenabled->values[2][0], reenabledMove.values[2][0]) &&
+        NearlyEqual(
+            reversedTime->values[2][0], reversedTimeMove.values[2][0]) &&
+        NearlyEqual(
+            lifetimeChanged->values[2][0], lifetimeMove.values[2][0]) &&
+        NearlyEqual(gapReset->values[2][0], gapMove.values[2][0]);
+}
+
+bool TestScopeAimSmoothingIsFrameRateAware() noexcept
+{
+    bfvr::stereo::ScopeAimSmoothingState ninetyHertz = {};
+    bfvr::stereo::ScopeAimSmoothingState oneEightyHertz = {};
+    const void* const weapon = reinterpret_cast<const void*>(0x1000);
+    const void* const soldier = reinterpret_cast<const void*>(0x2000);
+    constexpr std::int64_t firstTime = 1'000'000'000;
+    const Matrix4 target = Yaw(0.001F);
+    const auto initialNinety = bfvr::stereo::UpdateD3D8ScopeAimSmoothing(
+        ninetyHertz, Yaw(0.0F), weapon, soldier, 1, firstTime, true);
+    const auto atNinety = bfvr::stereo::UpdateD3D8ScopeAimSmoothing(
+        ninetyHertz,
+        target,
+        weapon,
+        soldier,
+        2,
+        firstTime + 11'111'111,
+        true);
+    const auto initialOneEighty =
+        bfvr::stereo::UpdateD3D8ScopeAimSmoothing(
+        oneEightyHertz, Yaw(0.0F), weapon, soldier, 1, firstTime, true);
+    const auto halfwayOneEighty =
+        bfvr::stereo::UpdateD3D8ScopeAimSmoothing(
+        oneEightyHertz,
+        target,
+        weapon,
+        soldier,
+        2,
+        firstTime + 5'555'556,
+        true);
+    const auto atOneEighty = bfvr::stereo::UpdateD3D8ScopeAimSmoothing(
+        oneEightyHertz,
+        target,
+        weapon,
+        soldier,
+        3,
+        firstTime + 11'111'111,
+        true);
+    if (!initialNinety.has_value() || !initialOneEighty.has_value() ||
+        !halfwayOneEighty.has_value() || !atNinety.has_value() ||
+        !atOneEighty.has_value())
+    {
+        return false;
+    }
+    const float ninetyYaw = std::atan2(
+        atNinety->values[2][0], atNinety->values[2][2]);
+    const float oneEightyYaw = std::atan2(
+        atOneEighty->values[2][0], atOneEighty->values[2][2]);
+    return std::fabs(ninetyYaw - oneEightyYaw) < 0.00005F;
+}
+
+bool TestAcceptedShotReleasesOnlyExactOwnedScope() noexcept
+{
+    const void* const weapon = reinterpret_cast<const void*>(0x1000);
+    const void* const soldier = reinterpret_cast<const void*>(0x2000);
+    const void* const otherWeapon = reinterpret_cast<const void*>(0x3000);
+    const void* const otherSoldier = reinterpret_cast<const void*>(0x4000);
+    using bfvr::stereo::ShouldReleaseD3D8OwnedScopeOnAcceptedShot;
+    return ShouldReleaseD3D8OwnedScopeOnAcceptedShot(
+               weapon, weapon, soldier, true, weapon, soldier) &&
+        !ShouldReleaseD3D8OwnedScopeOnAcceptedShot(
+            weapon, weapon, soldier, false, weapon, soldier) &&
+        !ShouldReleaseD3D8OwnedScopeOnAcceptedShot(
+            weapon, weapon, soldier, true, otherWeapon, soldier) &&
+        !ShouldReleaseD3D8OwnedScopeOnAcceptedShot(
+            weapon, weapon, soldier, true, weapon, otherSoldier) &&
+        !ShouldReleaseD3D8OwnedScopeOnAcceptedShot(
+            nullptr, weapon, soldier, true, weapon, soldier);
+}
+
 bool TestInvalidCameraAndProjectionFailClosed() noexcept
 {
     Matrix4 invalidCamera = Identity();
@@ -363,6 +619,11 @@ int main()
         !TestScopedOffHandSupportRemainsHeldRegardlessOfDistance() ||
         !TestInvalidFovFailsClosed() ||
         !TestScopeCameraUsesGunRotationAndHeadPosition() ||
+        !TestScopeAimSmoothingAttenuatesMicroMotionAndTranslation() ||
+        !TestScopeAimSmoothingHandlesSustainedMotionAndBypassesAtBound() ||
+        !TestScopeAimSmoothingResetsAtEveryDiscontinuity() ||
+        !TestScopeAimSmoothingIsFrameRateAware() ||
+        !TestAcceptedShotReleasesOnlyExactOwnedScope() ||
         !TestProjectionScalePreservesCentreAndDepth() ||
         !TestInvalidCameraAndProjectionFailClosed() ||
         !TestEyeFillingScopeQuadCoversAsymmetricFov() ||

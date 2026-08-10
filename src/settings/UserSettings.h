@@ -95,6 +95,7 @@ struct UserSettingsValues
     bool invertTurretPitch = false;
     bool invertTurretYaw = false;
     bool controllerHapticsEnabled = true;
+    bool sniperScopeSmoothingEnabled = true;
     OffHandGripStyle offHandGripStyle = OffHandGripStyle::Hold;
     WorldCrosshairMode handWeaponCrosshair = WorldCrosshairMode::On;
     WorldCrosshairMode mountedWeaponCrosshair = WorldCrosshairMode::On;

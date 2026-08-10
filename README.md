@@ -82,6 +82,12 @@ into network-valid axis samples instead of being clipped by the compact packet
 encoder. BFVR does not write the replicated body transform or change weapon
 state, firing, packets, projectile direction, models, or IK.
 
+BF1942's paired native recoil pattern is transferred from the legacy camera to
+the physical held gun at `1.5x` pitch/yaw with established two-hand support and
+`3.0x` pitch/yaw one-handed. This changes amplitude only: native sample order,
+randomization, weapon timing, and the `0.10`-second residual-return half-life
+remain unchanged.
+
 ## Player-input boundary trace
 
 `Trace-BFVR-PlayerInput.bat` in the game root starts a separate local/offline
@@ -262,26 +268,43 @@ adjusted directions; a fixed-range guarded muzzle/impact measurement remains
 pending.
 
 For an exact local handweapon whose native template enables `useScope`,
-BF1942's native zoom state keeps the HMD-positioned stereo view aimed along the
-tracked gun basis, restores that weapon's configured relative FOV, and presents
-the native scope raster as an eye-filling head-locked overlay. BFVR calibrates
-the accepted right-controller aim against the exact native-arm gun basis at
-entry, then continues reading that tracked aim while BF1942 hides its normal
-first-person arm update during native scope view. A transient tracking miss
-retains the last valid gun direction rather than dropping magnification or the
-overlay. When primary two-hand support was already established at entry, scoped
-camera direction also reuses that exact authored support relation and bounded
-fixed-pivot steering with fresh left-grip motion. Releasing or losing the left
-grip returns view direction to right aim; this does not create a second grip or
-write native grip state. The exact alive-local weapon and soldier lifetime also
-share this visible scoped gun basis with `WeaponFire_Core` whenever BF1942's
-hidden native-arm publication is stale. That fallback replaces shot direction
-but preserves BF1942's native projectile origin; native weapon/barrel offsets,
-spread, cadence, projectile creation, and networking remain authoritative.
-Zoom-only weapons without
-`useScope` receive no BFVR camera, FOV, or overlay policy. Scope exit immediately
-returns camera direction and firing to their normal behavior; grips, arms,
-elbows, IK, and recoil are not filtered by this view.
+BF1942's native zoom state keeps the HMD-positioned stereo view aimed along its
+native pre-VR source-camera direction, restores that weapon's configured
+relative FOV, and presents the native scope raster as an eye-filling head-locked
+overlay. BFVR calibrates the accepted right-controller aim against the exact
+native-arm gun basis at entry, then continues reading that tracked aim while
+BF1942 hides its normal first-person arm update during native scope view. A
+transient tracking miss retains the last valid target rather than dropping
+magnification or the overlay. When primary two-hand support was already
+established at entry, the controller target also reuses that exact authored
+support relation and bounded fixed-pivot steering with fresh left-grip motion.
+Releasing or losing the left grip returns the target to right aim; this does not
+create a second grip or write native grip state. The smoothed controller basis
+drives both the visible magnified direction and BF1942's native authoritative
+aim target. This removes visible native-camera catch-up while preserving
+BF1942's projectile origin, weapon/barrel offsets, spread, cadence, projectile
+creation, and stock-server authority. Because the stock normalized look route
+still converges in the background, an immediate shot after an unusually large
+hand jump may briefly differ from the displayed ray.
+The default-on `Sniper Aim Smoothing` checkbox on the Controls page affects
+only scoped micro-motion. It applies a frame-time-aware spherical orientation
+interpolation while total stabilized-to-raw error remains below `0.25` degrees;
+as error grows, raw input receives more weight, and at the boundary the aim
+catches up to raw immediately. Current weapon translation is always preserved.
+The same aim ray drives scoped presentation and native authority convergence,
+so this is not view-only smoothing. Controls > Save applies the toggle live and
+clears stabilization history immediately. Scope, tracking, weapon, soldier, or
+sample-time discontinuities also restart from raw. An accepted
+local scoped shot releases BFVR's exact zoom
+override ownership, allowing BF1942's native post-fire `setZoom` and soldier
+zoom-bit decisions to pass through unchanged. Stock bolt-action rifles can
+therefore exit before chamber animation as in the flat game, while a modded
+weapon keeps whatever native behavior it authors. No weapon class, animation
+time, or reload timer is assumed. Zoom-only
+weapons without `useScope` receive no BFVR camera, FOV, or overlay policy.
+Scope exit clears smoothing history and returns camera direction to normal;
+unscoped aim, firing, grips, arms, elbows, IK, recoil, artificial turning,
+vehicles, and mounted weapons are not filtered by this feature.
 
 The VR replay applies only a rigid controller attachment to the classified
 weapon family: no viewmodel scale or perspective morph and no artificial

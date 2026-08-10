@@ -1154,7 +1154,7 @@ bool SettingsMenuArt::ComposeSettingsBody(
             stereo::SettingsMenuSelection::MountedCrosshairNext) ||
         !DrawWhiteText(
             destination,
-            L"Controller Feedback & Vehicle Inversion:",
+            L"Aim, Feedback & Vehicle Inversion:",
             82,
             495,
             460,
@@ -1164,16 +1164,18 @@ bool SettingsMenuArt::ComposeSettingsBody(
     {
         return false;
     }
-    constexpr std::array<const wchar_t*, 4> labels = {
+    constexpr std::array<const wchar_t*, 5> labels = {
         L"Flight Pitch (Invert Vertical Stick)",
         L"Turret Pitch (Up/Down)",
         L"Turret Yaw (Left/Right)",
-        L"Controller Haptics"};
-    const std::array<bool, 4> checked = {
+        L"Controller Haptics",
+        L"Sniper Aim Smoothing"};
+    const std::array<bool, 5> checked = {
         state.values.invertFlightPitch,
         state.values.invertTurretPitch,
         state.values.invertTurretYaw,
-        state.values.controllerHapticsEnabled};
+        state.values.controllerHapticsEnabled,
+        state.values.sniperScopeSmoothingEnabled};
     for (std::size_t index = 0; index < labels.size(); ++index)
     {
         const int centerY = static_cast<int>(

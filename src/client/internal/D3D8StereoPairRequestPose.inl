@@ -107,6 +107,8 @@ void PrepareRuntimeRenderRequestPose()
             updatedSettings.playMode != g_trackingUserSettings.playMode;
         trackingSettingsChanged = settingsReloaded || playModeChanged;
         g_trackingUserSettings = updatedSettings;
+        bfvr::SetSniperScopeSmoothingEnabled(
+            updatedSettings.sniperScopeSmoothingEnabled);
         g_trackingSettingsInitialized = true;
     }
     bfvr::D3D8TrackingContext trackingContext = {};

@@ -792,10 +792,13 @@ private:
         ScopeViewFrameState scope = {};
         if (ReadScopeViewFrameState(scope))
         {
-            const auto scoped =
-                stereo::MakeD3D8WeaponDirectedScopeCamera(
-                    finalCamera,
-                    scope.controllerGunWorld);
+            // The exact filtered aim ray drives both scoped presentation and
+            // BF1942's native-authority target. Ordinary controller motion is
+            // direct; only tiny reversing jitter receives a small correction.
+            // WeaponFire_Core itself remains on the stock authority path.
+            const auto scoped = stereo::MakeD3D8WeaponDirectedScopeCamera(
+                finalCamera,
+                scope.controllerGunWorld);
             if (scoped.has_value())
             {
                 finalCamera = *scoped;
@@ -860,11 +863,14 @@ private:
                 ToPose(referenceHead),
                 ToPose(currentHead),
                 kWorldUnitsPerMeter);
-            const auto visibilityCamera = adjusted.has_value() && scoped
-                ? stereo::MakeD3D8WeaponDirectedScopeCamera(
-                    *adjusted,
-                    scope.controllerGunWorld)
-                : adjusted;
+            std::optional<stereo::Matrix4> visibilityCamera = adjusted;
+            if (adjusted.has_value() && scoped)
+            {
+                visibilityCamera =
+                    stereo::MakeD3D8WeaponDirectedScopeCamera(
+                        *adjusted,
+                        scope.controllerGunWorld);
+            }
             if (visibilityCamera.has_value())
             {
                 // BF1942 performs this visibility query before its ordinary
