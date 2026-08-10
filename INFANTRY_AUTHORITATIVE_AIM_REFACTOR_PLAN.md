@@ -101,7 +101,10 @@ basis before IK, item attachment, two-hand steering, or final gun publication.
 Invalid/missing pairing retains the preceding fail-closed behavior. Camera,
 PlayerAction, source-camera aim feedback, native fire, packets, and
 non-infantry paths are unchanged. All 28 suites and loader dry-run pass; both
-staged DLL locations have the hash above. Headset validation is pending.
+staged DLL locations have the hash above. The owner then confirmed that this
+artifact removed the remaining arm/gun turn jitter: Smooth remains camera- and
+viewmodel-smooth, with the previously accepted MP/SP aim, damage, two-hand,
+throwable, and Snap behavior intact.
 
 ## Objective
 
@@ -399,7 +402,7 @@ https://registry.khronos.org/OpenXR/specs/1.1/man/html/xrWaitFrame.html
 - [x] Verify no camera-side periodic hitch or duplicate artificial turn.
 - [x] Pair controller rebasing with the live soldier transform in the same
   skeleton callback for both hands.
-- [ ] Verify the arm/gun-only turn jitter is removed, then revalidate one-hand,
+- [x] Verify the arm/gun-only turn jitter is removed, then revalidate one-hand,
   two-hand, throwable, Smooth, and Snap alignment
   after that visual-coherence change.
 
