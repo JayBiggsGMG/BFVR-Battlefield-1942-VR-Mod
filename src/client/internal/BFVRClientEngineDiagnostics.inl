@@ -1052,7 +1052,11 @@ void* WINAPI HookDirect3DCreate8(UINT sdkVersion)
     {
         AppendLog(L"Camera transaction breakpoints are compiled but disabled; the candidate-matrix sampler uses only 4 Hz direct reads to avoid map-load exception overhead.");
     }
-    StartOpenXRBootstrap();
-    StartLocalPlayerManagerProbe();
+    if (bfvr::IsD3D8RuntimeDiagnosticsEnabled(
+            bfvr::ReadD3D8RuntimeDiagnosticLevel()))
+    {
+        StartOpenXRBootstrap();
+        StartLocalPlayerManagerProbe();
+    }
     return direct3D;
 }

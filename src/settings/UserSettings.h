@@ -13,7 +13,7 @@ constexpr std::uint32_t kUserSettingsSchemaVersion = 1;
 constexpr std::uint32_t kMinimumInfantryTurnSpeedPercent = 50;
 constexpr std::uint32_t kMaximumInfantryTurnSpeedPercent = 300;
 constexpr std::uint32_t kInfantryTurnSpeedStepPercent = 10;
-constexpr std::uint32_t kDefaultInfantryTurnSpeedPercent = 100;
+constexpr std::uint32_t kDefaultInfantryTurnSpeedPercent = 200;
 constexpr std::uint32_t kMinimumSnapTurnAngleDegrees = 15;
 constexpr std::uint32_t kMaximumSnapTurnAngleDegrees = 90;
 constexpr std::uint32_t kSnapTurnAngleStepDegrees = 15;
@@ -36,7 +36,7 @@ constexpr std::uint32_t kDefaultAmbientOcclusionStrengthPercent = 100;
 constexpr std::uint32_t kMinimumFxaaSharpeningPercent = 0;
 constexpr std::uint32_t kMaximumFxaaSharpeningPercent = 100;
 constexpr std::uint32_t kFxaaSharpeningStepPercent = 5;
-constexpr std::uint32_t kDefaultFxaaSharpeningPercent = 25;
+constexpr std::uint32_t kDefaultFxaaSharpeningPercent = 30;
 constexpr std::uint32_t kMinimumBloomThresholdPercent = 5;
 constexpr std::uint32_t kMaximumBloomThresholdPercent = 95;
 constexpr std::uint32_t kBloomThresholdStepPercent = 5;
@@ -44,7 +44,7 @@ constexpr std::uint32_t kDefaultBloomThresholdPercent = 75;
 constexpr std::uint32_t kMinimumBloomIntensityPercent = 0;
 constexpr std::uint32_t kMaximumBloomIntensityPercent = 100;
 constexpr std::uint32_t kBloomIntensityStepPercent = 5;
-constexpr std::uint32_t kDefaultBloomIntensityPercent = 25;
+constexpr std::uint32_t kDefaultBloomIntensityPercent = 45;
 
 enum class OffHandGripStyle : std::uint32_t
 {
@@ -85,19 +85,20 @@ struct UserSettingsValues
     PlayMode playMode = PlayMode::Seated;
     ArtificialTurnMode artificialTurnMode = ArtificialTurnMode::Smooth;
     std::uint32_t snapTurnAngleDegrees = kDefaultSnapTurnAngleDegrees;
-    MovementDirection movementDirection = MovementDirection::Character;
+    MovementDirection movementDirection = MovementDirection::Head;
     std::int32_t vrHeightAdjustmentCentimeters =
         kDefaultVrHeightAdjustmentCentimeters;
     std::uint32_t standingEyeHeightCentimeters =
         kDefaultStandingEyeHeightCentimeters;
-    bool comfortVignetteEnabled = true;
+    bool comfortVignetteEnabled = false;
     bool invertFlightPitch = false;
-    bool invertTurretPitch = false;
+    bool invertTurretPitch = true;
     bool invertTurretYaw = false;
     bool controllerHapticsEnabled = true;
     bool sniperScopeSmoothingEnabled = true;
     OffHandGripStyle offHandGripStyle = OffHandGripStyle::Hold;
-    WorldCrosshairMode handWeaponCrosshair = WorldCrosshairMode::On;
+    WorldCrosshairMode handWeaponCrosshair =
+        WorldCrosshairMode::HitMarkerOnly;
     WorldCrosshairMode mountedWeaponCrosshair = WorldCrosshairMode::On;
     bool fxaaEnabled = true;
     std::uint32_t fxaaSharpeningPercent = kDefaultFxaaSharpeningPercent;

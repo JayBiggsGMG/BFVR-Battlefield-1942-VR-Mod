@@ -25,6 +25,17 @@ std::int64_t ReadPerformanceCounter() noexcept
     return QueryPerformanceCounter(&counter) ? counter.QuadPart : 0;
 }
 
+bool ReadPerformanceDiagnosticsEnabled() noexcept
+{
+    wchar_t value[16] = {};
+    const DWORD length = GetEnvironmentVariableW(
+        L"BFVR_DIAGNOSTICS",
+        value,
+        static_cast<DWORD>(std::size(value)));
+    return !((length == 3 && _wcsicmp(value, L"off") == 0) ||
+        (length == 1 && value[0] == L'0'));
+}
+
 void WriteLog(void*, const wchar_t* message)
 {
     fwprintf(g_output, L"[PRESENTER] %s\n", message);
@@ -356,6 +367,8 @@ int RunPresenter(
     bool runUntilStopped,
     const wchar_t* payloadDirectory)
 {
+    const bool performanceDiagnosticsEnabled =
+        ReadPerformanceDiagnosticsEnabled();
     bfvr::shared::SharedControlChannel channel;
     if (!channel.Open(channelName))
     {
@@ -587,7 +600,9 @@ int RunPresenter(
             frameDepthValid
             ? block->frameDepth
             : bfvr::shared::SharedDepthFrameParameters{};
-        const std::int64_t consumeStarted = ReadPerformanceCounter();
+        const std::int64_t consumeStarted = performanceDiagnosticsEnabled
+            ? ReadPerformanceCounter()
+            : 0;
         if (!consumer.ConsumeFrame(
                 frameOverlayFlags,
                 frameDepthValid,
@@ -596,9 +611,12 @@ int RunPresenter(
         {
             return false;
         }
-        totalSourceConsumeQpcTicks +=
-            ReadPerformanceCounter() - consumeStarted;
-        ++sourceConsumeCount;
+        if (performanceDiagnosticsEnabled)
+        {
+            totalSourceConsumeQpcTicks +=
+                ReadPerformanceCounter() - consumeStarted;
+            ++sourceConsumeCount;
+        }
         desktopMirrorSourceDirty = true;
         // The x86 producer publishes placement before frameSequence. Pair the
         // payload with the just-consumed frame so the OpenXR panel and the
@@ -767,7 +785,9 @@ int RunPresenter(
     };
     const auto beginFrame = [&](bfvr::OpenXRPresentationFrameState& frame)
     {
-        const std::int64_t beginStarted = ReadPerformanceCounter();
+        const std::int64_t beginStarted = performanceDiagnosticsEnabled
+            ? ReadPerformanceCounter()
+            : 0;
         const ULONGLONG now = GetTickCount64();
         if (now >= nextComfortSettingsPollAt)
         {
@@ -862,22 +882,25 @@ int RunPresenter(
             }
         }
         dispatchQuickMenuCommand();
-        totalOpenXrBeginQpcTicks +=
-            ReadPerformanceCounter() - beginStarted;
-        ++openXrBeginCount;
-        if (began && frame.predictedDisplayPeriod > 0)
+        if (performanceDiagnosticsEnabled)
         {
-            totalPredictedDisplayPeriod += frame.predictedDisplayPeriod;
-            minimumPredictedDisplayPeriod =
-                minimumPredictedDisplayPeriod == 0
-                ? frame.predictedDisplayPeriod
-                : (std::min)(
-                    minimumPredictedDisplayPeriod,
+            totalOpenXrBeginQpcTicks +=
+                ReadPerformanceCounter() - beginStarted;
+            ++openXrBeginCount;
+            if (began && frame.predictedDisplayPeriod > 0)
+            {
+                totalPredictedDisplayPeriod += frame.predictedDisplayPeriod;
+                minimumPredictedDisplayPeriod =
+                    minimumPredictedDisplayPeriod == 0
+                    ? frame.predictedDisplayPeriod
+                    : (std::min)(
+                        minimumPredictedDisplayPeriod,
+                        frame.predictedDisplayPeriod);
+                maximumPredictedDisplayPeriod = (std::max)(
+                    maximumPredictedDisplayPeriod,
                     frame.predictedDisplayPeriod);
-            maximumPredictedDisplayPeriod = (std::max)(
-                maximumPredictedDisplayPeriod,
-                frame.predictedDisplayPeriod);
-            ++predictedDisplayPeriodCount;
+                ++predictedDisplayPeriodCount;
+            }
         }
         return began;
     };
@@ -895,15 +918,20 @@ int RunPresenter(
         const bfvr::OpenXRPresentationView* const rightEye = frame.viewsValid
             ? &frame.views[1]
             : nullptr;
-        const std::int64_t mirrorStarted = ReadPerformanceCounter();
+        const std::int64_t mirrorStarted = performanceDiagnosticsEnabled
+            ? ReadPerformanceCounter()
+            : 0;
         desktopMirror.Render(
             consumer.GetLocalTextures(),
             rightEye,
             acceptedUiPresentationMode,
             quickMenuVisible ? &quickMenu : nullptr);
-        totalDesktopMirrorQpcTicks +=
-            ReadPerformanceCounter() - mirrorStarted;
-        ++desktopMirrorCount;
+        if (performanceDiagnosticsEnabled)
+        {
+            totalDesktopMirrorQpcTicks +=
+                ReadPerformanceCounter() - mirrorStarted;
+            ++desktopMirrorCount;
+        }
         desktopMirrorSourceDirty = false;
         quickMenuWasVisibleInMirror = quickMenuVisible;
     };
@@ -915,15 +943,20 @@ int RunPresenter(
         {
             renderDesktopMirror(frame);
         }
-        const std::int64_t endStarted = ReadPerformanceCounter();
+        const std::int64_t endStarted = performanceDiagnosticsEnabled
+            ? ReadPerformanceCounter()
+            : 0;
         const bool ended = presentation.EndFrame(
             textures,
             acceptedUiReferenceMode,
             currentUiWorldAnchor(),
             acceptedUiPresentationMode);
-        totalOpenXrSubmitOrEndQpcTicks +=
-            ReadPerformanceCounter() - endStarted;
-        ++openXrSubmitOrEndCount;
+        if (performanceDiagnosticsEnabled)
+        {
+            totalOpenXrSubmitOrEndQpcTicks +=
+                ReadPerformanceCounter() - endStarted;
+            ++openXrSubmitOrEndCount;
+        }
         return ended;
     };
     const auto submitFrame = [&]()
@@ -934,6 +967,10 @@ int RunPresenter(
     };
     const auto reportPerformance = [&](const wchar_t* label)
     {
+        if (!performanceDiagnosticsEnabled)
+        {
+            return;
+        }
         LARGE_INTEGER frequency = {};
         if (!QueryPerformanceFrequency(&frequency) || frequency.QuadPart <= 0)
         {
@@ -1008,7 +1045,8 @@ int RunPresenter(
         producerIsAlive())
     {
         const DWORD performanceNow = GetTickCount();
-        if (performanceNow - lastPerformanceReportAt >= 30000)
+        if (performanceDiagnosticsEnabled &&
+            performanceNow - lastPerformanceReportAt >= 30000)
         {
             reportPerformance(L"Periodic");
             lastPerformanceReportAt = performanceNow;

@@ -239,31 +239,31 @@ bool TestProductionSeedAndTypedValues(const std::wstring& directory)
             bfvr::settings::ArtificialTurnMode::Smooth ||
         decodedDefaults.snapTurnAngleDegrees != 45 ||
         decodedDefaults.movementDirection !=
-            bfvr::settings::MovementDirection::Character ||
+            bfvr::settings::MovementDirection::Head ||
         decodedDefaults.vrHeightAdjustmentCentimeters != 0 ||
         decodedDefaults.standingEyeHeightCentimeters != 170 ||
-        !decodedDefaults.comfortVignetteEnabled ||
-        decodedDefaults.infantryTurnSpeedPercent != 100 ||
+        decodedDefaults.comfortVignetteEnabled ||
+        decodedDefaults.infantryTurnSpeedPercent != 200 ||
         decodedDefaults.invertFlightPitch ||
-        decodedDefaults.invertTurretPitch ||
+        !decodedDefaults.invertTurretPitch ||
         decodedDefaults.invertTurretYaw ||
         !decodedDefaults.controllerHapticsEnabled ||
         !decodedDefaults.sniperScopeSmoothingEnabled ||
         decodedDefaults.offHandGripStyle !=
             bfvr::settings::OffHandGripStyle::Hold ||
         decodedDefaults.handWeaponCrosshair !=
-            bfvr::settings::WorldCrosshairMode::On ||
+            bfvr::settings::WorldCrosshairMode::HitMarkerOnly ||
         decodedDefaults.mountedWeaponCrosshair !=
             bfvr::settings::WorldCrosshairMode::On ||
         !decodedDefaults.fxaaEnabled ||
-        decodedDefaults.fxaaSharpeningPercent != 25 ||
+        decodedDefaults.fxaaSharpeningPercent != 30 ||
         !decodedDefaults.ambientOcclusionEnabled ||
         decodedDefaults.ambientOcclusionRadiusCentimeters != 60 ||
          decodedDefaults.ambientOcclusionStrengthPercent != 100 ||
         !decodedDefaults.waterReflectionsEnabled ||
          !decodedDefaults.bloomEnabled ||
         decodedDefaults.bloomThresholdPercent != 75 ||
-        decodedDefaults.bloomIntensityPercent != 25)
+        decodedDefaults.bloomIntensityPercent != 45)
     {
         return false;
     }
@@ -277,7 +277,7 @@ bool TestProductionSeedAndTypedValues(const std::wstring& directory)
     const auto upgraded = store.LoadOrCreateDefaults();
     if (upgraded.status != UserSettingsLoadStatus::LoadedCompletedSeed ||
         upgraded.settings != defaults ||
-        ReadText(store.Path()).find("infantry_turn_speed_percent = 100") ==
+        ReadText(store.Path()).find("infantry_turn_speed_percent = 200") ==
             std::string::npos ||
         ReadText(store.Path()).find("vr_height_adjustment_centimeters") !=
             std::string::npos)

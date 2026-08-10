@@ -507,6 +507,10 @@ float ReplayTranslationDistance(
 
 void TraceWeaponFireStereoReplay(const DrawStateSnapshot& snapshot) noexcept
 {
+    if (!bfvr::IsD3D8RuntimeDiagnosticsEnabled(g_runtimeDiagnostics))
+    {
+        return;
+    }
     const LONG requestSequence = g_runtimeRenderRequest.sequence;
     if (requestSequence <= 0 ||
         requestSequence == g_fireReplayTrace.lastRequestSequence)
@@ -1004,7 +1008,8 @@ FrameMirrorResult MirrorDrawIntoFrame(
     }
 
     bfvr::d3d8probe::ScopedPerformanceAccumulator preparationTimer(
-        g_frame.preparationQpcTicks);
+        g_frame.preparationQpcTicks,
+        bfvr::IsD3D8RuntimeDiagnosticsEnabled(g_runtimeDiagnostics));
     DrawStateSnapshot snapshot = {};
     bool eligibleTarget = false;
     const bool readable = AcquireFrameDrawState(device, snapshot, eligibleTarget);
@@ -1018,7 +1023,8 @@ FrameMirrorResult MirrorDrawIntoFrame(
     }
     ApplyFrameSemanticPolicy(invocation, snapshot);
     PrepareStereoStableWaterReflection(snapshot);
-    if (snapshot.semanticClass ==
+    if (bfvr::IsD3D8RuntimeDiagnosticsEnabled(g_runtimeDiagnostics) &&
+        snapshot.semanticClass ==
         bfvr::stereo::D3D8SemanticDrawClass::WaterSurface)
     {
         LogWaterPassState(device, snapshot);
@@ -1072,7 +1078,8 @@ FrameMirrorResult MirrorDrawIntoFrame(
     preparationTimer.Stop();
 
     bfvr::d3d8probe::ScopedPerformanceAccumulator drawTimer(
-        g_frame.eyeOrLayerDrawQpcTicks);
+        g_frame.eyeOrLayerDrawQpcTicks,
+        bfvr::IsD3D8RuntimeDiagnosticsEnabled(g_runtimeDiagnostics));
     const D3DMatrix* const eyeViews[2] = {&snapshot.leftView, &snapshot.rightView};
     const D3DMatrix* const eyeProjections[2] = {
         &snapshot.leftProjection,
@@ -2616,7 +2623,7 @@ void StartStereoProbe(
     if (mode == ProbeMode::FullFramePresentation)
     {
         AppendLog(
-            L"BFVR runtime diagnostics=%s: normal keeps all rendering and restoration writes while skipping per-draw proof readbacks and provenance aggregation; set BFVR_DIAGNOSTICS=deep to enable those expensive proof checks for a troubleshooting run.",
+            L"BFVR runtime diagnostics=%s: off disables runtime logging and performance measurement, normal keeps summaries while skipping expensive proof readbacks, and deep enables all proof checks.",
             bfvr::DescribeD3D8RuntimeDiagnosticLevel(g_runtimeDiagnostics));
     }
     HANDLE worker = CreateThread(nullptr, 0, RunProbe, nullptr, 0, nullptr);

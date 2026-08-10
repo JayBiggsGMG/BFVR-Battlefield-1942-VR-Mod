@@ -98,6 +98,7 @@ private:
     D3D11WaterReflection waterReflection_;
     D3D11TextureScaler scaler_;
     bool requiresLegacyCompletionWait_ = false;
+    bool collectPerformanceDiagnostics_ = true;
     bool scalerRequired_ = false;
     bool worldFxaaEnabled_ = true;
     float worldFxaaSharpeningStrength_ = 0.25F;

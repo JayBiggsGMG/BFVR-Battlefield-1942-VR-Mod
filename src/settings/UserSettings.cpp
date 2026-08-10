@@ -421,7 +421,7 @@ UserSettingsSchema SeededUserSettingsSchema()
         },
         {
             std::string(kMovementDirectionKey),
-            "character",
+            "head",
             {
                 "Chooses the forward basis for infantry left-thumbstick movement. character follows BF1942's character-facing basis; head follows the headset yaw; off_hand_controller follows the left controller's pointing yaw.",
                 "Accepted values: character, head, or off_hand_controller. Head and controller pitch/roll are ignored. This setting is applied only after VR Settings > Save."
@@ -448,7 +448,7 @@ UserSettingsSchema SeededUserSettingsSchema()
         },
         {
             std::string(kComfortVignetteEnabledKey),
-            "true",
+            "false",
             {
                 "Enables a movement-only VR comfort vignette. BFVR filters translation of the local infantry or occupied vehicle control object into a stable moving/stopped state, then eases a soft black peripheral aperture in and out. Physical head movement, head look, artificial turning, turret aim, and vehicle rotation in place do not activate it.",
                 "The effect is composited above the stereo world but below Ref2 HUD, scope, Quick Menu, VR Settings, and other overlays, so interface elements remain clear. Accepted values: true or false. Applied after VR Settings > Save without a restart."
@@ -466,7 +466,7 @@ UserSettingsSchema SeededUserSettingsSchema()
         },
         {
             std::string(kInvertTurretPitchKey),
-            "false",
+            "true",
             {
                 "Inverts up/down aiming for surface vehicles, sea vehicles, turrets, and mounted weapons, including right-stick and right-grip motion aim.",
                 "Accepted values: true or false. false keeps stick and controller movement aligned in their normal pitch direction; true reverses both."
@@ -511,7 +511,7 @@ UserSettingsSchema SeededUserSettingsSchema()
         },
         {
             std::string(kHandWeaponCrosshairKey),
-            "on",
+            "hit_marker_only",
             {
                 "Controls the stereo 3D HUD crosshair only for shooting hand weapons such as rifles and pistols. off hides both the aiming crosshair and its hit marker; on shows both; hit_marker_only hides the aiming crosshair but still shows confirmed-hit feedback.",
                 "Accepted values: off, on, or hit_marker_only. Gadget crosshairs always remain enabled. This does not change weapon aim, bullet direction, scopes, or BF1942 hit detection. Applied only after VR Settings > Save."
@@ -541,7 +541,7 @@ UserSettingsSchema SeededUserSettingsSchema()
             std::to_string(kDefaultFxaaSharpeningPercent),
             {
                 "Controls a lightweight contrast-adaptive sharpening step fused into BFVR's world-only FXAA shader. It restores detail softened by FXAA without filtering the separate VR menu and HUD layers.",
-                "Accepted values: 0 through 100 percent in steps of 5. 0 disables sharpening while retaining FXAA; 25 is the mild default. Applied after VR Settings > Save without requiring a restart."
+                "Accepted values: 0 through 100 percent in steps of 5. 0 disables sharpening while retaining FXAA; 30 is the seeded default. Applied after VR Settings > Save without requiring a restart."
             },
             IsFxaaSharpening
         },
@@ -604,7 +604,7 @@ UserSettingsSchema SeededUserSettingsSchema()
             std::to_string(kDefaultBloomIntensityPercent),
             {
                 "Controls how strongly the blurred bloom image is added back to the world. 0 produces no visible glow while retaining the saved bloom enable choice; 100 is the maximum menu value.",
-                "Accepted values: 0 through 100 percent in steps of 5. 25 means an intensity of 0.25. This setting is applied only after VR Settings > Save."
+                "Accepted values: 0 through 100 percent in steps of 5. 45 means an intensity of 0.45. This setting is applied only after VR Settings > Save."
             },
             IsBloomIntensity
         }
@@ -631,7 +631,7 @@ UserSettingsValues DecodeUserSettings(const UserSettings& settings) noexcept
         ? ArtificialTurnMode::Smooth
         : ArtificialTurnMode::Snap;
     const std::string_view movementDirection = readEnumText(
-        kMovementDirectionKey, "character");
+        kMovementDirectionKey, "head");
     result.movementDirection = movementDirection == "head"
         ? MovementDirection::Head
         : movementDirection == "off_hand_controller"
@@ -660,7 +660,7 @@ UserSettingsValues DecodeUserSettings(const UserSettings& settings) noexcept
             : found->second == "true";
     };
     result.invertFlightPitch = readBoolean(kInvertFlightPitchKey, false);
-    result.invertTurretPitch = readBoolean(kInvertTurretPitchKey, false);
+    result.invertTurretPitch = readBoolean(kInvertTurretPitchKey, true);
     result.invertTurretYaw = readBoolean(kInvertTurretYawKey, false);
     result.controllerHapticsEnabled = readBoolean(
         kControllerHapticsEnabledKey,
@@ -670,7 +670,7 @@ UserSettingsValues DecodeUserSettings(const UserSettings& settings) noexcept
         true);
     result.comfortVignetteEnabled = readBoolean(
         kComfortVignetteEnabledKey,
-        true);
+        false);
     const auto readGripStyle = [&settings]() {
         const auto found = settings.values.find(
             std::string(kOffHandGripStyleKey));
@@ -678,9 +678,15 @@ UserSettingsValues DecodeUserSettings(const UserSettings& settings) noexcept
             ? OffHandGripStyle::Toggle
             : OffHandGripStyle::Hold;
     };
-    const auto readCrosshairMode = [&settings](std::string_view key) {
+    const auto readCrosshairMode = [&settings](
+                                       std::string_view key,
+                                       WorldCrosshairMode fallback) {
         const auto found = settings.values.find(std::string(key));
-        if (found == settings.values.end() || found->second == "on")
+        if (found == settings.values.end())
+        {
+            return fallback;
+        }
+        if (found->second == "on")
         {
             return WorldCrosshairMode::On;
         }
@@ -689,9 +695,12 @@ UserSettingsValues DecodeUserSettings(const UserSettings& settings) noexcept
             : WorldCrosshairMode::Off;
     };
     result.offHandGripStyle = readGripStyle();
-    result.handWeaponCrosshair = readCrosshairMode(kHandWeaponCrosshairKey);
+    result.handWeaponCrosshair = readCrosshairMode(
+        kHandWeaponCrosshairKey,
+        WorldCrosshairMode::HitMarkerOnly);
     result.mountedWeaponCrosshair = readCrosshairMode(
-        kMountedWeaponCrosshairKey);
+        kMountedWeaponCrosshairKey,
+        WorldCrosshairMode::On);
     result.fxaaEnabled = readBoolean(kFxaaEnabledKey, true);
     result.ambientOcclusionEnabled = readBoolean(
         kAmbientOcclusionEnabledKey,

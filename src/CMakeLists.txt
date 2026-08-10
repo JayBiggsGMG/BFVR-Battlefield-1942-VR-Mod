@@ -290,6 +290,7 @@ add_library(BFVRStereoMath STATIC
 
 add_executable(BFVRLoader
   loader/BFVRLoader.cpp
+  loader/BFVR.rc
 )
 
 add_executable(BFVROpenXRProbe
@@ -386,6 +387,11 @@ add_executable(BFVRUserSettingsTests
   settings/UserSettingsTests.cpp
 )
 
+add_executable(BFVRUserSettingsSeedWriter
+  settings/UserSettings.cpp
+  settings/UserSettingsSeedWriter.cpp
+)
+
 add_executable(BFVROpenXRHapticsTests
   openxr/OpenXRHapticOutput.cpp
   openxr/OpenXRHapticsTests.cpp
@@ -472,7 +478,7 @@ add_executable(BFVRRfaInspect
   tools/RfaInspect.cpp
 )
 
-foreach(target BFVRClient BFVRD3D8To9FlatClient BFVRLoader BFVROpenXRProbe BFVRSharedTextureProducerProbe BFVRD3D8To9SharedSurfaceProbe BFVRAmbientOcclusionDepthProbe BFVRStereoMath BFVRStereoMathTests BFVRWaterReflectionTextureBasisTests BFVRWeaponFireAimMathTests BFVRHandWeaponRecoilMathTests BFVROffHandSupportPolicyTests BFVRArmPoleVectorMathTests BFVRMainMenuOverlayTests BFVRQuickMenuTests BFVRSettingsMenuTests BFVRUserSettingsTests BFVROpenXRHapticsTests BFVROpenXRControllerShortcutTests BFVROpenXRControllerBindingTests BFVRVehicleMotionAimMathTests BFVRDirectionalLocomotionTests BFVRComfortVignetteTests BFVRSurfaceVehicleDriveMathTests BFVRTrackingAnchorTests BFVRInfantryAuthoritativeAimTests BFVRInfantryPresentationTurnTests BFVRControllerInputCacheTests BFVRMountedCameraMathTests BFVRInfantryCameraMathTests BFVRScopeViewMathTests BFVROpenXRScopeOverlayLayerTests BFVRWorldCrosshairMathTests BFVRRuntimeDiagnosticsTests BFVRSharedControlChannelTests BFVRRfaInspect)
+foreach(target BFVRClient BFVRD3D8To9FlatClient BFVRLoader BFVROpenXRProbe BFVRSharedTextureProducerProbe BFVRD3D8To9SharedSurfaceProbe BFVRAmbientOcclusionDepthProbe BFVRStereoMath BFVRStereoMathTests BFVRWaterReflectionTextureBasisTests BFVRWeaponFireAimMathTests BFVRHandWeaponRecoilMathTests BFVROffHandSupportPolicyTests BFVRArmPoleVectorMathTests BFVRMainMenuOverlayTests BFVRQuickMenuTests BFVRSettingsMenuTests BFVRUserSettingsTests BFVRUserSettingsSeedWriter BFVROpenXRHapticsTests BFVROpenXRControllerShortcutTests BFVROpenXRControllerBindingTests BFVRVehicleMotionAimMathTests BFVRDirectionalLocomotionTests BFVRComfortVignetteTests BFVRSurfaceVehicleDriveMathTests BFVRTrackingAnchorTests BFVRInfantryAuthoritativeAimTests BFVRInfantryPresentationTurnTests BFVRControllerInputCacheTests BFVRMountedCameraMathTests BFVRInfantryCameraMathTests BFVRScopeViewMathTests BFVROpenXRScopeOverlayLayerTests BFVRWorldCrosshairMathTests BFVRRuntimeDiagnosticsTests BFVRSharedControlChannelTests BFVRRfaInspect)
   target_compile_definitions(${target} PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
   set_property(TARGET ${target} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
   if(MSVC)
@@ -483,7 +489,8 @@ endforeach()
 target_link_libraries(BFVRClient PRIVATE
   kernel32 advapi32 ole32 user32 windowscodecs)
 target_link_libraries(BFVRD3D8To9FlatClient PRIVATE kernel32)
-target_link_libraries(BFVRLoader PRIVATE kernel32)
+target_link_libraries(BFVRLoader PRIVATE kernel32 bcrypt)
+target_link_libraries(BFVRUserSettingsSeedWriter PRIVATE kernel32)
 target_link_libraries(BFVROpenXRProbe PRIVATE
   kernel32 ole32 gdi32 windowscodecs d3d11 dxgi d3dcompiler BFVRStereoMath)
 target_link_libraries(BFVRSharedTextureProducerProbe PRIVATE kernel32)
@@ -535,6 +542,8 @@ target_include_directories(BFVRQuickMenuTests PRIVATE
 target_include_directories(BFVRSettingsMenuTests PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}")
 target_include_directories(BFVRUserSettingsTests PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}")
+target_include_directories(BFVRUserSettingsSeedWriter PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}")
 target_include_directories(BFVROpenXRHapticsTests PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}"
@@ -698,7 +707,7 @@ target_include_directories(BFVRClient PRIVATE
 set_target_properties(BFVRClient PROPERTIES OUTPUT_NAME "BFVRClient")
 set_target_properties(BFVRD3D8To9FlatClient PROPERTIES
   OUTPUT_NAME "BFVRD3D8To9FlatClient")
-set_target_properties(BFVRLoader PROPERTIES OUTPUT_NAME "BFVRLoader")
+set_target_properties(BFVRLoader PROPERTIES OUTPUT_NAME "BFVR")
 set_target_properties(BFVROpenXRProbe PROPERTIES OUTPUT_NAME "BFVROpenXRProbe")
 set_target_properties(BFVRSharedTextureProducerProbe PROPERTIES
   OUTPUT_NAME "BFVRSharedTextureProducerProbe")
@@ -716,6 +725,5 @@ foreach(target BFVRClient BFVRD3D8To9FlatClient BFVRD3D8To9SharedSurfaceProbe BF
   add_dependencies(${target} BFVRD3D8To9RuntimeCopy)
 endforeach()
 
-# These native targets are intentionally just an observation prototype.  The
-# release launcher/client layout is not produced until the passive trace has
-# been validated on a reproducible local gameplay baseline.
+# BFVR is the player-facing native launcher. Developer probes remain separate
+# build targets and are not part of the player installer payload.

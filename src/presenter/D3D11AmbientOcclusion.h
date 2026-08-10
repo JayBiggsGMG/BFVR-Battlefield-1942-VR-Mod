@@ -23,7 +23,8 @@ public:
         ID3D11Device* device,
         ID3D11DeviceContext* context,
         SharedTextureLogCallback logCallback,
-        void* logContext);
+        void* logContext,
+        bool collectPerformanceTimings = true);
     void SetViewRadiusMeters(float radiusMeters) noexcept;
     bool BeginFrame();
     bool BuildEye(
@@ -83,6 +84,8 @@ private:
     SharedTextureLogCallback logCallback_ = nullptr;
     void* logContext_ = nullptr;
     bool frameTimingActive_ = false;
+    bool frameActive_ = false;
+    bool collectPerformanceTimings_ = true;
     bool frameApplicationTimingActive_ = false;
     bool frameApplicationTimed_ = false;
     bool timingsReported_ = false;

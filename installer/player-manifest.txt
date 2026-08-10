@@ -1,0 +1,14 @@
+BFVR.exe
+BFVRClient.dll
+BFVRD3D8To9.dll
+BFVRPresenter.exe
+UserConfig.txt
+README.md
+docs\INSTALLATION.md
+docs\USER_GUIDE.md
+THIRD_PARTY_NOTICES.md
+assets\**
+runtime\openxr\win64\openxr_loader.dll
+licenses\OpenXR-Loader-1.1.61.txt
+licenses\d3d8to9-LICENSE.md
+licenses\MinHook-LICENSE.txt

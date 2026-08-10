@@ -26,7 +26,8 @@ public:
         bool enableBloom,
         bool enableAmbientOcclusion,
         bool enableScreenSpaceGlobalIllumination,
-        bool enableWaterReflections);
+        bool enableWaterReflections,
+        bool collectBloomTimings = true);
     bool ScaleAspectFit(
         ID3D11ShaderResourceView* sourceView,
         UINT sourceWidth,
@@ -99,6 +100,8 @@ private:
     std::array<bool, 2> bloomFrameEyesBuilt_ = {};
     std::size_t bloomFrameEyeCount_ = 0;
     bool bloomFrameTimingActive_ = false;
+    bool bloomFrameActive_ = false;
+    bool collectBloomTimings_ = true;
     bool bloomTimingsReported_ = false;
     SharedTextureLogCallback logCallback_ = nullptr;
     void* logContext_ = nullptr;

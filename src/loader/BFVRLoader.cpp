@@ -1,6 +1,9 @@
 #include <windows.h>
+#include <bcrypt.h>
 #include <tlhelp32.h>
 
+#include <algorithm>
+#include <array>
 #include <cstdio>
 #include <cwchar>
 #include <string>
@@ -10,6 +13,18 @@
 namespace
 {
 constexpr DWORD kObserverInitializationParametersMagic = 0x52564642;
+constexpr LONGLONG kSupportedBf1942Size = 5648384;
+constexpr std::array<unsigned char, 32> kSupportedBf1942Sha256 = {
+    0x1D, 0x8F, 0x1F, 0x39, 0x7C, 0xEF, 0x59, 0x2A,
+    0x99, 0x7A, 0xFB, 0x96, 0x6B, 0x84, 0x77, 0x26,
+    0x50, 0xBC, 0x47, 0xDB, 0xF3, 0xD5, 0x0B, 0x6A,
+    0x57, 0xC2, 0x9F, 0xD9, 0xDB, 0xB5, 0x0D, 0x84};
+constexpr LONGLONG kUnsafeBf42PlusSize = 501760;
+constexpr std::array<unsigned char, 32> kUnsafeBf42PlusSha256 = {
+    0x3A, 0x8B, 0x5A, 0xCA, 0x3B, 0xA3, 0xE4, 0xE7,
+    0x50, 0x37, 0xDA, 0x74, 0x33, 0x03, 0xDC, 0x8E,
+    0x5F, 0x44, 0x84, 0xA9, 0xF8, 0x0A, 0xF1, 0xD4,
+    0x2D, 0xA7, 0xD9, 0x63, 0x6B, 0xDC, 0x16, 0x4C};
 
 struct ObserverInitializationParameters
 {
@@ -23,6 +38,8 @@ struct Options
 {
     std::wstring gameRoot;
     std::wstring clientPath;
+    bool playerLaunch = false;
+    bool bf42PlusPlus = false;
     bool dryRun = false;
     bool showHelp = false;
     bool presentBridgeProbe = false;
@@ -98,6 +115,138 @@ std::wstring D3D8ProbeCompletionEventName(DWORD processId)
         return {};
     }
     return eventName;
+}
+
+bool ComputeFileSha256(
+    const std::wstring& path,
+    std::array<unsigned char, 32>& digest,
+    LONGLONG& size)
+{
+    size = 0;
+    HANDLE file = CreateFileW(
+        path.c_str(),
+        GENERIC_READ,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        nullptr,
+        OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN,
+        nullptr);
+    if (file == INVALID_HANDLE_VALUE)
+    {
+        return false;
+    }
+
+    LARGE_INTEGER fileSize = {};
+    if (!GetFileSizeEx(file, &fileSize))
+    {
+        CloseHandle(file);
+        return false;
+    }
+    size = fileSize.QuadPart;
+
+    BCRYPT_ALG_HANDLE algorithm = nullptr;
+    BCRYPT_HASH_HANDLE hash = nullptr;
+    bool succeeded =
+        BCryptOpenAlgorithmProvider(
+            &algorithm,
+            BCRYPT_SHA256_ALGORITHM,
+            nullptr,
+            0) >= 0 &&
+        BCryptCreateHash(
+            algorithm,
+            &hash,
+            nullptr,
+            0,
+            nullptr,
+            0,
+            0) >= 0;
+    std::array<unsigned char, 64 * 1024> buffer = {};
+    while (succeeded)
+    {
+        DWORD bytesRead = 0;
+        if (!ReadFile(
+                file,
+                buffer.data(),
+                static_cast<DWORD>(buffer.size()),
+                &bytesRead,
+                nullptr))
+        {
+            succeeded = false;
+            break;
+        }
+        if (bytesRead == 0)
+        {
+            break;
+        }
+        succeeded = BCryptHashData(
+            hash,
+            buffer.data(),
+            bytesRead,
+            0) >= 0;
+    }
+    if (succeeded)
+    {
+        succeeded = BCryptFinishHash(
+            hash,
+            digest.data(),
+            static_cast<ULONG>(digest.size()),
+            0) >= 0;
+    }
+
+    if (hash != nullptr)
+    {
+        BCryptDestroyHash(hash);
+    }
+    if (algorithm != nullptr)
+    {
+        BCryptCloseAlgorithmProvider(algorithm, 0);
+    }
+    CloseHandle(file);
+    return succeeded;
+}
+
+std::wstring HexDigest(
+    const std::array<unsigned char, 32>& digest)
+{
+    constexpr wchar_t kHex[] = L"0123456789ABCDEF";
+    std::wstring result;
+    result.reserve(digest.size() * 2);
+    for (const unsigned char value : digest)
+    {
+        result.push_back(kHex[value >> 4]);
+        result.push_back(kHex[value & 0x0F]);
+    }
+    return result;
+}
+
+void ReportPlayerGameBuild(
+    const std::wstring& executablePath)
+{
+    std::array<unsigned char, 32> digest = {};
+    LONGLONG size = 0;
+    if (!ComputeFileSha256(executablePath, digest, size))
+    {
+        fwprintf(
+            stderr,
+            L"[WARN] BFVR could not identify this BF1942.exe build (error=%lu). BFVR will try to start it, but compatibility has not been established.\n",
+            GetLastError());
+        return;
+    }
+    if (size != kSupportedBf1942Size ||
+        !std::equal(
+            digest.begin(),
+            digest.end(),
+            kSupportedBf1942Sha256.begin()))
+    {
+        fwprintf(
+            stderr,
+            L"[WARN] This BF1942.exe differs from the build used to develop BFVR 1.0.0. BFVR will try to start it, but compatibility has not been established.\n");
+        fwprintf(
+            stderr,
+            L"[INFO] Detected size=%lld SHA-256=%ls\n",
+            size,
+            HexDigest(digest).c_str());
+    }
 }
 
 void ResetLoaderLog()
@@ -178,6 +327,7 @@ bool ParseOptions(int argc, wchar_t* argv[], Options& options)
     const std::wstring bfvrDirectory = GetModuleDirectory();
     options.gameRoot = ParentDirectory(bfvrDirectory);
     options.clientPath = Combine(bfvrDirectory, L"BFVRClient.dll");
+    options.playerLaunch = argc == 1;
 
     for (int index = 1; index < argc; ++index)
     {
@@ -202,6 +352,14 @@ bool ParseOptions(int argc, wchar_t* argv[], Options& options)
         else if (argument == L"--dry-run")
         {
             options.dryRun = true;
+        }
+        else if (argument == L"--play")
+        {
+            options.playerLaunch = true;
+        }
+        else if (argument == L"--bf42plusplus")
+        {
+            options.bf42PlusPlus = true;
         }
         else if (argument == L"--present-bridge-probe")
         {
@@ -357,6 +515,15 @@ bool ParseOptions(int argc, wchar_t* argv[], Options& options)
         {
             return false;
         }
+    }
+
+    if (options.playerLaunch)
+    {
+        options.bf42PlusPlus = true;
+        options.d3d8To9ObserverProbe = true;
+        options.d3d8StereoFramePresentationProbe = true;
+        options.weaponMotionProbe = true;
+        options.runUntilStopped = true;
     }
 
     if (options.renderViewSingleEyeProbe && options.diagnosticTimeoutMs == 0)
@@ -526,9 +693,10 @@ bool ParseOptions(int argc, wchar_t* argv[], Options& options)
 
 void PrintUsage()
 {
-    wprintf(L"BFVRLoader (D3D8 observer prototype)\n");
+    wprintf(L"BFVR 1.0.0\n");
+    wprintf(L"Double-click BFVR.exe, or run it without arguments, to start Battlefield 1942 in VR.\n");
     wprintf(L"A diagnostic timeout closes only the game process started by this loader after the requested observation window. --run-until-stopped keeps the combined translated OpenXR test active for BF1942's process lifetime.\n");
-    wprintf(L"Usage: BFVRLoader [--dry-run] [--present-bridge-probe] [--surface-descriptor-probe] [--surface-copy-probe] [--surface-stream-probe] [--surface-reset-probe] [--surface-readback-probe] [--surface-scene-readback-probe] [--surface-d3d11-upload-probe] [--render-view-transform-probe] [--render-view-setter-baseline-probe] [--render-view-single-eye-probe] [--configured-view-list-probe] [--configured-view-list-writer-probe] [--scene-batch-probe] [--d3d8-call-inventory-probe] [--d3d8-state-census-probe] [--d3d8-stereo-pair-probe] [--d3d8-stereo-frame-probe] [--d3d8-openxr-presentation-probe] [--d3d8to9-flat-probe] [--d3d8to9-observer-probe] [--player-input-probe] [--weapon-viewmodel-probe] [--weapon-transform-ownership-probe] [--weapon-fire-probe] [--first-person-arm-probe] [--weapon-motion-probe] [--diagnostic-timeout-ms <1000-300000> | --run-until-stopped] [--game-root <path>] [--client <path>] [-- <game arguments>]\n");
+    wprintf(L"Usage: BFVR [--play] [--dry-run] [developer diagnostic options] [--game-root <path>] [--client <path>] [-- <game arguments>]\n");
     wprintf(L"The loader starts BF1942.exe suspended, loads BFVRClient.dll from the BFVR folder, then resumes it.\n");
     wprintf(L"--present-bridge-probe is an explicit active test: it installs a no-op in-process D3D8 Present detour only after the verified D3D8 lifecycle trace completes.\n");
     wprintf(L"--surface-descriptor-probe is a separate explicit one-shot test: at the passively confirmed ordinary-world Projection submission it calls GetRenderTarget/GetDesc/Release on the same D3D8 thread.\n");
@@ -565,6 +733,64 @@ bool Exists(const std::wstring& path)
 {
     const DWORD attributes = GetFileAttributesW(path.c_str());
     return attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY) == 0;
+}
+
+bool ValidatePlayerBf42PlusPlus(
+    const std::wstring& gameRoot,
+    bool showDialog)
+{
+    const std::wstring requiredFiles[] = {
+        Combine(gameRoot, L"bf42++.exe"),
+        Combine(gameRoot, L"bf42++.dll"),
+        Combine(gameRoot, L"bf42++BlackScreen.exe")};
+    for (const auto& requiredPath : requiredFiles)
+    {
+        if (!Exists(requiredPath))
+        {
+            constexpr wchar_t message[] =
+                L"BFVR requires the complete official BF42++ installation.\n\n"
+                L"Extract BF42++ beside BF1942.exe without renaming its files, then start BFVR again. "
+                L"BF42++ is downloaded separately and is not included with BFVR.";
+            fwprintf(stderr, L"[BLOCKED] %ls\n[INFO] missing=%ls\n", message, requiredPath.c_str());
+            if (showDialog)
+            {
+                MessageBoxW(nullptr, message, L"BFVR requires BF42++", MB_OK | MB_ICONERROR);
+            }
+            return false;
+        }
+    }
+
+    const std::wstring proxyPath = Combine(gameRoot, L"dsound.dll");
+    if (!Exists(proxyPath))
+    {
+        return true;
+    }
+    std::array<unsigned char, 32> digest = {};
+    LONGLONG size = 0;
+    if (!ComputeFileSha256(proxyPath, digest, size))
+    {
+        fwprintf(stderr, L"[WARN] An additional dsound.dll is present but could not be identified: %ls\n", proxyPath.c_str());
+        return true;
+    }
+
+    if (size == kUnsafeBf42PlusSize &&
+        std::equal(digest.begin(), digest.end(), kUnsafeBf42PlusSha256.begin()))
+    {
+        constexpr wchar_t message[] =
+            L"BFVR found the obsolete BF42Plus 1.3.4 dsound.dll. Its abandoned updater is unsafe.\n\n"
+            L"Remove that file and install current BF42++ 2.0 or later before starting BFVR.";
+        fwprintf(stderr, L"[BLOCKED] %ls\n[INFO] proxy=%ls\n", message, proxyPath.c_str());
+        if (showDialog)
+        {
+            MessageBoxW(nullptr, message, L"Unsafe BF42Plus version detected", MB_OK | MB_ICONERROR);
+        }
+        return false;
+    }
+
+    fwprintf(
+        stderr,
+        L"[WARN] An additional dsound.dll is present. BFVR will continue, but that separate mod may conflict with BF42++.\n");
+    return true;
 }
 
 bool InjectLibrary(HANDLE process, const std::wstring& clientPath, DWORD& remoteModuleBase)
@@ -875,6 +1101,114 @@ ReplacementProcess FindBf1942Replacement(
     CloseHandle(snapshot);
     return replacement;
 }
+
+bool SetPlayerEnvironment(
+    const std::wstring& payloadDirectory)
+{
+    const std::pair<const wchar_t*, std::wstring> values[] = {
+        {L"BFVR_DIAGNOSTICS", L"off"},
+        {L"BFVR_USER_CONFIG_PATH", Combine(payloadDirectory, L"UserConfig.txt")},
+        {L"BFVR_OPENXR_AO", L"1"},
+        {L"BFVR_OPENXR_SSGI", L"0"},
+        {L"BFVR_OPENXR_SSGI_INTENSITY", L"0.0"},
+        {L"BFVR_OPENXR_SSGI_DEBUG", L"0"},
+        {L"BFVR_OPENXR_WATER_SSR", L"1"},
+        {L"BFVR_OPENXR_WATER_SSR_INTENSITY", L"1.0"},
+        {L"BFVR_OPENXR_BLOOM", L"1"},
+        {L"BFVR_OPENXR_BLOOM_THRESHOLD", L"0.75"},
+        {L"BFVR_OPENXR_BLOOM_INTENSITY", L"0.25"}};
+    for (const auto& [name, value] : values)
+    {
+        if (!SetEnvironmentVariableW(name, value.c_str()))
+        {
+            fwprintf(
+                stderr,
+                L"[FAIL] BFVR could not prepare its player settings (%ls, error=%lu).\n",
+                name,
+                GetLastError());
+            return false;
+        }
+    }
+    return true;
+}
+
+class IntroMovieSuspension
+{
+public:
+    bool Suspend(const std::wstring& gameRoot)
+    {
+        sourcePath_ = Combine(gameRoot, L"Movies\\Intro.bik");
+        disabledPath_ = sourcePath_ + L".bfvr-disabled";
+        const bool sourceExists = Exists(sourcePath_);
+        const bool disabledExists = Exists(disabledPath_);
+        if (sourceExists && disabledExists)
+        {
+            fwprintf(
+                stderr,
+                L"[FAIL] Both Movies\\Intro.bik and Intro.bik.bfvr-disabled exist. BFVR left both untouched; move or rename the extra .bfvr-disabled file, then try again.\n");
+            return false;
+        }
+        if (!sourceExists && disabledExists)
+        {
+            suspended_ = true;
+            AppendLoaderLog(
+                L"Recovered ownership of an Intro.bik.bfvr-disabled file left by an interrupted earlier BFVR launch; it will be restored when this run ends.");
+            return true;
+        }
+        if (!sourceExists)
+        {
+            return true;
+        }
+        if (!MoveFileExW(
+                sourcePath_.c_str(),
+                disabledPath_.c_str(),
+                MOVEFILE_WRITE_THROUGH))
+        {
+            fwprintf(
+                stderr,
+                L"[FAIL] BFVR could not temporarily disable Movies\\Intro.bik (error=%lu). No game file was overwritten.\n",
+                GetLastError());
+            return false;
+        }
+        suspended_ = true;
+        return true;
+    }
+
+    ~IntroMovieSuspension()
+    {
+        Restore();
+    }
+
+private:
+    void Restore() noexcept
+    {
+        if (!suspended_ || disabledPath_.empty() || sourcePath_.empty())
+        {
+            return;
+        }
+        if (Exists(sourcePath_))
+        {
+            fwprintf(
+                stderr,
+                L"[WARN] BFVR did not restore Intro.bik because that path already exists. Your original remains at Movies\\Intro.bik.bfvr-disabled.\n");
+            return;
+        }
+        if (!MoveFileExW(
+                disabledPath_.c_str(),
+                sourcePath_.c_str(),
+                MOVEFILE_WRITE_THROUGH))
+        {
+            fwprintf(
+                stderr,
+                L"[WARN] BFVR could not restore Movies\\Intro.bik (error=%lu). Rename Intro.bik.bfvr-disabled to Intro.bik manually.\n",
+                GetLastError());
+        }
+    }
+
+    std::wstring sourcePath_;
+    std::wstring disabledPath_;
+    bool suspended_ = false;
+};
 } // namespace
 
 int wmain(int argc, wchar_t* argv[])
@@ -896,6 +1230,7 @@ int wmain(int argc, wchar_t* argv[])
         options.d3d8StereoFramePresentationProbe;
 
     const std::wstring executablePath = Combine(options.gameRoot, L"BF1942.exe");
+    const std::wstring bf42PlusPlusPath = Combine(options.gameRoot, L"bf42++.dll");
     const std::wstring activeClientPath = options.d3d8To9FlatProbe
         ? Combine(
             ParentDirectory(options.clientPath),
@@ -906,6 +1241,14 @@ int wmain(int argc, wchar_t* argv[])
         fwprintf(stderr, L"[FAIL] Expected game executable or selected BFVR client DLL was not found.\n");
         fwprintf(stderr, L"[INFO] game=%ls\n[INFO] client=%ls\n", executablePath.c_str(), activeClientPath.c_str());
         return 2;
+    }
+    if (options.bf42PlusPlus)
+    {
+        if (!ValidatePlayerBf42PlusPlus(options.gameRoot, !options.dryRun))
+        {
+            return 2;
+        }
+        ReportPlayerGameBuild(executablePath);
     }
     const std::wstring d3d8To9Path =
         Combine(ParentDirectory(activeClientPath), L"BFVRD3D8To9.dll");
@@ -919,6 +1262,28 @@ int wmain(int argc, wchar_t* argv[])
         return 2;
     }
 
+    const std::wstring payloadDirectory =
+        ParentDirectory(activeClientPath);
+    if (options.playerLaunch)
+    {
+        const std::wstring requiredPlayerFiles[] = {
+            Combine(payloadDirectory, L"BFVRPresenter.exe"),
+            Combine(payloadDirectory, L"runtime\\openxr\\win64\\openxr_loader.dll"),
+            Combine(payloadDirectory, L"assets\\QM_bg.png"),
+            Combine(payloadDirectory, L"assets\\SettingsMenu\\SettingsText.png")};
+        for (const auto& requiredPath : requiredPlayerFiles)
+        {
+            if (!Exists(requiredPath))
+            {
+                fwprintf(
+                    stderr,
+                    L"[FAIL] The BFVR installation is incomplete. Missing: %ls\n",
+                    requiredPath.c_str());
+                return 2;
+            }
+        }
+    }
+
     if (options.dryRun)
     {
         wprintf(
@@ -929,7 +1294,34 @@ int wmain(int argc, wchar_t* argv[])
         {
             wprintf(L"[INFO] translator=%ls\n", d3d8To9Path.c_str());
         }
+        if (options.bf42PlusPlus)
+        {
+            wprintf(L"[INFO] bf42plusplus=%ls\n", bf42PlusPlusPath.c_str());
+        }
         return 0;
+    }
+
+    IntroMovieSuspension introMovie;
+    if (options.bf42PlusPlus &&
+        !SetEnvironmentVariableW(L"BF42PLUSPLUS_INJECTED", L"1"))
+    {
+        fwprintf(
+            stderr,
+            L"[FAIL] BFVR could not prepare BF42++ startup (error=%lu).\n",
+            GetLastError());
+        return 2;
+    }
+    if (options.playerLaunch &&
+        (!SetPlayerEnvironment(payloadDirectory) ||
+         !introMovie.Suspend(options.gameRoot)))
+    {
+        return 2;
+    }
+
+    if (options.bf42PlusPlus)
+    {
+        wprintf(L"BFVR 1.0.0 is starting Battlefield 1942 in VR.\n");
+        wprintf(L"Developer diagnostics are off. Close Battlefield 1942 normally to end BFVR.\n");
     }
 
     std::wstring commandLine = QuoteArgument(executablePath);
@@ -940,7 +1332,9 @@ int wmain(int argc, wchar_t* argv[])
     }
     std::vector<wchar_t> mutableCommandLine(commandLine.begin(), commandLine.end());
     ResetLoaderLog();
-    AppendLoaderLog(options.weaponMotionProbe
+    AppendLoaderLog(options.playerLaunch
+            ? L"Starting BFVR 1.0.0 with player diagnostics disabled."
+            : options.weaponMotionProbe
             ? L"Starting the opt-in OpenXR right-hand 6DOF weapon presentation and rendered-weapon-directed local-infantry fire overlays."
             : options.runUntilStopped
             ? L"Starting a run-until-stopped live-game D3D9Ex-to-x64 OpenXR GPU shared-target proof."
@@ -1272,7 +1666,7 @@ int wmain(int argc, wchar_t* argv[])
         AppendLoaderError(L"CreateProcessW", error);
         if (error == ERROR_ELEVATION_REQUIRED)
         {
-            fwprintf(stderr, L"[BLOCKED] BF1942.exe requires elevation. Start BFVRLoader as administrator, then retry the offline observer run.\n");
+            fwprintf(stderr, L"[BLOCKED] BF1942.exe requires elevation. Start BFVR.exe as administrator, then try again.\n");
         }
         return 2;
     }
@@ -1338,6 +1732,24 @@ int wmain(int argc, wchar_t* argv[])
                 return 2;
             }
         }
+    }
+    if (options.bf42PlusPlus)
+    {
+        DWORD bf42PlusPlusModuleBase = 0;
+        if (!InjectLibrary(
+                processInfo.hProcess,
+                bf42PlusPlusPath,
+                bf42PlusPlusModuleBase))
+        {
+            TerminateProcess(processInfo.hProcess, 1);
+            CloseHandle(processInfo.hThread);
+            CloseHandle(d3d8ProbeCompletionEvent);
+            AppendLoaderLog(L"BF42++ injection failed; terminating the suspended child process.");
+            CloseHandle(processInfo.hProcess);
+            CloseHandle(processLifetimeHandle);
+            return 2;
+        }
+        AppendLoaderLog(L"Injected the separately installed bf42++.dll into the suspended BF1942.exe process before BFVRClient.dll.");
     }
     DWORD remoteModuleBase = 0;
     const bool injected = InjectLibrary(processInfo.hProcess, activeClientPath, remoteModuleBase);
@@ -1486,7 +1898,9 @@ int wmain(int argc, wchar_t* argv[])
             : options.presentBridgeProbe
                 ? L"Resumed BF1942.exe after observer injection with the no-op Present bridge probe requested."
                 : L"Resumed BF1942.exe after passive observer injection.");
-    wprintf(d3d8To9SharedFrameProbe
+    wprintf(options.playerLaunch
+             ? L"[PASS] Started Battlefield 1942 in BFVR (pid=%lu).\n"
+             : d3d8To9SharedFrameProbe
              ? L"[PASS] Started BF1942.exe with the live D3D9Ex-to-x64 no-HMD GPU shared-target proof (pid=%lu).\n"
              : d3d8To9OpenXRPresentationProbe
              ? L"[PASS] Started BF1942.exe with the live D3D9Ex-to-x64 OpenXR GPU shared-target proof (pid=%lu).\n"
@@ -1601,8 +2015,14 @@ int wmain(int argc, wchar_t* argv[])
                     attachedProcessIds);
             if (successor.handle != nullptr)
             {
+                DWORD successorBf42PlusPlusModuleBase = 0;
                 DWORD successorModuleBase = 0;
                 const bool injectedSuccessor =
+                    (!options.bf42PlusPlus ||
+                     InjectLibrary(
+                         successor.handle,
+                         bf42PlusPlusPath,
+                         successorBf42PlusPlusModuleBase)) &&
                     InjectLibrary(
                         successor.handle,
                         activeClientPath,

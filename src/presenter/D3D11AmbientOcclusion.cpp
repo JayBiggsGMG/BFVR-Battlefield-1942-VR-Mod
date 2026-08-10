@@ -316,7 +316,8 @@ bool D3D11AmbientOcclusion::Initialize(
     ID3D11Device* device,
     ID3D11DeviceContext* context,
     SharedTextureLogCallback logCallback,
-    void* logContext)
+    void* logContext,
+    bool collectPerformanceTimings)
 {
     Shutdown();
     logCallback_ = logCallback;
@@ -328,6 +329,7 @@ bool D3D11AmbientOcclusion::Initialize(
     device_->AddRef();
     context_ = context;
     context_->AddRef();
+    collectPerformanceTimings_ = collectPerformanceTimings;
 
     ID3DBlob* bytecode = nullptr;
     HRESULT result = E_FAIL;
@@ -397,42 +399,47 @@ bool D3D11AmbientOcclusion::Initialize(
             &pointSampler_)
         : result;
 
-    D3D11_QUERY_DESC disjointDescription = {};
-    disjointDescription.Query = D3D11_QUERY_TIMESTAMP_DISJOINT;
-    result = SUCCEEDED(result)
-        ? device_->CreateQuery(&disjointDescription, &disjointQuery_)
-        : result;
-    D3D11_QUERY_DESC timestampDescription = {};
-    timestampDescription.Query = D3D11_QUERY_TIMESTAMP;
-    result = SUCCEEDED(result)
-        ? device_->CreateQuery(
-            &timestampDescription,
-            &applicationTimestampStart_)
-        : result;
-    result = SUCCEEDED(result)
-        ? device_->CreateQuery(
-            &timestampDescription,
-            &applicationTimestampEnd_)
-        : result;
-    for (EyeResources& eye : eyes_)
+    if (collectPerformanceTimings_)
     {
+        D3D11_QUERY_DESC disjointDescription = {};
+        disjointDescription.Query = D3D11_QUERY_TIMESTAMP_DISJOINT;
+        result = SUCCEEDED(result)
+            ? device_->CreateQuery(&disjointDescription, &disjointQuery_)
+            : result;
+        D3D11_QUERY_DESC timestampDescription = {};
+        timestampDescription.Query = D3D11_QUERY_TIMESTAMP;
         result = SUCCEEDED(result)
             ? device_->CreateQuery(
                 &timestampDescription,
-                &eye.timestampStart)
+                &applicationTimestampStart_)
             : result;
         result = SUCCEEDED(result)
             ? device_->CreateQuery(
                 &timestampDescription,
-                &eye.timestampEnd)
+                &applicationTimestampEnd_)
             : result;
+        for (EyeResources& eye : eyes_)
+        {
+            result = SUCCEEDED(result)
+                ? device_->CreateQuery(
+                    &timestampDescription,
+                    &eye.timestampStart)
+                : result;
+            result = SUCCEEDED(result)
+                ? device_->CreateQuery(
+                    &timestampDescription,
+                    &eye.timestampEnd)
+                : result;
+        }
     }
 
     if (FAILED(result) || vertexShader_ == nullptr ||
         evaluateShader_ == nullptr || denoiseShader_ == nullptr ||
         configurationBuffer_ == nullptr || pointSampler_ == nullptr ||
-        disjointQuery_ == nullptr || applicationTimestampStart_ == nullptr ||
-        applicationTimestampEnd_ == nullptr)
+        (collectPerformanceTimings_ &&
+            (disjointQuery_ == nullptr ||
+             applicationTimestampStart_ == nullptr ||
+             applicationTimestampEnd_ == nullptr)))
     {
         WriteLog(
             L"D3D11 AO initialization failed (HRESULT=0x%08lX); AO remains disabled.",
@@ -447,13 +454,15 @@ bool D3D11AmbientOcclusion::Initialize(
 
 bool D3D11AmbientOcclusion::BeginFrame()
 {
-    if (context_ == nullptr || disjointQuery_ == nullptr || frameTimingActive_)
+    if (context_ == nullptr || frameActive_)
         return false;
-    context_->Begin(disjointQuery_);
     frameEyesBuilt_ = {};
     frameApplicationTimingActive_ = false;
     frameApplicationTimed_ = false;
-    frameTimingActive_ = true;
+    frameActive_ = true;
+    frameTimingActive_ = collectPerformanceTimings_;
+    if (frameTimingActive_)
+        context_->Begin(disjointQuery_);
     return true;
 }
 
@@ -466,7 +475,7 @@ bool D3D11AmbientOcclusion::BuildEye(
 {
     if (context_ == nullptr || eyeIndex >= eyes_.size() ||
         packedDepth == nullptr || projection == nullptr ||
-        !frameTimingActive_ ||
+        !frameActive_ ||
         !EnsureEyeResources(eyes_[eyeIndex], depthWidth, depthHeight) ||
         !UpdateConfiguration(depthWidth, depthHeight, projection))
     {
@@ -474,7 +483,8 @@ bool D3D11AmbientOcclusion::BuildEye(
     }
 
     EyeResources& eye = eyes_[eyeIndex];
-    context_->End(eye.timestampStart);
+    if (frameTimingActive_)
+        context_->End(eye.timestampStart);
     const D3D11_VIEWPORT viewport = {
         0.0F,
         0.0F,
@@ -516,7 +526,8 @@ bool D3D11AmbientOcclusion::BuildEye(
     context_->PSSetShaderResources(0, 2, nullViews);
     ID3D11RenderTargetView* nullTarget = nullptr;
     context_->OMSetRenderTargets(1, &nullTarget, nullptr);
-    context_->End(eye.timestampEnd);
+    if (frameTimingActive_)
+        context_->End(eye.timestampEnd);
     frameEyesBuilt_[eyeIndex] = true;
     return true;
 }
@@ -544,10 +555,14 @@ void D3D11AmbientOcclusion::EndApplicationTiming()
 
 void D3D11AmbientOcclusion::EndFrame()
 {
-    if (context_ != nullptr && disjointQuery_ != nullptr && frameTimingActive_)
+    if (context_ != nullptr && frameActive_)
     {
-        EndApplicationTiming();
-        context_->End(disjointQuery_);
+        if (frameTimingActive_)
+        {
+            EndApplicationTiming();
+            context_->End(disjointQuery_);
+        }
+        frameActive_ = false;
     }
 }
 
@@ -824,6 +839,7 @@ void D3D11AmbientOcclusion::ReportTimings()
 void D3D11AmbientOcclusion::Shutdown()
 {
     ReportTimings();
+    frameActive_ = false;
     frameTimingActive_ = false;
     frameApplicationTimingActive_ = false;
     frameApplicationTimed_ = false;
@@ -845,6 +861,7 @@ void D3D11AmbientOcclusion::Shutdown()
     completeGpuMilliseconds_.clear();
     frameEyesBuilt_ = {};
     timingsReported_ = false;
+    collectPerformanceTimings_ = true;
     viewRadiusMeters_ = 0.60F;
     logCallback_ = nullptr;
     logContext_ = nullptr;

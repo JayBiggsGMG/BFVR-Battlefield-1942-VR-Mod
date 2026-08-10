@@ -506,11 +506,13 @@ bool D3D11TextureScaler::Initialize(
     bool enableBloom,
     bool enableAmbientOcclusion,
     bool enableScreenSpaceGlobalIllumination,
-    bool enableWaterReflections)
+    bool enableWaterReflections,
+    bool collectBloomTimings)
 {
     Shutdown();
     logCallback_ = logCallback;
     logContext_ = logContext;
+    collectBloomTimings_ = collectBloomTimings;
     if (device == nullptr || context == nullptr)
     {
         WriteLog(L"D3D11 texture scaler received a null device or context.");
@@ -713,7 +715,7 @@ bool D3D11TextureScaler::Initialize(
     {
         result = device->CreateSamplerState(&samplerDescription, &sampler_);
     }
-    if (enableBloom)
+    if (enableBloom && collectBloomTimings_)
     {
         D3D11_QUERY_DESC queryDescription = {};
         queryDescription.Query = D3D11_QUERY_TIMESTAMP_DISJOINT;
@@ -747,11 +749,12 @@ bool D3D11TextureScaler::Initialize(
             (bloomDownsamplePixelShader_ == nullptr ||
              bloomBlurHorizontalPixelShader_ == nullptr ||
              bloomBlurVerticalPixelShader_ == nullptr ||
-             bloomDisjointQuery_ == nullptr ||
-             bloomTimestampStarts_[0] == nullptr ||
-             bloomTimestampStarts_[1] == nullptr ||
-             bloomTimestampEnds_[0] == nullptr ||
-             bloomTimestampEnds_[1] == nullptr)) ||
+             (collectBloomTimings_ &&
+                (bloomDisjointQuery_ == nullptr ||
+                 bloomTimestampStarts_[0] == nullptr ||
+                 bloomTimestampStarts_[1] == nullptr ||
+                 bloomTimestampEnds_[0] == nullptr ||
+                 bloomTimestampEnds_[1] == nullptr)))) ||
         configurationBuffer_ == nullptr ||
         sampler_ == nullptr)
     {
@@ -1097,24 +1100,26 @@ bool D3D11TextureScaler::BuildBloom(
 
 bool D3D11TextureScaler::BeginBloomFrame()
 {
-    if (context_ == nullptr || bloomDisjointQuery_ == nullptr ||
-        bloomFrameTimingActive_)
+    if (context_ == nullptr || bloomFrameActive_)
     {
         return false;
     }
-    context_->Begin(bloomDisjointQuery_);
     bloomFrameEyesBuilt_ = {};
     bloomFrameEyeCount_ = 0;
-    bloomFrameTimingActive_ = true;
+    bloomFrameActive_ = true;
+    bloomFrameTimingActive_ = collectBloomTimings_;
+    if (bloomFrameTimingActive_)
+        context_->Begin(bloomDisjointQuery_);
     return true;
 }
 
 void D3D11TextureScaler::EndBloomFrame()
 {
-    if (context_ != nullptr && bloomDisjointQuery_ != nullptr &&
-        bloomFrameTimingActive_)
+    if (context_ != nullptr && bloomFrameActive_)
     {
-        context_->End(bloomDisjointQuery_);
+        if (bloomFrameTimingActive_)
+            context_->End(bloomDisjointQuery_);
+        bloomFrameActive_ = false;
     }
 }
 
@@ -1259,7 +1264,9 @@ void D3D11TextureScaler::ReportBloomTimings()
 void D3D11TextureScaler::Shutdown()
 {
     ReportBloomTimings();
+    bloomFrameActive_ = false;
     bloomFrameTimingActive_ = false;
+    collectBloomTimings_ = true;
     ReleaseBloomResources();
     for (ID3D11Query*& query : bloomTimestampEnds_)
     {

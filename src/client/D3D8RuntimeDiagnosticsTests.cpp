@@ -8,6 +8,12 @@ int wmain()
     using bfvr::ParseD3D8RuntimeDiagnosticLevel;
 
     const bool passed =
+        ParseD3D8RuntimeDiagnosticLevel(L"off") ==
+            D3D8RuntimeDiagnosticLevel::Off &&
+        ParseD3D8RuntimeDiagnosticLevel(L"OFF") ==
+            D3D8RuntimeDiagnosticLevel::Off &&
+        ParseD3D8RuntimeDiagnosticLevel(L"0") ==
+            D3D8RuntimeDiagnosticLevel::Off &&
         ParseD3D8RuntimeDiagnosticLevel(L"") ==
             D3D8RuntimeDiagnosticLevel::Normal &&
         ParseD3D8RuntimeDiagnosticLevel(L"normal") ==

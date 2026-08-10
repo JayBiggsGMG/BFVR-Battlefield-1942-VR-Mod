@@ -3,6 +3,7 @@
 #include "client/BFSoldierVrMotionFilter.h"
 #include "client/InfantryAuthoritativeAimRuntime.h"
 #include "client/MountedWeaponAimResolver.h"
+#include "client/D3D8RuntimeDiagnostics.h"
 #include "client/ScopeViewOverlay.h"
 
 #include "stereo/MountedCameraMath.h"
@@ -219,6 +220,8 @@ public:
     {
         gameImage = static_cast<std::byte*>(image);
         logCallback = callback;
+        diagnosticsEnabled = IsD3D8RuntimeDiagnosticsEnabled(
+            ReadD3D8RuntimeDiagnosticLevel());
         target = gameImage == nullptr
             ? nullptr
             : gameImage + kSetTransformationRva;
@@ -1080,6 +1083,10 @@ private:
         bool previousSourceValid,
         const stereo::Matrix4* infantryBodyWorld) noexcept
     {
+        if (!diagnosticsEnabled)
+        {
+            return;
+        }
         BFSoldierVrFireCameraTrace trace = {};
         if (!ReadActiveBFSoldierVrFireCameraTrace(
                 trace,
@@ -1278,6 +1285,7 @@ private:
     bool created = false;
     bool frustumCreated = false;
     bool enabled = false;
+    bool diagnosticsEnabled = true;
 };
 
 D3D8RenderViewPoseHook::Impl*

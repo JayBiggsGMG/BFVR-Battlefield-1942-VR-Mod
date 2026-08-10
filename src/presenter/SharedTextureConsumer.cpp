@@ -15,6 +15,17 @@
 
 namespace
 {
+bool ReadPerformanceDiagnosticsEnabled()
+{
+    wchar_t value[16] = {};
+    const DWORD length = GetEnvironmentVariableW(
+        L"BFVR_DIAGNOSTICS",
+        value,
+        static_cast<DWORD>(std::size(value)));
+    return !((length == 3 && _wcsicmp(value, L"off") == 0) ||
+        (length == 1 && value[0] == L'0'));
+}
+
 bool IsSrgbFormat(DXGI_FORMAT format)
 {
     return format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB ||
@@ -161,6 +172,7 @@ bool SharedTextureConsumer::Initialize(
     device_->AddRef();
     context_ = context;
     context_->AddRef();
+    collectPerformanceDiagnostics_ = ReadPerformanceDiagnosticsEnabled();
     const auto& userSettingsRuntime =
         settings::ProcessUserSettingsRuntime();
     if (userSettingsRuntime.IsReady())
@@ -267,7 +279,8 @@ bool SharedTextureConsumer::Initialize(
             device_,
             context_,
             logCallback_,
-            logContext_))
+            logContext_,
+            collectPerformanceDiagnostics_))
     {
         ambientOcclusion_.SetViewRadiusMeters(
             ambientOcclusionRadiusMeters_);
@@ -319,7 +332,8 @@ bool SharedTextureConsumer::Initialize(
         worldBloomEnabled_,
         ambientOcclusionEnabled_,
         screenSpaceGlobalIlluminationEnabled_,
-        waterReflectionsEnabled_);
+        waterReflectionsEnabled_,
+        collectPerformanceDiagnostics_);
     if (!scalerReady &&
         (ambientOcclusionEnabled_ || screenSpaceGlobalIlluminationEnabled_ ||
             waterReflectionsEnabled_))
@@ -342,7 +356,8 @@ bool SharedTextureConsumer::Initialize(
             worldBloomEnabled_,
             false,
             false,
-            false);
+            false,
+            collectPerformanceDiagnostics_);
     }
     if (!scalerReady)
     {
@@ -862,6 +877,7 @@ void SharedTextureConsumer::Shutdown()
     scaler_.Shutdown();
     scalerRequired_ = false;
     requiresLegacyCompletionWait_ = false;
+    collectPerformanceDiagnostics_ = true;
     worldFxaaEnabled_ = true;
     worldFxaaSharpeningStrength_ = 0.25F;
     worldBloomEnabled_ = false;

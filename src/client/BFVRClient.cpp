@@ -2,6 +2,7 @@
 #include "client/D3D8CallInventory.h"
 #include "client/D3D8ImportRoute.h"
 #include "client/D3D8RuntimeRedirect.h"
+#include "client/D3D8RuntimeDiagnostics.h"
 #include "client/D3D8StateCensus.h"
 #include "client/D3D8WeaponTransformOwnershipProbe.h"
 #include "client/D3D8WeaponViewModelProbe.h"
@@ -309,7 +310,10 @@ LONGLONG g_presentBridgeProbeLastCounter = 0;
 
 void AppendLog(const wchar_t* format, ...)
 {
-    if (g_module == nullptr)
+    static const bool diagnosticsEnabled =
+        bfvr::IsD3D8RuntimeDiagnosticsEnabled(
+            bfvr::ReadD3D8RuntimeDiagnosticLevel());
+    if (g_module == nullptr || !diagnosticsEnabled)
     {
         return;
     }
@@ -453,6 +457,11 @@ DWORD WINAPI ObserveD3D8To9RuntimeDiagnostics(LPVOID)
 
 bool StartD3D8To9RuntimeDiagnosticsObserver()
 {
+    if (!bfvr::IsD3D8RuntimeDiagnosticsEnabled(
+            bfvr::ReadD3D8RuntimeDiagnosticLevel()))
+    {
+        return true;
+    }
     HANDLE thread = CreateThread(
         nullptr,
         0,

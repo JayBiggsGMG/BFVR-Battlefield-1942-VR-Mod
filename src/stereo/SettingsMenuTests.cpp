@@ -203,6 +203,15 @@ bool TestInteractionAndPlacement()
         bfvr::stereo::kSettingsMenuNativeWidthScale;
     interaction.Configure(settingsWidth, settingsDistance);
     interaction.Open();
+    // Start selection tests from values that differ from the controls they
+    // click. Production defaults legitimately change over time and must not
+    // make a button-interaction test stop exercising a real value transition.
+    bfvr::settings::UserSettingsValues interactionTestValues = {};
+    interactionTestValues.movementDirection =
+        bfvr::settings::MovementDirection::Character;
+    interactionTestValues.handWeaponCrosshair =
+        bfvr::settings::WorldCrosshairMode::On;
+    interaction.SetValues(interactionTestValues);
     bfvr::stereo::QuickMenuFrameInput input = {};
     input.predictedDisplayTime = 1'000'000'000;
     input.sessionFocused = true;
@@ -272,8 +281,7 @@ bool TestInteractionAndPlacement()
     Click(interaction, input);
     const std::uint32_t clickedTurnSpeed =
         interaction.Snapshot().values.infantryTurnSpeedPercent;
-    if (clickedTurnSpeed ==
-            bfvr::settings::kDefaultInfantryTurnSpeedPercent ||
+    if (clickedTurnSpeed == state.values.infantryTurnSpeedPercent ||
         !interaction.TakeValuesChanged() ||
         interaction.Snapshot().status !=
             bfvr::stereo::SettingsMenuStatus::SettingsNotSaved)
@@ -410,10 +418,16 @@ bool TestInteractionAndPlacement()
     input.predictedDisplayTime += 11'111'111;
     interaction.Update(input);
     Click(interaction, input);
-    if (interaction.Snapshot().values.handWeaponCrosshair !=
+    const auto selectedHandCrosshair =
+        interaction.Snapshot().values.handWeaponCrosshair;
+    const bool handCrosshairChanged = interaction.TakeValuesChanged();
+    if (selectedHandCrosshair !=
             bfvr::settings::WorldCrosshairMode::HitMarkerOnly ||
-        !interaction.TakeValuesChanged())
+        !handCrosshairChanged)
     {
+        std::cerr << "hand-crosshair value="
+                  << static_cast<std::uint32_t>(selectedHandCrosshair)
+                  << " changed=" << handCrosshairChanged << "\n";
         return false;
     }
     state = interaction.Snapshot();
@@ -594,7 +608,11 @@ bool TestArt(const wchar_t* directory)
         return false;
     }
     variant = state;
-    variant.values.infantryTurnSpeedPercent = 200;
+    variant.values.infantryTurnSpeedPercent =
+        state.values.infantryTurnSpeedPercent ==
+                bfvr::settings::kMinimumInfantryTurnSpeedPercent
+            ? bfvr::settings::kMaximumInfantryTurnSpeedPercent
+            : bfvr::settings::kMinimumInfantryTurnSpeedPercent;
     if (!differs(variant))
     {
         return false;

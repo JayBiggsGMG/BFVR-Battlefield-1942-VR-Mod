@@ -39,6 +39,10 @@ bool EqualsAsciiInsensitive(
 D3D8RuntimeDiagnosticLevel ParseD3D8RuntimeDiagnosticLevel(
     std::wstring_view value) noexcept
 {
+    if (EqualsAsciiInsensitive(value, L"off") || value == L"0")
+    {
+        return D3D8RuntimeDiagnosticLevel::Off;
+    }
     return EqualsAsciiInsensitive(value, L"deep") || value == L"1"
         ? D3D8RuntimeDiagnosticLevel::Deep
         : D3D8RuntimeDiagnosticLevel::Normal;
@@ -62,7 +66,13 @@ D3D8RuntimeDiagnosticLevel ReadD3D8RuntimeDiagnosticLevel() noexcept
 const wchar_t* DescribeD3D8RuntimeDiagnosticLevel(
     D3D8RuntimeDiagnosticLevel level) noexcept
 {
-    return IsDeepD3D8RuntimeDiagnostics(level) ? L"deep" : L"normal";
+    switch (level)
+    {
+    case D3D8RuntimeDiagnosticLevel::Off: return L"off";
+    case D3D8RuntimeDiagnosticLevel::Deep: return L"deep";
+    case D3D8RuntimeDiagnosticLevel::Normal:
+    default: return L"normal";
+    }
 }
 
 } // namespace bfvr

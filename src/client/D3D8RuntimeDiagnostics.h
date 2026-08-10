@@ -7,6 +7,7 @@ namespace bfvr
 
 enum class D3D8RuntimeDiagnosticLevel
 {
+    Off,
     Normal,
     Deep
 };
@@ -20,6 +21,12 @@ enum class D3D8RuntimeDiagnosticLevel
     D3D8RuntimeDiagnosticLevel level) noexcept
 {
     return level == D3D8RuntimeDiagnosticLevel::Deep;
+}
+
+[[nodiscard]] constexpr bool IsD3D8RuntimeDiagnosticsEnabled(
+    D3D8RuntimeDiagnosticLevel level) noexcept
+{
+    return level != D3D8RuntimeDiagnosticLevel::Off;
 }
 
 [[nodiscard]] const wchar_t* DescribeD3D8RuntimeDiagnosticLevel(

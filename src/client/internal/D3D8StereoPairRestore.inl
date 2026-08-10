@@ -7,7 +7,8 @@ bool RestoreFrameState(void* device, const DrawStateSnapshot& snapshot)
     bool writesSucceeded = false;
     {
         bfvr::d3d8probe::ScopedPerformanceAccumulator timer(
-            g_frame.restoreWriteQpcTicks);
+            g_frame.restoreWriteQpcTicks,
+            bfvr::IsD3D8RuntimeDiagnosticsEnabled(g_runtimeDiagnostics));
         const bool skinningRestored =
             bfvr::d3d8probe::RestoreD3D8SkinningShaderConstants(
                 shaderApi,
