@@ -2,10 +2,12 @@
 
 #include "client/ControllerInputCache.h"
 #include "client/HandWeaponRecoilRuntime.h"
+#include "client/InfantryAuthoritativeAimRuntime.h"
 #include "client/ScopeViewOverlay.h"
 #include "presenter/SharedPresentationProtocol.h"
 #include "settings/UserSettings.h"
 #include "stereo/DirectionalLocomotion.h"
+#include "stereo/InfantryAuthoritativeAim.h"
 #include "stereo/SurfaceVehicleDriveMath.h"
 #include "stereo/VehicleMotionAimMath.h"
 
@@ -75,12 +77,7 @@ constexpr float kThumbstickDirectionThreshold = 0.72F;
 // Below this post-deadzone radial deflection, hold BF1942's native Walk
 // action.  Above it, submit the normal full-speed keyboard-equivalent axes.
 constexpr float kWalkStickMagnitudeThreshold = 0.60F;
-constexpr float kStickTurnInputPerFrame = 0.70F;
-constexpr float kNativeDegreesPerMouseLookUnit = 3.0F;
-constexpr float kPlayerActionMaximumAxis = 1.0F;
-constexpr float kMaximumQueuedMultiplayerSnapDegrees = 720.0F;
 constexpr ULONGLONG kUserSettingsPollIntervalMs = 250;
-constexpr float kTurnStickResponseExponent = 1.65F;
 constexpr float kVehicleAimStickResponseExponent = 1.35F;
 constexpr bfvr::stereo::VehicleMotionAimConfiguration
     kSurfaceVehicleMotionAimConfiguration = {};
@@ -389,7 +386,7 @@ public:
             return;
         }
         WriteLog(
-            L"Controller input overlay armed at local/offline scope 0x004B6A30, multiplayer PlayerAction encoder 0x00483E70/call 0x004B8E45, shared normalizer 0x004913A0/call 0x004B8E53, native GameInput action query 0x00446490, and HudManager scoreboard state machine 0x006A9C90. Multiplayer controller values are admitted only before encoding at return 0x004B8E53 when preserved EBX exactly equals the current manager local BFPlayer; the post-encode normalizer is observation-only for that route. Keyboard/mouse bindings remain native.");
+            L"Controller input overlay armed at local/offline scope 0x004B6A30, multiplayer PlayerAction encoder 0x00483E70/call 0x004B8E45, shared normalizer 0x004913A0/call 0x004B8E53, native GameInput action query 0x00446490, and HudManager scoreboard state machine 0x006A9C90. The infantry authoritative controller closes the final functional gun (or gadget pointer) direction against BF1942's fresh untouched pre-VR source-camera direction through the same bounded native mouseLookX/Y path in SP and MP; it does not execute for non-default control objects. Request-matched VR presentation owns Smooth/Snap timing, leaving this controller as the sole infantry native-look writer. Multiplayer controller values are admitted only before encoding at return 0x004B8E53 when preserved EBX exactly equals the current manager local BFPlayer; the post-encode normalizer is observation-only for that route. Keyboard/mouse bindings remain native.");
     }
 
     void Stop()
@@ -601,14 +598,15 @@ private:
 
     ControllerControlMode ReadCurrentControlMode(
         void* player,
-        bool multiplayerRoute) noexcept
+        bool multiplayerRoute,
+        void*& currentControlObject) noexcept
     {
+        currentControlObject = nullptr;
         if (player == nullptr)
         {
             return ControllerControlMode::Unknown;
         }
 
-        void* currentControlObject = nullptr;
         void* defaultControlObject = nullptr;
         __try
         {
@@ -804,55 +802,6 @@ private:
         EnableInput(destination, input);
     }
 
-    static float AddInfantryTurnInput(
-        float* destination,
-        float value,
-        float maximumTurnInput) noexcept
-    {
-        if (!std::isfinite(value) || value == 0.0F ||
-            !std::isfinite(maximumTurnInput) || maximumTurnInput <= 0.0F)
-        {
-            return 0.0F;
-        }
-        const float current = std::isfinite(
-            destination[kLogicalInputMouseLookX])
-            ? destination[kLogicalInputMouseLookX]
-            : 0.0F;
-        const float updated = std::clamp(
-            current + value,
-            -maximumTurnInput,
-            maximumTurnInput);
-        destination[kLogicalInputMouseLookX] = updated;
-        EnableInput(destination, kLogicalInputMouseLookX);
-        return updated - current;
-    }
-
-    static float AddInfantrySnapTurnInput(
-        float* destination,
-        float degrees) noexcept
-    {
-        if (!std::isfinite(degrees) || degrees == 0.0F)
-        {
-            return 0.0F;
-        }
-        // The semantic Mac infantry handler applies native mouse-look yaw
-        // through a factor-three scale after simulation-time normalization;
-        // retail WinPC has already accepted these same logical look slots in
-        // headset play. A snap must use that character-owned route: rotating
-        // only OpenXR leaves the soldier, arms, and weapon on their old yaw.
-        constexpr float kMaximumSnapTurnDegrees = 90.0F;
-        const float current = std::isfinite(
-            destination[kLogicalInputMouseLookX])
-            ? destination[kLogicalInputMouseLookX]
-            : 0.0F;
-        const float boundedDegrees = std::clamp(
-            degrees, -kMaximumSnapTurnDegrees, kMaximumSnapTurnDegrees);
-        destination[kLogicalInputMouseLookX] = current +
-            boundedDegrees / kNativeDegreesPerMouseLookUnit;
-        EnableInput(destination, kLogicalInputMouseLookX);
-        return boundedDegrees;
-    }
-
     static bool ExtractOpenXRYaw(
         float x,
         float y,
@@ -899,11 +848,8 @@ private:
         {
             return;
         }
-        if (activeControlMode == ControllerControlMode::Infantry &&
-            controlMode != ControllerControlMode::Infantry)
-        {
-            CancelPendingMultiplayerSnapTurn();
-        }
+        bfvr::stereo::ResetInfantryAuthoritativeAim(
+            infantryAuthoritativeAim);
         rightStickVerticalDirection = 0;
         crouchToggled = false;
         nativeAltFireWasDown = false;
@@ -926,33 +872,6 @@ private:
         }
     }
 
-    void CancelPendingMultiplayerSnapTurn() noexcept
-    {
-        if (pendingMultiplayerSnapTurnDegrees == 0.0F)
-        {
-            return;
-        }
-        bfvr::PublishControllerInfantryTurnIntent(
-            -pendingMultiplayerSnapTurnDegrees);
-        pendingMultiplayerSnapTurnDegrees = 0.0F;
-    }
-
-    float QueueMultiplayerSnapTurn(float degrees) noexcept
-    {
-        if (!std::isfinite(degrees) || degrees == 0.0F)
-        {
-            return 0.0F;
-        }
-        const float previous = pendingMultiplayerSnapTurnDegrees;
-        pendingMultiplayerSnapTurnDegrees = std::clamp(
-            previous + degrees,
-            -kMaximumQueuedMultiplayerSnapDegrees,
-            kMaximumQueuedMultiplayerSnapDegrees);
-        const float accepted = pendingMultiplayerSnapTurnDegrees - previous;
-        bfvr::PublishControllerInfantryTurnIntent(accepted);
-        return accepted;
-    }
-
     void ApplyControllerControls(
         float* destination,
         const bfvr::D3D8RuntimeControllerHand& left,
@@ -960,6 +879,8 @@ private:
         const bfvr::D3D8RuntimeView& matchingHead,
         bool matchingHeadTracked,
         ControllerControlMode controlMode,
+        const void* currentControlObject,
+        LONG controllerGeneration,
         std::int64_t predictedDisplayTime,
         bool multiplayerRoute) noexcept
     {
@@ -1112,72 +1033,86 @@ private:
                     infantryMovementDirection);
             }
 
+            constexpr DWORD requiredInfantryAimFlags =
+                bfvr::shared::kControllerHandFlagAimActive |
+                bfvr::shared::kControllerHandFlagAimOrientationValid |
+                bfvr::shared::kControllerHandFlagAimOrientationTracked;
+            const bool infantryAimTracked =
+                (right.flags & requiredInfantryAimFlags) ==
+                    requiredInfantryAimFlags;
+            bfvr::InfantryAuthoritativeAimRuntimeSample aimRuntime = {};
+            const bool aimRuntimeAvailable =
+                bfvr::ReadInfantryAuthoritativeAimRuntimeSample(
+                    currentControlObject,
+                    aimRuntime);
+            const auto authoritativeAim =
+                bfvr::stereo::UpdateInfantryAuthoritativeAim(
+                    infantryAuthoritativeAim,
+                    !quickMenuHeld && aimRuntimeAvailable,
+                    infantryAimTracked && aimRuntimeAvailable,
+                    aimRuntime.targetForwardWorld,
+                    aimRuntime.currentYawRadians,
+                    aimRuntime.currentPitchRadians,
+                    reinterpret_cast<std::uintptr_t>(currentControlObject),
+                    reinterpret_cast<std::uintptr_t>(aimRuntime.item),
+                    static_cast<std::uint64_t>(controllerGeneration));
+            if (authoritativeAim.lifetimeCaptured)
+            {
+                InterlockedIncrement(
+                    &infantryAuthoritativeAimReferenceFrames);
+            }
+            if (authoritativeAim.mouseLookX != 0.0F ||
+                authoritativeAim.mouseLookY != 0.0F)
+            {
+                AddAxisInput(
+                    destination,
+                    kLogicalInputMouseLookX,
+                    authoritativeAim.mouseLookX);
+                AddAxisInput(
+                    destination,
+                    kLogicalInputMouseLookY,
+                    authoritativeAim.mouseLookY);
+                mouseLookEnabled = true;
+                const LONG sampleIndex = InterlockedIncrement(
+                    &infantryAuthoritativeAimAppliedFrames);
+                if (sampleIndex <= 48)
+                {
+                    WriteLog(
+                        L"Infantry authoritative aim submitted a bounded native look correction: route=%ls soldier=%p item=%p targetKind=%ls inputGeneration=%ld targetGeneration=%ld nativeCameraSequence=%ld nativeCameraAgeMs=%lu targetYaw=%.6f targetPitch=%.6f currentYaw=%.6f currentPitch=%.6f yawError=%.6f pitchError=%.6f nativeCameraFwd=(%.6f,%.6f,%.6f) diagnosticBodyYaw=%.6f diagnosticNativeYawOffsetDeg=%.4f diagnosticNativePitchDeg=%.4f mouseLookX=%.5f mouseLookY=%.5f. Current authority is the exact fresh pre-VR source camera; SP and MP use this identical controller and no fire matrix or packet is changed here.",
+                        multiplayerRoute ? L"multiplayer" : L"offline",
+                        currentControlObject,
+                        aimRuntime.item,
+                        bfvr::InfantryAuthoritativeAimTargetKindName(
+                            aimRuntime.targetKind),
+                        controllerGeneration,
+                        aimRuntime.targetControllerGeneration,
+                        aimRuntime.nativeCameraRenderSequence,
+                        static_cast<unsigned long>(
+                            aimRuntime.nativeCameraAgeMs),
+                        authoritativeAim.targetYawRadians,
+                        authoritativeAim.targetPitchRadians,
+                        authoritativeAim.currentYawRadians,
+                        authoritativeAim.currentPitchRadians,
+                        authoritativeAim.yawErrorRadians,
+                        authoritativeAim.pitchErrorRadians,
+                        aimRuntime.nativeCameraForwardWorld.x,
+                        aimRuntime.nativeCameraForwardWorld.y,
+                        aimRuntime.nativeCameraForwardWorld.z,
+                        aimRuntime.bodyYawRadians,
+                        aimRuntime.nativeYawOffsetDegrees,
+                        aimRuntime.nativePitchDegrees,
+                        authoritativeAim.mouseLookX,
+                        authoritativeAim.mouseLookY);
+                }
+            }
+
             if ((right.flags &
                     bfvr::shared::kControllerHandFlagThumbstickActive) != 0)
             {
-                if (userSettings.artificialTurnMode ==
-                    bfvr::settings::ArtificialTurnMode::Snap)
-                {
-                    const float snapAxis = right.thumbstickX;
-                    if (std::fabs(snapAxis) < 0.35F)
-                    {
-                        snapTurnArmed = true;
-                    }
-                    else if (snapTurnArmed && std::fabs(snapAxis) >= 0.72F &&
-                        !quickMenuHeld)
-                    {
-                        const float degrees = std::copysign(
-                            static_cast<float>(
-                                userSettings.snapTurnAngleDegrees),
-                            snapAxis);
-                        const float acceptedDegrees = multiplayerRoute
-                            ? QueueMultiplayerSnapTurn(degrees)
-                            : AddInfantrySnapTurnInput(destination, degrees);
-                        if (!multiplayerRoute)
-                        {
-                            bfvr::PublishControllerInfantryTurnIntent(
-                                acceptedDegrees);
-                        }
-                        mouseLookEnabled = acceptedDegrees != 0.0F;
-                        snapTurnArmed = false;
-                    }
-                }
-                else
-                {
-                    snapTurnArmed = true;
-                }
-                const float turnInput =
-                    userSettings.artificialTurnMode ==
-                        bfvr::settings::ArtificialTurnMode::Smooth
-                    ?
-                    ApplyThumbstickResponse(
-                        right.thumbstickX,
-                        kTurnStickResponseExponent) *
-                    kStickTurnInputPerFrame *
-                    (static_cast<float>(
-                         userSettings.infantryTurnSpeedPercent) /
-                     100.0F)
-                    : 0.0F;
-                if (turnInput != 0.0F)
-                {
-                    constexpr float maximumConfiguredTurnInput =
-                        kStickTurnInputPerFrame *
-                        (static_cast<float>(
-                             bfvr::settings::
-                                 kMaximumInfantryTurnSpeedPercent) /
-                         100.0F);
-                    const float appliedTurnInput = AddInfantryTurnInput(
-                        destination,
-                        turnInput,
-                        multiplayerRoute
-                            ? kPlayerActionMaximumAxis
-                            : maximumConfiguredTurnInput);
-                    bfvr::PublishControllerInfantryTurnIntent(
-                        appliedTurnInput *
-                        kNativeDegreesPerMouseLookUnit);
-                    mouseLookEnabled = appliedTurnInput != 0.0F;
-                }
-
+                // Horizontal Smooth/Snap is consumed from this same accepted
+                // OpenXR sample by the request-matched presentation path.
+                // PlayerAction retains only the vertical jump/crouch edges;
+                // it no longer quantizes local camera turn cadence.
                 const int verticalDirection = quickMenuHeld
                     ? 0
                     : ThumbstickDirection(right.thumbstickY);
@@ -1192,33 +1127,8 @@ private:
             else
             {
                 rightStickVerticalDirection = 0;
-                snapTurnArmed = true;
             }
 
-            if (multiplayerRoute &&
-                userSettings.artificialTurnMode ==
-                    bfvr::settings::ArtificialTurnMode::Snap &&
-                !quickMenuHeld &&
-                pendingMultiplayerSnapTurnDegrees != 0.0F)
-            {
-                const float requestedTurnInput = std::clamp(
-                    pendingMultiplayerSnapTurnDegrees /
-                        kNativeDegreesPerMouseLookUnit,
-                    -kPlayerActionMaximumAxis,
-                    kPlayerActionMaximumAxis);
-                const float appliedTurnInput = AddInfantryTurnInput(
-                    destination,
-                    requestedTurnInput,
-                    kPlayerActionMaximumAxis);
-                pendingMultiplayerSnapTurnDegrees -=
-                    appliedTurnInput * kNativeDegreesPerMouseLookUnit;
-                if (std::fabs(pendingMultiplayerSnapTurnDegrees) < 0.001F)
-                {
-                    pendingMultiplayerSnapTurnDegrees = 0.0F;
-                }
-                mouseLookEnabled = mouseLookEnabled ||
-                    appliedTurnInput != 0.0F;
-            }
         }
         else
         {
@@ -1524,8 +1434,11 @@ private:
             sample.hands[kControllerHandLeft];
         const bfvr::D3D8RuntimeControllerHand& right =
             sample.hands[kControllerHandRight];
-        const ControllerControlMode controlMode =
-            ReadCurrentControlMode(candidatePlayer, multiplayerRoute);
+        void* currentControlObject = nullptr;
+        const ControllerControlMode controlMode = ReadCurrentControlMode(
+            candidatePlayer,
+            multiplayerRoute,
+            currentControlObject);
         UpdateControllerControlMode(controlMode);
         __try
         {
@@ -1536,6 +1449,8 @@ private:
                 matchingHead,
                 matchingHeadTracked,
                 controlMode,
+                currentControlObject,
+                generation,
                 sample.predictedDisplayTime,
                 multiplayerRoute);
         }
@@ -1614,7 +1529,6 @@ private:
 
     void ResetControllerState() noexcept
     {
-        CancelPendingMultiplayerSnapTurn();
         triggerHeld = false;
         bfvr::PublishHandWeaponRecoilFireHeld(false);
         leftTriggerHeld = false;
@@ -1626,8 +1540,9 @@ private:
         crouchToggled = false;
         bfvr::stereo::ResetVehicleMotionAim(surfaceVehicleMotionAim);
         bfvr::stereo::ResetDigitalLocomotion(infantryMovementDirection);
+        bfvr::stereo::ResetInfantryAuthoritativeAim(
+            infantryAuthoritativeAim);
         activeControlMode = ControllerControlMode::Unknown;
-        snapTurnArmed = true;
     }
 
     void RemoveHooks()
@@ -1714,10 +1629,6 @@ private:
             bfvr::stereo::ResetDigitalLocomotion(
                 infantryMovementDirection);
         }
-        if (updated.artificialTurnMode != userSettings.artificialTurnMode)
-        {
-            CancelPendingMultiplayerSnapTurn();
-        }
         userSettings = updated;
         WriteLog(
             L"Controller input applied updated UserConfig values: turnMode=%ls infantryTurnSpeed=%lu%% movementDirection=%lu invertFlightPitch=%d invertTurretPitch=%d invertTurretYaw=%d.",
@@ -1794,6 +1705,8 @@ private:
     volatile LONG missingDestinationFrames = 0;
     volatile LONG staleOrMissingControllerFrames = 0;
     volatile LONG freshControllerFrames = 0;
+    volatile LONG infantryAuthoritativeAimReferenceFrames = 0;
+    volatile LONG infantryAuthoritativeAimAppliedFrames = 0;
     volatile LONG unwritableDestinationFrames = 0;
     volatile LONG appliedFrames = 0;
     volatile LONG multiplayerAppliedFrames = 0;
@@ -1807,10 +1720,10 @@ private:
     bool crouchToggled = false;
     bfvr::stereo::VehicleMotionAimTracker surfaceVehicleMotionAim = {};
     bfvr::stereo::DigitalLocomotionState infantryMovementDirection = {};
+    bfvr::stereo::InfantryAuthoritativeAimState
+        infantryAuthoritativeAim = {};
     ControllerControlMode activeControlMode = ControllerControlMode::Unknown;
     bool controllerScoreboardWasHeld = false;
-    bool snapTurnArmed = true;
-    float pendingMultiplayerSnapTurnDegrees = 0.0F;
     bfvr::settings::UserSettingsValues userSettings = {};
     ULONGLONG nextUserSettingsPollAt = 0;
     bool ownsMinHook = false;

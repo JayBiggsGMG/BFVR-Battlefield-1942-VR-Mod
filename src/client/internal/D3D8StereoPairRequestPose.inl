@@ -125,6 +125,54 @@ void PrepareRuntimeRenderRequestPose()
     const bool infantryBodyYawValid =
         trackingContext.kind == bfvr::D3D8TrackingContextKind::Infantry &&
         bfvr::ReadLocalInfantryBodyYaw(infantryBodyYawRadians);
+    const bfvr::D3D8RuntimeControllerHand& rightController =
+        g_runtimeRenderRequest.controllerInput.hands[1];
+    const bool controllerInputAvailable =
+        g_runtimeRenderRequest.controllerInput.valid &&
+        g_runtimeRenderRequest.controllerInput.sessionFocused;
+    const bool rightThumbstickActive = controllerInputAvailable &&
+        (rightController.flags &
+         bfvr::shared::kControllerHandFlagThumbstickActive) != 0;
+    const bool quickMenuHeld = controllerInputAvailable &&
+        (rightController.buttons &
+         bfvr::shared::kControllerHandButtonPrimary) != 0;
+    const bool smoothTurnMode =
+        g_trackingUserSettings.artificialTurnMode ==
+        bfvr::settings::ArtificialTurnMode::Smooth;
+    const auto presentationTurn =
+        bfvr::stereo::UpdateInfantryPresentationTurn(
+            g_infantryPresentationTurn,
+            hasTrackedHead && controllerInputAvailable &&
+                trackingContext.kind ==
+                    bfvr::D3D8TrackingContextKind::Infantry,
+            smoothTurnMode,
+            rightThumbstickActive,
+            quickMenuHeld,
+            rightController.thumbstickX,
+            g_trackingUserSettings.infantryTurnSpeedPercent,
+            g_trackingUserSettings.snapTurnAngleDegrees,
+            g_runtimeRenderRequest.predictedDisplayTime,
+            trackingContext.token);
+    if (presentationTurn.smoothApplied &&
+        !g_loggedRequestCadenceSmoothTurn)
+    {
+        g_loggedRequestCadenceSmoothTurn = true;
+        AppendLog(
+            L"Infantry Smooth Turn is now integrated at request-matched VR presentation cadence: delta=%.4f degrees dt=%.4f ms response=%.4f speed=%lu%%. BF1942 PlayerAction no longer quantizes local camera yaw; the native authoritative aim controller follows the resulting final gun target independently.",
+            presentationTurn.deltaDegrees,
+            presentationTurn.deltaSeconds * 1000.0F,
+            presentationTurn.response,
+            static_cast<unsigned long>(
+                g_trackingUserSettings.infantryTurnSpeedPercent));
+    }
+    if (presentationTurn.snapApplied &&
+        !g_loggedRequestCadenceSnapTurn)
+    {
+        g_loggedRequestCadenceSnapTurn = true;
+        AppendLog(
+            L"Infantry Snap Turn applied one complete %.1f-degree edge at request-matched VR presentation cadence. No duplicate PlayerAction/native-look turn was submitted.",
+            presentationTurn.deltaDegrees);
+    }
     const bool standingMode = g_trackingUserSettings.playMode ==
         bfvr::settings::PlayMode::Standing;
     const float manualHeightAdjustmentMeters =
@@ -145,7 +193,7 @@ void PrepareRuntimeRenderRequestPose()
             g_trackingUserSettings.standingEyeHeightCentimeters) / 100.0F,
         manualHeightAdjustmentMeters,
         {
-            bfvr::ReadControllerInfantryTurnIntentMillidegrees(),
+            presentationTurn.deltaDegrees,
             infantryBodyYawRadians,
             infantryBodyYawValid});
     const bool seatedPostureTransitionIsActive =
@@ -160,6 +208,12 @@ void PrepareRuntimeRenderRequestPose()
     }
     const bfvr::D3D8RuntimeView trackingReference =
         g_trackingAnchor.ReferenceHead(currentHead);
+    const bfvr::D3D8RuntimeView presentationReference =
+        g_trackingAnchor.PresentationReferenceHead(currentHead);
+    float infantryPresentationYawRadians = 0.0F;
+    const bool infantryPresentationYawValid =
+        g_trackingAnchor.ReadInfantryPresentationYaw(
+            infantryPresentationYawRadians);
     if (trackingSettingsChanged && hasTrackedHead &&
         trackingContext.kind == bfvr::D3D8TrackingContextKind::Infantry)
     {
@@ -209,8 +263,11 @@ void PrepareRuntimeRenderRequestPose()
         bfvr::PublishAcceptedControllerInput(
             g_trackingAnchor.RebaseControllerSample(
                 g_runtimeRenderRequest.controllerInput),
+            g_runtimeRenderRequest.controllerInput,
             rebasedHead,
-            hasTrackedHead);
+            hasTrackedHead,
+            infantryBodyYawRadians,
+            infantryBodyYawValid);
     }
     else
     {
@@ -219,7 +276,7 @@ void PrepareRuntimeRenderRequestPose()
     g_runtimeFramePosePolicy = bfvr::MakeD3D8RuntimeFramePosePolicy(
         currentHead,
         hasTrackedHead);
-    g_runtimeFramePosePolicy.renderViewReference = trackingReference;
+    g_runtimeFramePosePolicy.renderViewReference = presentationReference;
     if (hasTrackedHead && !g_loggedImmutableLocalTrackingOrigin)
     {
         g_loggedImmutableLocalTrackingOrigin = true;
@@ -227,9 +284,11 @@ void PrepareRuntimeRenderRequestPose()
             L"Using immutable OpenXR LOCAL tracking with x86 context anchors: Seated captures the current posture as neutral; Standing derives the live STAGE floor in LOCAL coordinates so only floor-to-head height minus BF1942's existing 1.70-m eye camera is added. Manual trim is independent, every occupied vehicle/station owns a separate neutral pose, and recentering pivots at the headset. No automatic body rotation or networked position transform is added.");
     }
     g_renderViewPoseHook.UpdatePose(
-        trackingReference,
+        presentationReference,
         g_runtimeRenderRequest,
         g_trackingAnchor.ContextGeneration(),
         g_trackingAnchor.Context().kind ==
-            bfvr::D3D8TrackingContextKind::Infantry);
+            bfvr::D3D8TrackingContextKind::Infantry,
+        infantryPresentationYawValid,
+        infantryPresentationYawRadians);
 }

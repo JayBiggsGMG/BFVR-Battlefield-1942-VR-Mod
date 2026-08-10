@@ -46,23 +46,6 @@ float NormalizeRadians(float radians) noexcept
     return radians;
 }
 
-std::optional<float> ReadHorizontalFacingYaw(
-    const Matrix4& soldierBodyWorld) noexcept
-{
-    if (!IsAffine(soldierBodyWorld))
-    {
-        return std::nullopt;
-    }
-    const float forwardX = soldierBodyWorld.values[2][0];
-    const float forwardZ = soldierBodyWorld.values[2][2];
-    const float horizontalLength = std::hypot(forwardX, forwardZ);
-    if (!std::isfinite(horizontalLength) || horizontalLength < 0.5F)
-    {
-        return std::nullopt;
-    }
-    return std::atan2(forwardX, forwardZ);
-}
-
 Matrix4 MakeCameraFromYaw(
     const Matrix4& sourceCameraWorld,
     float yaw) noexcept
@@ -87,20 +70,18 @@ Matrix4 MakeCameraFromYaw(
 namespace bfvr::stereo
 {
 
-std::optional<Matrix4> MakeD3D8InfantryComfortCamera(
+std::optional<Matrix4> MakeD3D8InfantryPresentationCamera(
     const Matrix4& sourceCameraWorld,
-    const Matrix4& soldierBodyWorld) noexcept
+    const float presentationYawRadians) noexcept
 {
-    if (!IsAffine(sourceCameraWorld))
+    if (!IsAffine(sourceCameraWorld) ||
+        !std::isfinite(presentationYawRadians))
     {
         return std::nullopt;
     }
-    const auto yaw = ReadHorizontalFacingYaw(soldierBodyWorld);
-    if (!yaw.has_value())
-    {
-        return std::nullopt;
-    }
-    return MakeCameraFromYaw(sourceCameraWorld, *yaw);
+    return MakeCameraFromYaw(
+        sourceCameraWorld,
+        NormalizeRadians(presentationYawRadians));
 }
 
 } // namespace bfvr::stereo

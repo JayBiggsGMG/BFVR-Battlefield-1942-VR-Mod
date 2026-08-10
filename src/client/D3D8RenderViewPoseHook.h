@@ -33,7 +33,9 @@ public:
         const D3D8RuntimeView& referenceHead,
         const D3D8RuntimeRenderRequest& request,
         std::uint32_t trackingContextGeneration,
-        bool committedInfantryTrackingContext);
+        bool committedInfantryTrackingContext,
+        bool infantryPresentationYawValid,
+        float infantryPresentationYawRadians);
     // Clears only transient per-request hook state. This is used after a D3D8
     // Reset so no pre-reset HMD pose can be replayed before the next request.
     void ClearPose() noexcept;

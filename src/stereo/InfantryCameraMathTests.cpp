@@ -37,7 +37,7 @@ bool Near(float actual, float expected) noexcept
     return std::fabs(actual - expected) <= kTolerance;
 }
 
-bool TestSourceRecoilIsReplacedByBodyFacing() noexcept
+bool TestSourceRecoilIsReplacedByPresentationYaw() noexcept
 {
     Matrix4 source = Yaw(0.23F);
     const float pitch = 0.18F;
@@ -49,12 +49,11 @@ bool TestSourceRecoilIsReplacedByBodyFacing() noexcept
     source.values[3][1] = 3.5F;
     source.values[3][2] = -7.0F;
 
-    const Matrix4 body = Yaw(-0.41F);
-    const auto result = bfvr::stereo::MakeD3D8InfantryComfortCamera(
+    const auto result = bfvr::stereo::MakeD3D8InfantryPresentationCamera(
         source,
-        body);
+        -0.41F);
     const Matrix4 expected = [&]() noexcept {
-        Matrix4 value = body;
+        Matrix4 value = Yaw(-0.41F);
         value.values[3][0] = 12.0F;
         value.values[3][1] = 3.5F;
         value.values[3][2] = -7.0F;
@@ -77,13 +76,11 @@ bool TestSourceRecoilIsReplacedByBodyFacing() noexcept
     return true;
 }
 
-bool TestTiltedBodyStillSuppliesOnlyHorizontalFacing() noexcept
+bool TestPresentationYawIsExplicitAndHorizontal() noexcept
 {
-    Matrix4 body = Yaw(0.72F);
-    body.values[2][1] = 0.35F;
-    const auto result = bfvr::stereo::MakeD3D8InfantryComfortCamera(
+    const auto result = bfvr::stereo::MakeD3D8InfantryPresentationCamera(
         Identity(),
-        body);
+        0.72F);
     return result.has_value() &&
         Near(result->values[0][1], 0.0F) &&
         Near(result->values[1][0], 0.0F) &&
@@ -99,16 +96,12 @@ bool TestInvalidInputsFailClosed() noexcept
 {
     Matrix4 invalidSource = Identity();
     invalidSource.values[0][0] = std::numeric_limits<float>::quiet_NaN();
-    Matrix4 verticalBody = Identity();
-    verticalBody.values[2][0] = 0.0F;
-    verticalBody.values[2][1] = 1.0F;
-    verticalBody.values[2][2] = 0.0F;
-    return !bfvr::stereo::MakeD3D8InfantryComfortCamera(
+    return !bfvr::stereo::MakeD3D8InfantryPresentationCamera(
                 invalidSource,
-                Identity()).has_value() &&
-        !bfvr::stereo::MakeD3D8InfantryComfortCamera(
+                0.0F).has_value() &&
+        !bfvr::stereo::MakeD3D8InfantryPresentationCamera(
                  Identity(),
-                 verticalBody).has_value();
+                 std::numeric_limits<float>::quiet_NaN()).has_value();
 }
 
 float ForwardYaw(const Matrix4& matrix) noexcept
@@ -116,22 +109,31 @@ float ForwardYaw(const Matrix4& matrix) noexcept
     return std::atan2(matrix.values[2][0], matrix.values[2][2]);
 }
 
-bool TestEveryBodyHeadingIsAppliedAbsolutely() noexcept
+bool TestAuthoritativeBodyChangesCannotEnterPresentation() noexcept
 {
-    const auto initial = bfvr::stereo::MakeD3D8InfantryComfortCamera(
+    const auto initial = bfvr::stereo::MakeD3D8InfantryPresentationCamera(
         Identity(),
-        Yaw(0.20F));
-    const auto turned = bfvr::stereo::MakeD3D8InfantryComfortCamera(
+        0.20F);
+    // Arbitrary authoritative soldier yaw is intentionally not an input.
+    // Reusing the same presentation yaw must remain bit-for-bit invariant.
+    const auto afterNativeAim =
+        bfvr::stereo::MakeD3D8InfantryPresentationCamera(
+            Yaw(-1.35F),
+            0.20F);
+    const auto explicitTurn =
+        bfvr::stereo::MakeD3D8InfantryPresentationCamera(
         Identity(),
-        Yaw(0.31F));
+        0.31F);
     const auto afterContextChange =
-        bfvr::stereo::MakeD3D8InfantryComfortCamera(
+        bfvr::stereo::MakeD3D8InfantryPresentationCamera(
             Identity(),
-            Yaw(-1.20F));
-    return initial.has_value() && turned.has_value() &&
+            -1.20F);
+    return initial.has_value() && afterNativeAim.has_value() &&
+        explicitTurn.has_value() &&
         afterContextChange.has_value() &&
         Near(ForwardYaw(*initial), 0.20F) &&
-        Near(ForwardYaw(*turned), 0.31F) &&
+        Near(ForwardYaw(*afterNativeAim), 0.20F) &&
+        Near(ForwardYaw(*explicitTurn), 0.31F) &&
         Near(ForwardYaw(*afterContextChange), -1.20F);
 }
 
@@ -139,10 +141,10 @@ bool TestEveryBodyHeadingIsAppliedAbsolutely() noexcept
 
 int main()
 {
-    if (!TestSourceRecoilIsReplacedByBodyFacing() ||
-        !TestTiltedBodyStillSuppliesOnlyHorizontalFacing() ||
+    if (!TestSourceRecoilIsReplacedByPresentationYaw() ||
+        !TestPresentationYawIsExplicitAndHorizontal() ||
         !TestInvalidInputsFailClosed() ||
-        !TestEveryBodyHeadingIsAppliedAbsolutely())
+        !TestAuthoritativeBodyChangesCannotEnterPresentation())
     {
         std::fprintf(stderr, "Infantry-camera math tests failed.\n");
         return 1;

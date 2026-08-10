@@ -5,7 +5,6 @@
 #include <windows.h>
 
 #include <algorithm>
-#include <bit>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -17,8 +16,7 @@ constexpr float kTwoPi = 2.0F * kPi;
 constexpr float kBattlefieldStandingEyeHeightMeters = 1.70F;
 constexpr float kClearlySeatedBelowStandingMeters = 0.30F;
 constexpr float kSeatedVerticalMotionThresholdMeters = 0.003F;
-constexpr float kArtificialTurnSettleRadians = 0.00174532925F; // 0.1 degree
-constexpr std::int32_t kMaximumArtificialTurnDeltaMillidegrees = 720'000;
+constexpr float kMaximumArtificialTurnDeltaDegrees = 90.0F;
 constexpr std::int64_t kSeatedSettleDurationNanoseconds = 750'000'000;
 float WrapYaw(float value) noexcept
 {
@@ -53,14 +51,6 @@ void SetYaw(bfvr::D3D8RuntimeView& view, float yaw) noexcept
     view.orientationY = std::sin(half);
     view.orientationZ = 0.0F;
     view.orientationW = std::cos(half);
-}
-
-std::int32_t WrappedMillidegreeDelta(LONG current, LONG previous) noexcept
-{
-    const std::uint32_t difference =
-        static_cast<std::uint32_t>(current) -
-        static_cast<std::uint32_t>(previous);
-    return std::bit_cast<std::int32_t>(difference);
 }
 
 bfvr::stereo::Pose ToPose(const bfvr::D3D8RuntimeView& view) noexcept
@@ -116,6 +106,46 @@ bfvr::D3D8RuntimeControllerPose RebaseControllerPose(
 namespace bfvr
 {
 
+bool RebaseInfantryControllerSampleToCurrentBodyYaw(
+    const D3D8RuntimeControllerSample& source,
+    const float observedBodyYawRadians,
+    const float currentBodyYawRadians,
+    D3D8RuntimeControllerSample& adjusted) noexcept
+{
+    adjusted = source;
+    if (!std::isfinite(observedBodyYawRadians) ||
+        !std::isfinite(currentBodyYawRadians))
+    {
+        return false;
+    }
+
+    const float bodyDelta = WrapYaw(
+        currentBodyYawRadians - observedBodyYawRadians);
+    if (bodyDelta == 0.0F)
+    {
+        return true;
+    }
+
+    // The tracking reference contains presentationYaw - bodyYaw. Advancing
+    // body yaw by +d therefore rotates the controller's reference-local pose
+    // by +d. Expressing the old pose relative to a -d yaw reference performs
+    // that exact rigid correction for both position and orientation.
+    D3D8RuntimeView correctionReference = {};
+    SetYaw(correctionReference, -bodyDelta);
+    for (std::size_t handIndex = 0;
+         handIndex < std::size(adjusted.hands);
+         ++handIndex)
+    {
+        adjusted.hands[handIndex].aimPose = RebaseControllerPose(
+            correctionReference,
+            source.hands[handIndex].aimPose);
+        adjusted.hands[handIndex].gripPose = RebaseControllerPose(
+            correctionReference,
+            source.hands[handIndex].gripPose);
+    }
+    return true;
+}
+
 void D3D8TrackingAnchor::Reset() noexcept
 {
     baseReference_ = {};
@@ -126,16 +156,17 @@ void D3D8TrackingAnchor::Reset() noexcept
     standingReferenceY_ = 0.0F;
     manualHeightAdjustmentMeters_ = 0.0F;
     lastSeatedStageHeightMeters_ = 0.0F;
+    physicalReferenceYawRadians_ = 0.0F;
     observedInfantryBodyYawRadians_ = 0.0F;
-    artificialTurnLeadRadians_ = 0.0F;
+    infantryPresentationYawRadians_ = 0.0F;
+    infantryTrackingYawOffsetRadians_ = 0.0F;
     lastSeatedVerticalMotionTime_ = 0;
-    consumedArtificialTurnMillidegrees_ = 0;
     standingMode_ = false;
     standingReferenceValid_ = false;
     infantryModeInitialized_ = false;
     seatedPostureTransitionActive_ = false;
     seatedDescentObserved_ = false;
-    artificialTurnInitialized_ = false;
+    infantryPresentationInitialized_ = false;
     valid_ = false;
 }
 
@@ -159,6 +190,7 @@ void D3D8TrackingAnchor::Capture(
     }
     baseReference_ = currentHead;
     SetYaw(baseReference_, yaw);
+    physicalReferenceYawRadians_ = WrapYaw(yaw);
     context_ = context;
     ++contextGeneration_;
     if (contextGeneration_ == 0)
@@ -171,19 +203,23 @@ void D3D8TrackingAnchor::Capture(
     seatedPostureTransitionActive_ = false;
     seatedDescentObserved_ = false;
     lastSeatedVerticalMotionTime_ = 0;
-    artificialTurnLeadRadians_ = 0.0F;
+    infantryPresentationYawRadians_ = 0.0F;
+    infantryTrackingYawOffsetRadians_ = 0.0F;
     observedInfantryBodyYawRadians_ = 0.0F;
-    artificialTurnInitialized_ = false;
+    infantryPresentationInitialized_ = false;
     valid_ = true;
 }
 
-void D3D8TrackingAnchor::ResetArtificialTurnState(
-    LONG cumulativeIntentMillidegrees) noexcept
+void D3D8TrackingAnchor::ResetArtificialTurnState() noexcept
 {
-    consumedArtificialTurnMillidegrees_ = cumulativeIntentMillidegrees;
     observedInfantryBodyYawRadians_ = 0.0F;
-    artificialTurnLeadRadians_ = 0.0F;
-    artificialTurnInitialized_ = false;
+    infantryPresentationYawRadians_ = 0.0F;
+    infantryTrackingYawOffsetRadians_ = 0.0F;
+    infantryPresentationInitialized_ = false;
+    if (valid_)
+    {
+        SetYaw(baseReference_, physicalReferenceYawRadians_);
+    }
 }
 
 void D3D8TrackingAnchor::UpdateArtificialTurn(
@@ -191,100 +227,61 @@ void D3D8TrackingAnchor::UpdateArtificialTurn(
 {
     if (!valid_ || context_.kind != D3D8TrackingContextKind::Infantry)
     {
-        ResetArtificialTurnState(
-            artificialTurn.cumulativeIntentMillidegrees);
+        ResetArtificialTurnState();
         return;
     }
     if (!artificialTurn.infantryBodyYawValid ||
         !std::isfinite(artificialTurn.infantryBodyYawRadians))
     {
-        if (artificialTurnInitialized_ &&
-            std::fabs(artificialTurnLeadRadians_) > 0.0F)
-        {
-            float referenceYaw = 0.0F;
-            if (ExtractYaw(baseReference_, referenceYaw))
-            {
-                SetYaw(
-                    baseReference_,
-                    referenceYaw - artificialTurnLeadRadians_);
-            }
-        }
-        ResetArtificialTurnState(
-            artificialTurn.cumulativeIntentMillidegrees);
+        // A transient ownership/body read must not rotate the presentation.
+        // Request-local deltas are deliberately dropped rather than queued for
+        // replay when the same infantry lifetime resumes.
         return;
     }
-    if (!artificialTurnInitialized_)
+    if (!infantryPresentationInitialized_)
     {
-        consumedArtificialTurnMillidegrees_ =
-            artificialTurn.cumulativeIntentMillidegrees;
         observedInfantryBodyYawRadians_ =
             WrapYaw(artificialTurn.infantryBodyYawRadians);
-        artificialTurnLeadRadians_ = 0.0F;
-        artificialTurnInitialized_ = true;
+        infantryPresentationYawRadians_ =
+            observedInfantryBodyYawRadians_;
+        infantryTrackingYawOffsetRadians_ = 0.0F;
+        SetYaw(baseReference_, physicalReferenceYawRadians_);
+        infantryPresentationInitialized_ = true;
         return;
     }
 
-    const std::int32_t intentDeltaMillidegrees = WrappedMillidegreeDelta(
-        artificialTurn.cumulativeIntentMillidegrees,
-        consumedArtificialTurnMillidegrees_);
-    consumedArtificialTurnMillidegrees_ =
-        artificialTurn.cumulativeIntentMillidegrees;
-    const std::int64_t intentDeltaMagnitude =
-        intentDeltaMillidegrees < 0
-        ? -static_cast<std::int64_t>(intentDeltaMillidegrees)
-        : static_cast<std::int64_t>(intentDeltaMillidegrees);
-    if (intentDeltaMagnitude > kMaximumArtificialTurnDeltaMillidegrees)
+    if (!std::isfinite(artificialTurn.requestedDeltaDegrees) ||
+        std::fabs(artificialTurn.requestedDeltaDegrees) >
+            kMaximumArtificialTurnDeltaDegrees)
     {
-        ResetArtificialTurnState(
-            artificialTurn.cumulativeIntentMillidegrees);
+        ResetArtificialTurnState();
         observedInfantryBodyYawRadians_ =
             WrapYaw(artificialTurn.infantryBodyYawRadians);
-        artificialTurnInitialized_ = true;
+        infantryPresentationYawRadians_ =
+            observedInfantryBodyYawRadians_;
+        infantryPresentationInitialized_ = true;
         return;
     }
 
-    constexpr float kMillidegreesToRadians =
-        kPi / (180.0F * 1000.0F);
     const float requestedDelta =
-        static_cast<float>(intentDeltaMillidegrees) *
-        kMillidegreesToRadians;
+        artificialTurn.requestedDeltaDegrees * (kPi / 180.0F);
     const float bodyYaw = WrapYaw(artificialTurn.infantryBodyYawRadians);
     const float bodyDelta = WrapYaw(
         bodyYaw - observedInfantryBodyYawRadians_);
     observedInfantryBodyYawRadians_ = bodyYaw;
 
-    artificialTurnLeadRadians_ += requestedDelta;
-    float consumedBodyDelta = 0.0F;
-    if (artificialTurnLeadRadians_ != 0.0F && bodyDelta != 0.0F &&
-        std::signbit(artificialTurnLeadRadians_) == std::signbit(bodyDelta))
-    {
-        consumedBodyDelta = std::copysign(
-            (std::min)(
-                std::fabs(artificialTurnLeadRadians_),
-                std::fabs(bodyDelta)),
-            artificialTurnLeadRadians_);
-        artificialTurnLeadRadians_ -= consumedBodyDelta;
-    }
-    if (intentDeltaMillidegrees == 0 &&
-        std::fabs(artificialTurnLeadRadians_) <=
-            kArtificialTurnSettleRadians)
-    {
-        consumedBodyDelta += artificialTurnLeadRadians_;
-        artificialTurnLeadRadians_ = 0.0F;
-    }
-
-    // OpenXR +Y yaw has the opposite horizontal sign from BF1942's D3D8
-    // body yaw after the Z-axis conversion. Advancing the neutral reference
-    // by the requested D3D8 turn therefore produces an equal immediate turn
-    // in the rebased HMD/controllers. As the root soldier catches up, moving
-    // the reference back by that body delta prevents a second visible turn.
-    float referenceYaw = 0.0F;
-    if (ExtractYaw(baseReference_, referenceYaw))
-    {
-        SetYaw(
-            baseReference_,
-            referenceYaw + requestedDelta - consumedBodyDelta);
-    }
+    // The locally presented heading changes only for explicit Smooth/Snap
+    // intent. Every native body-yaw change, including hand-driven aim and
+    // delayed body catch-up, is removed from the shared HMD/controller anchor.
+    // The native soldier remains untouched and authoritative.
+    infantryTrackingYawOffsetRadians_ = WrapYaw(
+        infantryTrackingYawOffsetRadians_ + requestedDelta - bodyDelta);
+    infantryPresentationYawRadians_ = WrapYaw(
+        bodyYaw + infantryTrackingYawOffsetRadians_);
+    SetYaw(
+        baseReference_,
+        physicalReferenceYawRadians_ +
+            infantryTrackingYawOffsetRadians_);
 }
 
 void D3D8TrackingAnchor::Update(
@@ -454,9 +451,11 @@ void D3D8TrackingAnchor::Update(
             {
                 baseReference_.positionY = currentHead.positionY;
             }
+            physicalReferenceYawRadians_ = WrapYaw(yaw);
             SetYaw(
                 baseReference_,
-                yaw + artificialTurnLeadRadians_);
+                physicalReferenceYawRadians_ +
+                    infantryTrackingYawOffsetRadians_);
             consumedRecenterSequence_ = recenterForwardSequence;
         }
     }
@@ -479,6 +478,31 @@ D3D8RuntimeView D3D8TrackingAnchor::ReferenceHead(
         result.positionY -= manualHeightAdjustmentMeters_;
     }
     return result;
+}
+
+D3D8RuntimeView D3D8TrackingAnchor::PresentationReferenceHead(
+    const D3D8RuntimeView& fallbackHead) const noexcept
+{
+    D3D8RuntimeView result = ReferenceHead(fallbackHead);
+    if (valid_)
+    {
+        SetYaw(result, physicalReferenceYawRadians_);
+    }
+    return result;
+}
+
+bool D3D8TrackingAnchor::ReadInfantryPresentationYaw(
+    float& yawRadians) const noexcept
+{
+    yawRadians = 0.0F;
+    if (!valid_ || context_.kind != D3D8TrackingContextKind::Infantry ||
+        !infantryPresentationInitialized_ ||
+        !std::isfinite(infantryPresentationYawRadians_))
+    {
+        return false;
+    }
+    yawRadians = infantryPresentationYawRadians_;
+    return true;
 }
 
 D3D8RuntimeView D3D8TrackingAnchor::RebaseView(

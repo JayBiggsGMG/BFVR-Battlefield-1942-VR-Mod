@@ -1,6 +1,7 @@
 #include "client/D3D8RenderViewPoseHook.h"
 
 #include "client/BFSoldierVrMotionFilter.h"
+#include "client/InfantryAuthoritativeAimRuntime.h"
 #include "client/MountedWeaponAimResolver.h"
 #include "client/ScopeViewOverlay.h"
 
@@ -311,7 +312,9 @@ public:
         const D3D8RuntimeView& newReferenceHead,
         const D3D8RuntimeRenderRequest& request,
         const std::uint32_t trackingContextGeneration,
-        const bool committedInfantryTrackingContext)
+        const bool committedInfantryTrackingContext,
+        const bool infantryPresentationYawValid,
+        const float infantryPresentationYawRadians)
     {
         referenceHead = newReferenceHead;
         currentHead = MakeD3D8RuntimeHeadReference(request);
@@ -328,12 +331,18 @@ public:
         InterlockedExchange(
             &requestedInfantryTrackingContext,
             committedInfantryTrackingContext ? 1 : 0);
+        requestedInfantryPresentationYawRadians =
+            infantryPresentationYawRadians;
+        InterlockedExchange(
+            &requestedInfantryPresentationYawValid,
+            infantryPresentationYawValid ? 1 : 0);
         MemoryBarrier();
         InterlockedExchange(&requestedSequence, request.sequence);
     }
 
     void ClearPose() noexcept
     {
+        bfvr::ClearInfantryNativeAimCamera();
         referenceHead = {};
         currentHead = {};
         lastSource = {};
@@ -353,6 +362,8 @@ public:
         InterlockedExchange(&requestedTrackingContextGeneration, 0);
         InterlockedExchange(&appliedTrackingContextGeneration, 0);
         InterlockedExchange(&requestedInfantryTrackingContext, 0);
+        requestedInfantryPresentationYawRadians = 0.0F;
+        InterlockedExchange(&requestedInfantryPresentationYawValid, 0);
         ResetMountedCameraAnchor(false);
         MemoryBarrier();
         InterlockedExchange(&requestedSequence, 0);
@@ -452,6 +463,8 @@ public:
         InterlockedExchange(&requestedTrackingContextGeneration, 0);
         InterlockedExchange(&appliedTrackingContextGeneration, 0);
         InterlockedExchange(&requestedInfantryTrackingContext, 0);
+        requestedInfantryPresentationYawRadians = 0.0F;
+        InterlockedExchange(&requestedInfantryPresentationYawValid, 0);
         ResetMountedCameraAnchor(false);
         MemoryBarrier();
         InterlockedExchange(&appliedSourceSequence, 0);
@@ -589,7 +602,7 @@ private:
             {
                 InterlockedIncrement(&trackingContextChanges);
                 WriteLog(
-                    L"Infantry camera tracking context synchronized to committed handoff generation=%ld (previous=%ld). The headset and controllers change anchors on this boundary; the camera uses current body heading plus only the bounded controller-authored artificial-turn lead while the body catches up.",
+                    L"Infantry presentation context synchronized to committed handoff generation=%ld (previous=%ld). The headset and controllers change anchors on this boundary; native soldier aim can no longer change the request-matched local presentation heading.",
                     trackingContextGeneration,
                     priorTrackingContextGeneration);
             }
@@ -600,6 +613,13 @@ private:
                 &requestedInfantryTrackingContext,
                 0,
                 0) != 0;
+        const bool infantryPresentationYawValid =
+            InterlockedCompareExchange(
+                &requestedInfantryPresentationYawValid,
+                0,
+                0) != 0;
+        const float infantryPresentationYawRadians =
+            requestedInfantryPresentationYawRadians;
         stereo::Matrix4 cameraSource = source;
         LocalInfantryBodyPose infantryBody = {};
         const bool infantryBodyRead =
@@ -607,13 +627,28 @@ private:
             ReadLocalInfantryBodyPose(infantryBody);
         if (infantryBodyRead)
         {
-            const auto comfortCamera =
-                stereo::MakeD3D8InfantryComfortCamera(
+            // Publish the untouched Battlefield camera before presentation
+            // yaw/HMD composition. Accepted-shot traces prove this forward is
+            // the local native WeaponFire direction; the controller consumes
+            // it only as short-lived exact-soldier feedback.
+            bfvr::PublishInfantryNativeAimCamera(
+                infantryBody.controlObject,
+                source,
+                sequence);
+        }
+        else
+        {
+            bfvr::ClearInfantryNativeAimCamera();
+        }
+        if (infantryBodyRead && infantryPresentationYawValid)
+        {
+            const auto presentationCamera =
+                stereo::MakeD3D8InfantryPresentationCamera(
                     source,
-                    infantryBody.world);
-            if (comfortCamera.has_value())
+                    infantryPresentationYawRadians);
+            if (presentationCamera.has_value())
             {
-                cameraSource = *comfortCamera;
+                cameraSource = *presentationCamera;
                 InterlockedIncrement(&infantryComfortApplied);
                 if (InterlockedCompareExchange(
                         &firstInfantryComfortLogged,
@@ -621,7 +656,7 @@ private:
                         0) == 0)
                 {
                     WriteLog(
-                        L"Infantry VR camera now uses BF1942 source position plus the alive local soldier body's current horizontal heading. Native camera pitch/roll/view-only recoil is excluded, while every game-owned body turn passes through immediately in both single-player and multiplayer. No post-fire yaw accumulator can leave the view, body, and arms in different headings. Position, movement, weapon state, firing, networking, models, and IK remain game-owned. controlObject=%p.",
+                        L"Infantry VR camera now uses BF1942's source position plus a request-matched local presentation heading. Native hand-driven soldier yaw, camera pitch/roll, and view-only recoil are excluded from the HMD view in both SP and MP; Smooth/Snap intent remains the only artificial presentation-yaw owner. Native soldier aim, firing, damage, networking, movement, models, and IK remain game-owned. controlObject=%p.",
                         infantryBody.controlObject);
                 }
             }
@@ -1207,6 +1242,7 @@ private:
     volatile LONG requestedTrackingContextGeneration = 0;
     volatile LONG appliedTrackingContextGeneration = 0;
     volatile LONG requestedInfantryTrackingContext = 0;
+    volatile LONG requestedInfantryPresentationYawValid = 0;
     volatile LONG frustumMatchingCalls = 0;
     volatile LONG frustumAppliedCalls = 0;
     volatile LONG mountedFrustumAppliedCalls = 0;
@@ -1228,6 +1264,7 @@ private:
     volatile LONG firstInfantryComfortLogged = 0;
     volatile LONG scopeNormalFovRestorePending = 0;
     float pendingScopeNormalFov = -1.0F;
+    float requestedInfantryPresentationYawRadians = 0.0F;
     LONG tracedFireSequence = 0;
     LONG tracedFireFrames = 0;
     DWORD tracedFireLastLoggedAt = 0;
@@ -1264,7 +1301,9 @@ void D3D8RenderViewPoseHook::UpdatePose(
     const D3D8RuntimeView& referenceHead,
     const D3D8RuntimeRenderRequest& request,
     const std::uint32_t trackingContextGeneration,
-    const bool committedInfantryTrackingContext)
+    const bool committedInfantryTrackingContext,
+    const bool infantryPresentationYawValid,
+    const float infantryPresentationYawRadians)
 {
     if (impl_ != nullptr)
     {
@@ -1272,7 +1311,9 @@ void D3D8RenderViewPoseHook::UpdatePose(
             referenceHead,
             request,
             trackingContextGeneration,
-            committedInfantryTrackingContext);
+            committedInfantryTrackingContext,
+            infantryPresentationYawValid,
+            infantryPresentationYawRadians);
     }
 }
 

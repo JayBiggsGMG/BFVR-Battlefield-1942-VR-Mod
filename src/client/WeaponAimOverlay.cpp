@@ -3,6 +3,7 @@
 #include "client/BFSoldierVrMotionFilter.h"
 #include "client/ControllerHaptics.h"
 #include "client/HandWeaponRecoilRuntime.h"
+#include "client/InfantryAuthoritativeAimRuntime.h"
 #include "client/MountedWeaponAimResolver.h"
 #include "client/ScopedOffHandSupportPoseCache.h"
 #include "client/ScopeViewOverlay.h"
@@ -49,6 +50,8 @@ constexpr std::size_t kSoldierActiveItemIndexOffset = 0x3E8;
 constexpr DWORD kVisualWeaponPoseMaximumAgeMs = 125;
 constexpr DWORD kOffHandSupportMaximumAgeMs = 150;
 constexpr std::size_t kRecordCapacity = 16;
+constexpr LONG kMaximumNativeAuthorityShotDiagnostics = 24;
+constexpr float kRadiansToDegrees = 57.29577951308232F;
 constexpr BYTE kWeaponFireCorePrefix[] = {
     0x81, 0xEC, 0xB8, 0x01, 0x00, 0x00, 0x53, 0x55,
     0x8B, 0xE9, 0x8B, 0x85, 0xB4, 0x01, 0x00, 0x00};
@@ -105,6 +108,33 @@ bool ReadActiveItemIndex(
         activeItemIndex = -1;
         return false;
     }
+}
+
+float ForwardAngleDegrees(
+    const bfvr::stereo::Matrix4& nativeMatrix,
+    const bfvr::stereo::Vec3& targetForward) noexcept
+{
+    const float nativeLength = std::sqrt(
+        nativeMatrix.values[2][0] * nativeMatrix.values[2][0] +
+        nativeMatrix.values[2][1] * nativeMatrix.values[2][1] +
+        nativeMatrix.values[2][2] * nativeMatrix.values[2][2]);
+    const float targetLength = std::sqrt(
+        targetForward.x * targetForward.x +
+        targetForward.y * targetForward.y +
+        targetForward.z * targetForward.z);
+    if (!std::isfinite(nativeLength) || !std::isfinite(targetLength) ||
+        nativeLength < 0.5F || targetLength < 0.5F)
+    {
+        return -1.0F;
+    }
+    const float cosine = std::clamp(
+        (nativeMatrix.values[2][0] * targetForward.x +
+         nativeMatrix.values[2][1] * targetForward.y +
+         nativeMatrix.values[2][2] * targetForward.z) /
+            (nativeLength * targetLength),
+        -1.0F,
+        1.0F);
+    return std::acos(cosine) * kRadiansToDegrees;
 }
 
 class WeaponAimOverlay
@@ -197,11 +227,7 @@ public:
         }
         hookEnabled = true;
         WriteLog(
-            !weaponMotionEnabled
-                ? L"Local WeaponFire_Core haptic observer armed at 0x0053CDB0. Weapon motion is disabled, so every call forwards unchanged after publishing only accepted local firing feedback."
-                : moveNativeFireOrigin
-                ? L"Controller-directed fire overlay armed at 0x0053CDB0 for native 1P arms. Exact current gadget slots 4/5/6 use the raw OpenXR aim-pointer origin and direction without changing the held item or hand; knives and ordinary shooting items retain the established held-gun basis. During an exact validated useScope view whose hidden native arm is stale, WeaponFire_Core instead shares the visible scoped basis while retaining BF1942's native projectile origin. BF1942 retains weapon/barrel offsets, spread, cadence, projectile creation, and networking; unsupported calls forward unchanged."
-                : L"Controller-directed fire overlay armed at 0x0053CDB0. Only the five verified branches in WeaponFire_Ordinary can receive the fresh displayed-weapon rotation for the alive local infantry player; native fire position and unsupported calls remain unchanged.");
+            L"Native infantry-authority proof observer armed at WeaponFire_Core 0x0053CDB0. Haptics and accepted-shot recoil notifications remain active, but every SP and MP fire call forwards BF1942's original matrix unchanged. Controller-directed fire-matrix replacement is disabled for this proof.");
     }
 
     void Stop()
@@ -267,6 +293,8 @@ private:
     {
         InterlockedIncrement(&observedCalls);
         const bool localAliveActor = IsLocalAliveActor(actor);
+        bool exactInfantryControl = false;
+        const void* cameraSoldier = nullptr;
         if (localAliveActor)
         {
             // Haptics cover every accepted local weapon. Infantry camera and
@@ -274,10 +302,9 @@ private:
             // WeaponFire_Core call must never survive its independently timed
             // tracking-context handoff into the returned soldier view.
             bfvr::NotifyControllerWeaponFired();
-            const void* const cameraSoldier =
-                bfvr::ReadCurrentBFSoldierVrCameraSoldier();
+            cameraSoldier = bfvr::ReadCurrentBFSoldierVrCameraSoldier();
             bfvr::LocalPlayerControlContext controlContext = {};
-            const bool exactInfantryControl =
+            exactInfantryControl =
                 bfvr::ReadLocalPlayerControlContext(controlContext) &&
                 controlContext.currentControlObject ==
                     controlContext.defaultControlObject &&
@@ -294,6 +321,93 @@ private:
                     bfvr::IsFreshCurrentOffHandSupportHeld(
                         kOffHandSupportMaximumAgeMs));
             }
+        }
+        if (nativeInfantryAuthorityProofEnabled)
+        {
+            InterlockedIncrement(&nativeAuthorityForwardedCalls);
+            const LONG diagnosticIndex = exactInfantryControl
+                ? InterlockedIncrement(&nativeAuthorityShotDiagnostics)
+                : 0;
+            if (diagnosticIndex > 0 &&
+                diagnosticIndex <=
+                    kMaximumNativeAuthorityShotDiagnostics)
+            {
+                bfvr::stereo::Matrix4 nativeMatrix = {};
+                bool readable = false;
+                if (matrix != nullptr)
+                {
+                    __try
+                    {
+                        std::memcpy(
+                            &nativeMatrix,
+                            matrix,
+                            sizeof(nativeMatrix));
+                        readable = true;
+                    }
+                    __except (EXCEPTION_EXECUTE_HANDLER)
+                    {
+                        readable = false;
+                    }
+                }
+                if (readable)
+                {
+                    bfvr::InfantryAuthoritativeAimRuntimeSample aim = {};
+                    const bool aimAvailable =
+                        bfvr::ReadInfantryAuthoritativeAimRuntimeSample(
+                            cameraSoldier,
+                            aim);
+                    const bfvr::stereo::Vec3 unavailableForward = {};
+                    const bfvr::stereo::Vec3& targetForward = aimAvailable
+                        ? aim.targetForwardWorld
+                        : unavailableForward;
+                    const bfvr::stereo::Vec3& cameraForward = aimAvailable
+                        ? aim.nativeCameraForwardWorld
+                        : unavailableForward;
+                    WriteLog(
+                        L"Native infantry-authority proof forwarded accepted local infantry shot %ld unchanged: weapon=%p barrel=%lu caller=%p expectedOrdinaryCaller=%d origin=(%.3f,%.3f,%.3f) nativeForward=(%.5f,%.5f,%.5f) aimSample=%d targetKind=%ls targetGeneration=%ld targetForward=(%.5f,%.5f,%.5f) nativeToTargetDeg=%.4f nativeCameraSequence=%ld nativeCameraAgeMs=%lu nativeCameraForward=(%.5f,%.5f,%.5f) nativeToCameraDeg=%.4f. This exact BF1942 matrix continues into projectile creation and networking.",
+                        diagnosticIndex,
+                        weapon,
+                        barrelIndex,
+                        callerReturn,
+                        IsExpectedCaller(callerReturn) ? 1 : 0,
+                        nativeMatrix.values[3][0],
+                        nativeMatrix.values[3][1],
+                        nativeMatrix.values[3][2],
+                        nativeMatrix.values[2][0],
+                        nativeMatrix.values[2][1],
+                        nativeMatrix.values[2][2],
+                        aimAvailable ? 1 : 0,
+                        aimAvailable
+                            ? bfvr::InfantryAuthoritativeAimTargetKindName(
+                                aim.targetKind)
+                            : L"unavailable",
+                        aim.targetControllerGeneration,
+                        targetForward.x,
+                        targetForward.y,
+                        targetForward.z,
+                        aimAvailable
+                            ? ForwardAngleDegrees(nativeMatrix, targetForward)
+                            : -1.0F,
+                        aim.nativeCameraRenderSequence,
+                        static_cast<unsigned long>(aim.nativeCameraAgeMs),
+                        cameraForward.x,
+                        cameraForward.y,
+                        cameraForward.z,
+                        aimAvailable
+                            ? ForwardAngleDegrees(nativeMatrix, cameraForward)
+                            : -1.0F);
+                }
+                else
+                {
+                    WriteLog(
+                        L"Native infantry-authority proof forwarded an accepted local infantry shot unchanged, but its matrix could not be read for diagnostics: weapon=%p barrel=%lu caller=%p.",
+                        weapon,
+                        barrelIndex,
+                        callerReturn);
+                }
+            }
+            originalFire(weapon, actor, matrix, barrelIndex);
+            return;
         }
         if (!weaponMotionEnabled)
         {
@@ -658,8 +772,9 @@ private:
     void Report() const
     {
         WriteLog(
-            L"Controller-directed fire overlay stopped: observed=%ld adjusted=%ld scopedDirectionOnly=%ld gadgetPointerAim=%ld wrongCaller=%ld nonLocalOrDead=%ld unreadable=%ld missingVisualWeaponPose=%ld missingNativeArmPose=%ld cameraLifetimeMismatch=%ld anchorDistanceRejected=%ld mathRejected=%ld.",
+            L"WeaponFire observer stopped: observed=%ld nativeAuthorityForwarded=%ld adjusted=%ld scopedDirectionOnly=%ld gadgetPointerAim=%ld wrongCaller=%ld nonLocalOrDead=%ld unreadable=%ld missingVisualWeaponPose=%ld missingNativeArmPose=%ld cameraLifetimeMismatch=%ld anchorDistanceRejected=%ld mathRejected=%ld.",
             observedCalls,
+            nativeAuthorityForwardedCalls,
             adjustedCalls,
             scopedDirectionOnlyCalls,
             gadgetPointerAimCalls,
@@ -762,6 +877,8 @@ private:
     std::array<AimRecord, kRecordCapacity> records = {};
     volatile LONG started = 0;
     volatile LONG observedCalls = 0;
+    volatile LONG nativeAuthorityForwardedCalls = 0;
+    volatile LONG nativeAuthorityShotDiagnostics = 0;
     volatile LONG adjustedCalls = 0;
     volatile LONG scopedDirectionOnlyCalls = 0;
     volatile LONG gadgetPointerAimCalls = 0;
@@ -781,6 +898,7 @@ private:
     bool hookEnabled = false;
     bool moveNativeFireOrigin = false;
     bool weaponMotionEnabled = false;
+    bool nativeInfantryAuthorityProofEnabled = true;
 };
 
 PVOID volatile WeaponAimOverlay::active = nullptr;

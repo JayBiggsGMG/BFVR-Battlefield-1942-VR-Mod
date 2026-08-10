@@ -3,9 +3,10 @@
 namespace bfvr
 {
 
-// Reorients the proven local-infantry WeaponFire_Core matrix with the exact
-// fresh grip-driven orientation used by the rendered weapon. The overlay is
-// fail-closed and enabled only with the same development flag as weapon motion.
+// Observes BF1942's accepted local weapon-fire boundary for haptics and recoil.
+// During the infantry-authority proof it forwards every native fire matrix
+// unchanged so gameplay aim, projectile creation, and networking remain one
+// stock pipeline in both offline and multiplayer sessions.
 void StartWeaponAimOverlay(
     void* gameImage,
     void (*appendLog)(const wchar_t* message));

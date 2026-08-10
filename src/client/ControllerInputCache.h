@@ -13,11 +13,33 @@ namespace bfvr
 // graphics/render thread without risking a game stall.
 void PublishAcceptedControllerInput(
     const D3D8RuntimeControllerSample& sample,
+    const D3D8RuntimeControllerSample& nativeAimSample,
     const D3D8RuntimeView& matchingHead,
-    bool matchingHeadTracked) noexcept;
+    bool matchingHeadTracked,
+    float presentationBodyYawRadians,
+    bool presentationBodyYawValid) noexcept;
 void ClearAcceptedControllerInput() noexcept;
 
 [[nodiscard]] bool ReadFreshAcceptedControllerInput(
+    D3D8RuntimeControllerSample& sample,
+    LONG& generation,
+    DWORD maximumAgeMs) noexcept;
+
+// Returns the presentation-rebased sample together with the exact infantry
+// body yaw used to construct its tracking reference. The native arm callback
+// can then compensate to its same-callback soldier transform instead of
+// combining controller and body bases from different PlayerAction instants.
+[[nodiscard]] bool ReadFreshAcceptedInfantryPresentationInput(
+    D3D8RuntimeControllerSample& sample,
+    float& presentationBodyYawRadians,
+    bool& presentationBodyYawValid,
+    LONG& generation,
+    DWORD maximumAgeMs) noexcept;
+
+// Returns the same accepted OpenXR sample before infantry presentation/body
+// compensation. Native infantry aim consumes this source so body motion can
+// never feed back into the hand delta submitted to BF1942.
+[[nodiscard]] bool ReadFreshAcceptedNativeInfantryAimInput(
     D3D8RuntimeControllerSample& sample,
     LONG& generation,
     DWORD maximumAgeMs) noexcept;
@@ -31,13 +53,5 @@ void ClearAcceptedControllerInput() noexcept;
     D3D8RuntimeView& matchingHead,
     LONG& generation,
     DWORD maximumAgeMs) noexcept;
-
-// Publishes only the controller-authored infantry yaw that BFVR also submits
-// through BF1942's native logical mouse-look path. The cumulative fixed-point
-// value lets the render thread apply the same artificial turn to the shared
-// headset/controller anchor without delaying or rewriting game/network state.
-void PublishControllerInfantryTurnIntent(float degrees) noexcept;
-
-[[nodiscard]] LONG ReadControllerInfantryTurnIntentMillidegrees() noexcept;
 
 } // namespace bfvr

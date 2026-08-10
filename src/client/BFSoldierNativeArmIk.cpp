@@ -1,4 +1,5 @@
 #include "client/BFSoldierNativeArmIk.h"
+#include "client/BFSoldierNativeArmMath.h"
 #include "client/BFSoldierBoneResolver.h"
 #include "client/BFSoldierLeftGripRotationBinding.h"
 #include "client/BFSoldierOffHandSupportBinding.h"
@@ -10,6 +11,7 @@
 #include "client/BFSoldierTrackedHandPose.h"
 #include "client/BFSoldierVrMotionFilter.h"
 #include "client/ControllerInputCache.h"
+#include "client/D3D8TrackingAnchor.h"
 #include "client/HandWeaponRecoilRuntime.h"
 #include "client/WeaponPoseRuntimeCache.h"
 #include "presenter/SharedPresentationProtocol.h"
@@ -111,23 +113,15 @@ constexpr BYTE kBFSoldierGetPoseCameraPositionPrefix[] = {
     0x04, 0x40, 0x8D, 0x84, 0x81, 0x54, 0x02, 0x00,
     0x00, 0xC2, 0x04, 0x00};
 using Matrix4 = bfvr::stereo::Matrix4;
+using bfvr::native_arm_math::DistanceSquared;
+using bfvr::native_arm_math::ExtractBodyYaw;
+using bfvr::native_arm_math::IdentityMatrix;
+using bfvr::native_arm_math::Invert;
+using bfvr::native_arm_math::Multiply;
+using bfvr::native_arm_math::IsFinite;
 bool IsFinite(const float value) noexcept
 {
     return std::isfinite(value);
-}
-bool IsFinite(const Matrix4& matrix) noexcept
-{
-    for (const auto& row : matrix.values)
-    {
-        for (const float value : row)
-        {
-            if (!IsFinite(value))
-            {
-                return false;
-            }
-        }
-    }
-    return true;
 }
 bool HasExpectedPrefix(
     const void* target,
@@ -146,96 +140,6 @@ bool HasExpectedPrefix(
     {
         return false;
     }
-}
-Matrix4 Multiply(const Matrix4& left, const Matrix4& right) noexcept
-{
-    Matrix4 result = {};
-    for (std::size_t row = 0; row < result.values.size(); ++row)
-    {
-        for (std::size_t column = 0; column < result.values[row].size(); ++column)
-        {
-            for (std::size_t inner = 0; inner < result.values.size(); ++inner)
-            {
-                result.values[row][column] +=
-                    left.values[row][inner] * right.values[inner][column];
-            }
-        }
-    }
-    return result;
-}
-Matrix4 IdentityMatrix() noexcept
-{
-    Matrix4 result = {};
-    for (std::size_t index = 0; index < 4; ++index)
-    {
-        result.values[index][index] = 1.0F;
-    }
-    return result;
-}
-std::optional<Matrix4> Invert(const Matrix4& matrix) noexcept
-{
-    if (!IsFinite(matrix))
-    {
-        return std::nullopt;
-    }
-    std::array<std::array<float, 8>, 4> augmented = {};
-    for (std::size_t row = 0; row < 4; ++row)
-    {
-        for (std::size_t column = 0; column < 4; ++column)
-        {
-            augmented[row][column] = matrix.values[row][column];
-            augmented[row][column + 4] = row == column ? 1.0F : 0.0F;
-        }
-    }
-
-    constexpr float kPivotEpsilon = 0.000001F;
-    for (std::size_t column = 0; column < 4; ++column)
-    {
-        std::size_t pivotRow = column;
-        for (std::size_t candidate = column + 1; candidate < 4; ++candidate)
-        {
-            if (std::fabs(augmented[candidate][column]) >
-                std::fabs(augmented[pivotRow][column]))
-            {
-                pivotRow = candidate;
-            }
-        }
-        const float pivot = augmented[pivotRow][column];
-        if (!IsFinite(pivot) || std::fabs(pivot) <= kPivotEpsilon)
-        {
-            return std::nullopt;
-        }
-        if (pivotRow != column)
-        {
-            std::swap(augmented[pivotRow], augmented[column]);
-        }
-        for (float& value : augmented[column])
-        {
-            value /= pivot;
-        }
-        for (std::size_t row = 0; row < 4; ++row)
-        {
-            if (row == column)
-            {
-                continue;
-            }
-            const float factor = augmented[row][column];
-            for (std::size_t index = 0; index < augmented[row].size(); ++index)
-            {
-                augmented[row][index] -= factor * augmented[column][index];
-            }
-        }
-    }
-
-    Matrix4 inverse = {};
-    for (std::size_t row = 0; row < 4; ++row)
-    {
-        for (std::size_t column = 0; column < 4; ++column)
-        {
-            inverse.values[row][column] = augmented[row][column + 4];
-        }
-    }
-    return IsFinite(inverse) ? std::optional<Matrix4>(inverse) : std::nullopt;
 }
 
 bool IsTrackedGrip(const bfvr::D3D8RuntimeControllerHand& hand) noexcept
@@ -304,16 +208,6 @@ struct PoseCameraTranslation
     std::array<float, 3> localDelta = {};
     LONG pose = kStandingPose;
 };
-float DistanceSquared(
-    const std::array<float, 3>& left,
-    const std::array<float, 3>& right) noexcept
-{
-    const float x = left[0] - right[0];
-    const float y = left[1] - right[1];
-    const float z = left[2] - right[2];
-    return x * x + y * y + z * z;
-}
-
 class NativeArmIk
 {
 public:
@@ -989,6 +883,54 @@ private:
         }
     }
 
+    bool ReadCurrentArmControllerSample(
+        void* soldier,
+        bfvr::D3D8RuntimeControllerSample& sample,
+        LONG& generation,
+        Matrix4& soldierTransform) noexcept
+    {
+        sample = {};
+        generation = 0;
+        soldierTransform = {};
+        float observedBodyYaw = 0.0F;
+        bool observedBodyYawValid = false;
+        if (!bfvr::ReadFreshAcceptedInfantryPresentationInput(
+                sample,
+                observedBodyYaw,
+                observedBodyYawValid,
+                generation,
+                kControllerSampleMaximumAgeMs))
+        {
+            return false;
+        }
+        const auto currentSoldierTransform = ReadSoldierTransform(soldier);
+        if (!currentSoldierTransform.has_value())
+        {
+            return false;
+        }
+        soldierTransform = *currentSoldierTransform;
+        if (!observedBodyYawValid)
+        {
+            return true;
+        }
+        const auto currentBodyYaw = ExtractBodyYaw(soldierTransform);
+        if (!currentBodyYaw.has_value())
+        {
+            return false;
+        }
+        bfvr::D3D8RuntimeControllerSample adjusted = {};
+        if (!bfvr::RebaseInfantryControllerSampleToCurrentBodyYaw(
+                sample,
+                observedBodyYaw,
+                *currentBodyYaw,
+                adjusted))
+        {
+            return false;
+        }
+        sample = adjusted;
+        return true;
+    }
+
     bool TryInject(
         void* skeleton,
         ArmIkRestore& restore,
@@ -1030,10 +972,12 @@ private:
         }
         bfvr::D3D8RuntimeControllerSample sample = {};
         LONG generation = 0;
-        if (!bfvr::ReadFreshAcceptedControllerInput(
+        Matrix4 sameCallbackSoldierTransform = {};
+        if (!ReadCurrentArmControllerSample(
+                soldier,
                 sample,
                 generation,
-                kControllerSampleMaximumAgeMs) ||
+                sameCallbackSoldierTransform) ||
             !IsTrackedGrip(sample.hands[kRightControllerHand]) ||
             !IsTrackedAim(sample.hands[kRightControllerHand]))
         {
@@ -1138,8 +1082,9 @@ private:
             }
             const Matrix4 nativeHand = observedNativeHand_;
             const Matrix4 nativeTarget = nativeHand;
-            const auto soldierTransform = ReadSoldierTransform(soldier);
-            if (!soldierTransform.has_value() || !IsFinite(nativeHand) ||
+            const auto soldierTransform =
+                std::optional<Matrix4>(sameCallbackSoldierTransform);
+            if (!IsFinite(nativeHand) ||
                 !IsFinite(nativeTarget))
             {
                 ResetLifetimeBinding();
@@ -1608,10 +1553,12 @@ private:
 
         bfvr::D3D8RuntimeControllerSample sample = {};
         LONG generation = 0;
-        if (!bfvr::ReadFreshAcceptedControllerInput(
+        Matrix4 sameCallbackSoldierTransform = {};
+        if (!ReadCurrentArmControllerSample(
+                soldier,
                 sample,
                 generation,
-                kControllerSampleMaximumAgeMs) ||
+                sameCallbackSoldierTransform) ||
             !IsTrackedGrip(sample.hands[kLeftControllerHand]))
         {
             leftGripRotationBinding_.ResetTransient();

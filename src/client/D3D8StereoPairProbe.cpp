@@ -26,6 +26,7 @@
 #include "client/D3D8StereoProbeReporting.h"
 #include "client/D3D8TreeSpriteShaderTransform.h"
 #include "client/D3D8To9VertexShaderIdentity.h"
+#include "presenter/SharedPresentationProtocol.h"
 #include "settings/UserSettings.h"
 
 #include "stereo/D3D8DrawPolicy.h"
@@ -33,6 +34,7 @@
 #include "stereo/D3D8FrameCompositionPolicy.h"
 #include "stereo/D3D8SemanticDrawPolicy.h"
 #include "stereo/D3D8WaterReflectionTextureBasis.h"
+#include "stereo/InfantryPresentationTurn.h"
 #include "stereo/StereoMath.h"
 #include "stereo/UiPointerMath.h"
 #include <MinHook.h>
@@ -369,10 +371,14 @@ bfvr::d3d8probe::D3D8StereoReadbackApi g_readbackApi = {};
 bfvr::D3D8RuntimeRenderRequest g_runtimeRenderRequest = {};
 bfvr::D3D8RuntimeFramePosePolicy g_runtimeFramePosePolicy = {};
 bfvr::D3D8TrackingAnchor g_trackingAnchor = {};
+bfvr::stereo::InfantryPresentationTurnState
+    g_infantryPresentationTurn = {};
 bfvr::settings::UserSettingsValues g_trackingUserSettings = {};
 ULONGLONG g_nextTrackingSettingsPollAt = 0;
 bool g_trackingSettingsInitialized = false;
 bool g_loggedImmutableLocalTrackingOrigin = false;
+bool g_loggedRequestCadenceSmoothTurn = false;
+bool g_loggedRequestCadenceSnapTurn = false;
 volatile LONG g_loggedWaterPassStateMask = 0;
 volatile LONG g_processLifetimeShaderDrawSkips = 0;
 bfvr::D3D8RuntimeUiPlacement g_frameUiPlacement = {};

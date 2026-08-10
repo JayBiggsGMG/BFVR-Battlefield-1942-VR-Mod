@@ -39,17 +39,6 @@ float ViewYaw(const bfvr::D3D8RuntimeView& view) noexcept
              view.orientationZ * view.orientationZ));
 }
 
-float ControllerYaw(
-    const bfvr::D3D8RuntimeControllerPose& pose) noexcept
-{
-    return std::atan2(
-        2.0F * (pose.orientationW * pose.orientationY +
-                pose.orientationX * pose.orientationZ),
-        1.0F - 2.0F *
-            (pose.orientationY * pose.orientationY +
-             pose.orientationZ * pose.orientationZ));
-}
-
 bool TestMenuAnchorAndControllerUseOneRebasedSpace() noexcept
 {
     bfvr::D3D8RuntimeView head = {};
@@ -225,7 +214,7 @@ bool TestVehicleSeatChangeAndExitShareCommittedGeneration() noexcept
 }
 
 
-bool TestArtificialTurnLeadsBodyWithoutDoubleTurning() noexcept
+bool TestInfantryPresentationIgnoresNativeAimAndOwnsArtificialTurn() noexcept
 {
     constexpr float degreesToRadians = 0.01745329251994329577F;
     bfvr::D3D8RuntimeView head = {};
@@ -233,7 +222,7 @@ bool TestArtificialTurnLeadsBodyWithoutDoubleTurning() noexcept
     bfvr::D3D8TrackingAnchor anchor = {};
     const bfvr::D3D8TrackingContext infantry = {
         bfvr::D3D8TrackingContextKind::Infantry, 0x1000};
-    const auto update = [&](LONG intentMillidegrees,
+    const auto update = [&](float requestedTurnDegrees,
                             float bodyDegrees,
                             LONG recenterSequence = 0) {
         anchor.Update(
@@ -248,55 +237,129 @@ bool TestArtificialTurnLeadsBodyWithoutDoubleTurning() noexcept
             1.70F,
             0.0F,
             {
-                intentMillidegrees,
+                requestedTurnDegrees,
                 bodyDegrees * degreesToRadians,
                 true});
     };
 
     update(0, 0.0F);
-    update(45'000, 0.0F);
-    bfvr::D3D8RuntimeControllerSample controller = {};
-    controller.hands[1].aimPose.orientationW = 1.0F;
-    auto rebasedHead = anchor.RebaseView(head);
-    auto rebasedController = anchor.RebaseControllerSample(controller);
-    if (!NearlyEqual(ViewYaw(rebasedHead), -45.0F * degreesToRadians) ||
+    float presentationYaw = 0.0F;
+    if (!anchor.ReadInfantryPresentationYaw(presentationYaw) ||
+        !NearlyEqual(presentationYaw, 0.0F))
+    {
+        return false;
+    }
+
+    // Native hand aim may rotate the authoritative root through any value.
+    // It changes the shared controller/body correction, never the camera's
+    // physical reference or presented heading.
+    update(0, 25.0F);
+    if (!anchor.ReadInfantryPresentationYaw(presentationYaw) ||
+        !NearlyEqual(presentationYaw, 0.0F) ||
         !NearlyEqual(
-            ControllerYaw(rebasedController.hands[1].aimPose),
-            -45.0F * degreesToRadians))
+            ViewYaw(anchor.PresentationReferenceHead(head)),
+            0.0F) ||
+        !NearlyEqual(
+            ViewYaw(anchor.ReferenceHead(head)),
+            -25.0F * degreesToRadians))
     {
         return false;
     }
 
-    // The first-person frame remains at +45 degrees while the authoritative
-    // root/third-person soldier advances through +15 and finally catches up.
-    update(45'000, 15.0F);
-    rebasedHead = anchor.RebaseView(head);
-    if (!NearlyEqual(
-            15.0F * degreesToRadians - ViewYaw(rebasedHead),
-            45.0F * degreesToRadians))
+    // Smooth/Snap intent advances presentation immediately. Later native body
+    // catch-up and unrelated hand-driven yaw cannot replay or hitch that turn.
+    update(45.0F, 25.0F);
+    if (!anchor.ReadInfantryPresentationYaw(presentationYaw) ||
+        !NearlyEqual(presentationYaw, 45.0F * degreesToRadians))
     {
         return false;
     }
-    update(45'000, 45.0F);
-    if (!NearlyEqual(ViewYaw(anchor.RebaseView(head)), 0.0F))
-    {
-        return false;
-    }
-
-    // Movement can make the root consume the complete turn in one update.
-    // That must not add the same 30-degree controller turn a second time.
-    update(75'000, 75.0F);
-    if (!NearlyEqual(ViewYaw(anchor.RebaseView(head)), 0.0F))
+    update(0.0F, 70.0F);
+    update(0.0F, 110.0F);
+    if (!anchor.ReadInfantryPresentationYaw(presentationYaw) ||
+        !NearlyEqual(presentationYaw, 45.0F * degreesToRadians))
     {
         return false;
     }
 
-    // Recenter keeps the outstanding first-person lead relative to the root;
-    // it must not expose the lagging third-person heading mid-turn.
-    update(120'000, 75.0F, 1);
-    return NearlyEqual(
-        ViewYaw(anchor.RebaseView(head)),
-        -45.0F * degreesToRadians);
+    // Recenter changes only the physical HMD neutral yaw. It must preserve the
+    // presentation heading and the body-compensation offset.
+    const float recenterYaw = 10.0F * degreesToRadians;
+    head.orientationY = std::sin(recenterYaw * 0.5F);
+    head.orientationW = std::cos(recenterYaw * 0.5F);
+    update(0.0F, 110.0F, 1);
+    return anchor.ReadInfantryPresentationYaw(presentationYaw) &&
+        NearlyEqual(presentationYaw, 45.0F * degreesToRadians) &&
+        NearlyEqual(
+            ViewYaw(anchor.PresentationReferenceHead(head)),
+            recenterYaw);
+}
+
+bool TestControllerBodyBasisCorrectionMatchesFreshAnchorRebase() noexcept
+{
+    constexpr float degreesToRadians = 0.01745329251994329577F;
+    bfvr::D3D8RuntimeView head = {};
+    head.orientationW = 1.0F;
+    const bfvr::D3D8TrackingContext infantry = {
+        bfvr::D3D8TrackingContextKind::Infantry, 0x1000};
+    bfvr::D3D8TrackingAnchor anchor = {};
+    anchor.Update(
+        head, true, infantry, 1'000'000'000, 0,
+        false, true, 1.10F, 1.70F, 0.0F,
+        {0.0F, 10.0F * degreesToRadians, true});
+
+    bfvr::D3D8RuntimeControllerSample raw = {};
+    raw.valid = true;
+    raw.sessionFocused = true;
+    raw.hands[0].gripPose.positionX = -0.25F;
+    raw.hands[0].gripPose.positionZ = -0.40F;
+    raw.hands[0].gripPose.orientationW = 1.0F;
+    raw.hands[1].aimPose.positionX = 0.30F;
+    raw.hands[1].aimPose.positionZ = -0.55F;
+    raw.hands[1].aimPose.orientationW = 1.0F;
+    const auto observedBodySample = anchor.RebaseControllerSample(raw);
+
+    // Simulate PlayerAction advancing the native body after publication but
+    // before the arm skeleton callback. A fresh anchor observation is the
+    // reference result the callback-local correction must reproduce.
+    anchor.Update(
+        head, true, infantry, 1'010'000'000, 0,
+        false, true, 1.10F, 1.70F, 0.0F,
+        {0.0F, 35.0F * degreesToRadians, true});
+    const auto expected = anchor.RebaseControllerSample(raw);
+    bfvr::D3D8RuntimeControllerSample adjusted = {};
+    if (!bfvr::RebaseInfantryControllerSampleToCurrentBodyYaw(
+            observedBodySample,
+            10.0F * degreesToRadians,
+            35.0F * degreesToRadians,
+            adjusted))
+    {
+        return false;
+    }
+
+    const auto& adjustedLeft = adjusted.hands[0].gripPose;
+    const auto& expectedLeft = expected.hands[0].gripPose;
+    const auto& adjustedRight = adjusted.hands[1].aimPose;
+    const auto& expectedRight = expected.hands[1].aimPose;
+    bfvr::D3D8RuntimeControllerSample invalidResult = {};
+    const bool invalidRejected =
+        !bfvr::RebaseInfantryControllerSampleToCurrentBodyYaw(
+            observedBodySample,
+            NAN,
+            0.0F,
+            invalidResult);
+    return NearlyEqual(adjustedLeft.positionX, expectedLeft.positionX) &&
+        NearlyEqual(adjustedLeft.positionZ, expectedLeft.positionZ) &&
+        NearlyEqual(adjustedLeft.orientationY, expectedLeft.orientationY) &&
+        NearlyEqual(adjustedLeft.orientationW, expectedLeft.orientationW) &&
+        NearlyEqual(adjustedRight.positionX, expectedRight.positionX) &&
+        NearlyEqual(adjustedRight.positionZ, expectedRight.positionZ) &&
+        NearlyEqual(adjustedRight.orientationY, expectedRight.orientationY) &&
+        NearlyEqual(adjustedRight.orientationW, expectedRight.orientationW) &&
+        invalidRejected &&
+        NearlyEqual(
+            invalidResult.hands[1].aimPose.positionX,
+            observedBodySample.hands[1].aimPose.positionX);
 }
 } // namespace
 
@@ -305,7 +368,8 @@ int main()
     if (!TestMenuAnchorAndControllerUseOneRebasedSpace() ||
         !TestTransientVehicleContextsDoNotPinHeadPose() ||
         !TestVehicleSeatChangeAndExitShareCommittedGeneration() ||
-        !TestArtificialTurnLeadsBodyWithoutDoubleTurning())
+        !TestInfantryPresentationIgnoresNativeAimAndOwnsArtificialTurn() ||
+        !TestControllerBodyBasisCorrectionMatchesFreshAnchorRebase())
     {
         std::fprintf(
             stderr,
