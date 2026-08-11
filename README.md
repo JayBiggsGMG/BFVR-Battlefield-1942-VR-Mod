@@ -1,7 +1,6 @@
 # BFVR
 
-![BFVR logo](assets/BF42VRlogo.png)
-
+[![Battlefield 1942 VR](https://img.youtube.com/vi/htv_u67kUKw/maxresdefault.jpg)](https://www.youtube.com/watch?v=htv_u67kUKw)
 <img width="1865" height="995" alt="ss1" src="https://github.com/user-attachments/assets/ab758925-3045-4967-8e74-cff4e020f5c6" />
 <img width="1915" height="1005" alt="ss4" src="https://github.com/user-attachments/assets/9b980f21-5418-4ba6-b694-c6232f06b9a1" />
 <img width="1915" height="1005" alt="ss3" src="https://github.com/user-attachments/assets/26e745b3-93da-4b7b-8908-8c090e2f991b" />
@@ -10,6 +9,7 @@
 <img width="801" height="801" alt="ConLayoutOverlay" src="https://github.com/user-attachments/assets/70ca2034-ef25-422e-8d88-5b616e740c18" />
 
 
+![BFVR logo](assets/BF42VRlogo.png)
 
 BFVR adds stereoscopic VR rendering, tracked-controller aiming, VR menus, and
 VR comfort and graphics options to Battlefield 1942.
