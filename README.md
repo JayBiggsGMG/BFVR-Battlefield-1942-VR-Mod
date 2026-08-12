@@ -40,6 +40,10 @@ because some BFVR features connect to internal game code.
 
 ## Installing and playing
 
+KNOWN WORKING VERSIONS OF BF1942:
+https://steamcommunity.com/sharedfiles/filedetails/?id=2721068159
+Please download the Moongamers versions, either Vulkan or DgVoodoo.
+
 See [Installation](docs/INSTALLATION.md) for a beginner-friendly walkthrough.
 After installation:
 
