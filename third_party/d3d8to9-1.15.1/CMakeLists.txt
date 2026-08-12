@@ -59,4 +59,8 @@ else()
   target_link_options(d3d8to9 PRIVATE -Wl,--enable-stdcall-fixup ${CMAKE_CURRENT_SOURCE_DIR}/res/d3d8.def)
 endif()
 
-target_link_libraries(d3d8to9 d3d9)
+# BFVR resolves Direct3DCreate9/Direct3DCreate9Ex from Windows' absolute system
+# d3d9.dll path at runtime. Do not add a normal basename import here: a game
+# package may already have loaded a private DXVK/dgVoodoo d3d9.dll, whose
+# shared-resource handles are not necessarily compatible with BFVR's native
+# D3D11/OpenXR presenter.

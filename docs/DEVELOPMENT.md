@@ -63,7 +63,7 @@ Build both architectures and the settings seed writer, then run:
 .\tools\Stage-BFVRPlayer.ps1 `
   -Win32Build ..\build\bfvr-win32 `
   -X64Build ..\build\bfvr-x64\Release `
-  -Destination ..\build\bfvr-player-v1.0.0\BFVR
+  -Destination ..\build\bfvr-player-v1.0.1\BFVR
 ```
 
 The staging script refuses to overwrite an existing destination and copies

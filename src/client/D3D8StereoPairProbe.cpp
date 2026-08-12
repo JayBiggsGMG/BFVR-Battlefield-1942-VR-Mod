@@ -1,4 +1,5 @@
 #include "client/D3D8StereoPairProbe.h"
+#include "client/BF1942FrameLimiterOverride.h"
 #include "client/D3D8PresentationConfiguration.h"
 #include "client/D3D8PerformanceTiming.h"
 #include "client/D3D8RenderViewPoseHook.h"
@@ -26,6 +27,7 @@
 #include "client/D3D8StereoProbeReporting.h"
 #include "client/D3D8TreeSpriteShaderTransform.h"
 #include "client/D3D8To9VertexShaderIdentity.h"
+#include "bfvr_runtime_diagnostics.hpp"
 #include "presenter/SharedPresentationProtocol.h"
 #include "settings/UserSettings.h"
 
@@ -135,6 +137,7 @@ constexpr DWORD kPresentationDurationMs = 60000;
 constexpr DWORD kBoundedRenderRequestTimeoutMs = 2000;
 constexpr DWORD kContinuousRenderRequestTimeoutMs = 0;
 constexpr DWORD kContinuousConsumptionTimeoutMs = 250;
+constexpr DWORD kFirstContinuousConsumptionTimeoutMs = 1000;
 constexpr wchar_t kRunUntilStoppedEnvironment[] =
     L"BFVR_PRESENTATION_RUN_UNTIL_STOPPED";
 constexpr wchar_t kStereoWaterReflectionEnvironment[] = L"BFVR_STEREO_WATER_REFLECTION";
@@ -346,6 +349,37 @@ struct DrawStateSnapshot
         treeSpriteShaderTransform = {};
 };
 
+enum class FrameDrawAcquisitionStage : unsigned int
+{
+    NotStarted,
+    ColorTargetQueryFailed,
+    DepthTargetQueryFailed,
+    ColorTargetMissing,
+    DepthTargetMissing,
+    ColorDescriptionFailed,
+    DepthDescriptionFailed,
+    TargetIneligible,
+    ViewportQueryFailed,
+    WorldTransformQueryFailed,
+    ViewTransformQueryFailed,
+    ProjectionTransformQueryFailed,
+    VertexShaderQueryFailed,
+    TransformPolicyFailed,
+    Ready
+};
+
+struct FrameTargetAudit
+{
+    FrameDrawAcquisitionStage stage = FrameDrawAcquisitionStage::NotStarted;
+    HRESULT colorResult = E_PENDING;
+    HRESULT depthResult = E_PENDING;
+    HRESULT viewportResult = E_PENDING;
+    HRESULT worldResult = E_PENDING;
+    HRESULT viewResult = E_PENDING;
+    HRESULT projectionResult = E_PENDING;
+    HRESULT vertexShaderResult = E_PENDING;
+};
+
 bfvr::D3D8ObserverCallbacks g_callbacks = {};
 bfvr::D3D8ObserverLifecycle g_lifecycle = {};
 DeviceMethods g_methods = {};
@@ -384,8 +418,17 @@ volatile LONG g_processLifetimeShaderDrawSkips = 0;
 bfvr::D3D8RuntimeUiPlacement g_frameUiPlacement = {};
 bfvr::stereo::UiMenuAnchorTracker g_menuAnchorTracker = {};
 bool g_nativeMenuActive = false;
+bool g_retainNativeMenuColor = false;
+bool g_uiColorInitialized = false;
+bool g_uiColorClearPending = true;
 D3DViewport g_runtimeWorldViewport = {};
 bool g_presentationFramePublished = false;
+volatile LONG g_presentationFeatureHooksReady = 0;
+volatile LONG g_loggedDrawCallbackBootstrap = 0;
+volatile LONG g_targetRejectionAuditAttempts = 0;
+volatile LONG g_lastFrameCompositionLayerMask = -1;
+volatile LONG g_frameCompositionTransitionLogs = 0;
+volatile LONG g_frameLimiterPresentChecks = 0;
 bool g_offlinePresentation = false;
 bool g_runUntilStopped = false;
 bool g_keepOriginalFlatBackbuffer = false;
@@ -441,6 +484,7 @@ bool IsPresentationMode()
 }
 
 void AppendLog(const wchar_t* format, ...);
+bool ReconcileLifecyclePresentationSizeFromTranslator();
 
 #include "client/internal/D3D8StereoPairRequestPose.inl"
 
@@ -869,17 +913,51 @@ void ReleaseFrameSourceReferences(DrawStateSnapshot& snapshot)
     }
 }
 
-bool AcquireFrameDrawState(void* device, DrawStateSnapshot& snapshot, bool& eligibleTarget)
+bool AcquireFrameDrawState(
+    void* device,
+    DrawStateSnapshot& snapshot,
+    bool& eligibleTarget,
+    FrameTargetAudit& audit)
 {
     snapshot = {};
     eligibleTarget = false;
-    if (FAILED(g_methods.getRenderTarget(device, &snapshot.sourceColor)) ||
-        FAILED(g_methods.getDepthStencilSurface(device, &snapshot.sourceDepth)) ||
-        snapshot.sourceColor == nullptr ||
-        snapshot.sourceDepth == nullptr ||
-        !GetSurfaceDescription(snapshot.sourceColor, snapshot.colorDescription) ||
-        !GetSurfaceDescription(snapshot.sourceDepth, snapshot.depthDescription))
+    audit = {};
+    audit.colorResult =
+        g_methods.getRenderTarget(device, &snapshot.sourceColor);
+    if (FAILED(audit.colorResult))
     {
+        audit.stage = FrameDrawAcquisitionStage::ColorTargetQueryFailed;
+        return false;
+    }
+    audit.depthResult =
+        g_methods.getDepthStencilSurface(device, &snapshot.sourceDepth);
+    if (FAILED(audit.depthResult))
+    {
+        audit.stage = FrameDrawAcquisitionStage::DepthTargetQueryFailed;
+        return false;
+    }
+    if (snapshot.sourceColor == nullptr)
+    {
+        audit.stage = FrameDrawAcquisitionStage::ColorTargetMissing;
+        return false;
+    }
+    if (snapshot.sourceDepth == nullptr)
+    {
+        audit.stage = FrameDrawAcquisitionStage::DepthTargetMissing;
+        return false;
+    }
+    if (!GetSurfaceDescription(
+            snapshot.sourceColor,
+            snapshot.colorDescription))
+    {
+        audit.stage = FrameDrawAcquisitionStage::ColorDescriptionFailed;
+        return false;
+    }
+    if (!GetSurfaceDescription(
+            snapshot.sourceDepth,
+            snapshot.depthDescription))
+    {
+        audit.stage = FrameDrawAcquisitionStage::DepthDescriptionFailed;
         return false;
     }
 
@@ -894,22 +972,48 @@ bool AcquireFrameDrawState(void* device, DrawStateSnapshot& snapshot, bool& elig
         snapshot.depthDescription.multiSampleType == snapshot.colorDescription.multiSampleType;
     if (!eligibleTarget)
     {
+        audit.stage = FrameDrawAcquisitionStage::TargetIneligible;
         return true;
     }
 
-    if (FAILED(g_methods.getViewport(device, &snapshot.viewport)) ||
-        FAILED(g_methods.getTransform(device, kD3DTransformWorld, &snapshot.world)) ||
-        FAILED(g_methods.getTransform(device, kD3DTransformView, &snapshot.view)) ||
-        FAILED(g_methods.getTransform(
-            device,
-            kD3DTransformProjection,
-            &snapshot.projection)))
+    audit.viewportResult = g_methods.getViewport(device, &snapshot.viewport);
+    if (FAILED(audit.viewportResult))
     {
+        audit.stage = FrameDrawAcquisitionStage::ViewportQueryFailed;
         eligibleTarget = false;
         return false;
     }
-    if (FAILED(g_methods.getVertexShader(device, &snapshot.vertexShaderOrFvf)))
+    audit.worldResult =
+        g_methods.getTransform(device, kD3DTransformWorld, &snapshot.world);
+    if (FAILED(audit.worldResult))
     {
+        audit.stage = FrameDrawAcquisitionStage::WorldTransformQueryFailed;
+        eligibleTarget = false;
+        return false;
+    }
+    audit.viewResult =
+        g_methods.getTransform(device, kD3DTransformView, &snapshot.view);
+    if (FAILED(audit.viewResult))
+    {
+        audit.stage = FrameDrawAcquisitionStage::ViewTransformQueryFailed;
+        eligibleTarget = false;
+        return false;
+    }
+    audit.projectionResult = g_methods.getTransform(
+        device,
+        kD3DTransformProjection,
+        &snapshot.projection);
+    if (FAILED(audit.projectionResult))
+    {
+        audit.stage = FrameDrawAcquisitionStage::ProjectionTransformQueryFailed;
+        eligibleTarget = false;
+        return false;
+    }
+    audit.vertexShaderResult =
+        g_methods.getVertexShader(device, &snapshot.vertexShaderOrFvf);
+    if (FAILED(audit.vertexShaderResult))
+    {
+        audit.stage = FrameDrawAcquisitionStage::VertexShaderQueryFailed;
         InterlockedIncrement(&g_frame.vertexShaderReadFailures);
         eligibleTarget = false;
         return false;
@@ -933,9 +1037,11 @@ bool AcquireFrameDrawState(void* device, DrawStateSnapshot& snapshot, bool& elig
         !IsFiniteMatrix(snapshot.projection) ||
         !BuildFramePolicyTransforms(snapshot))
     {
+        audit.stage = FrameDrawAcquisitionStage::TransformPolicyFailed;
         eligibleTarget = false;
         return false;
     }
+    audit.stage = FrameDrawAcquisitionStage::Ready;
     return true;
 }
 
@@ -1012,9 +1118,62 @@ FrameMirrorResult MirrorDrawIntoFrame(
         bfvr::IsD3D8RuntimeDiagnosticsEnabled(g_runtimeDiagnostics));
     DrawStateSnapshot snapshot = {};
     bool eligibleTarget = false;
-    const bool readable = AcquireFrameDrawState(device, snapshot, eligibleTarget);
+    FrameTargetAudit targetAudit = {};
+    const bool readable = AcquireFrameDrawState(
+        device,
+        snapshot,
+        eligibleTarget,
+        targetAudit);
     if (!readable || !eligibleTarget)
     {
+        if (bfvr::IsD3D8RuntimeDiagnosticsEnabled(g_runtimeDiagnostics))
+        {
+            const LONG attempt =
+                InterlockedIncrement(&g_targetRejectionAuditAttempts);
+            const bool earlySample = attempt <= 12;
+            const bool powerOfTwoSample =
+                attempt > 12 &&
+                attempt <= 65536 &&
+                (attempt & (attempt - 1)) == 0;
+            if (earlySample || powerOfTwoSample)
+            {
+                AppendLog(
+                    L"D3D8 capture-target audit rejection=%ld stage=%u readable=%d eligible=%d kind=%u presentationReadable=%d lifecycle=%ux%u colorQuery=0x%08lX color=%p desc=(format=%u type=%u usage=0x%08lX pool=%u size=%u msaa=%u %ux%u) depthQuery=0x%08lX depth=%p desc=(format=%u type=%u usage=0x%08lX pool=%u size=%u msaa=%u %ux%u) laterResults=(viewport=0x%08lX world=0x%08lX view=0x%08lX projection=0x%08lX shader=0x%08lX).",
+                    attempt,
+                    static_cast<unsigned int>(targetAudit.stage),
+                    readable ? 1 : 0,
+                    eligibleTarget ? 1 : 0,
+                    static_cast<unsigned int>(invocation.kind),
+                    g_lifecycle.presentationReadable ? 1 : 0,
+                    g_lifecycle.backBufferWidth,
+                    g_lifecycle.backBufferHeight,
+                    static_cast<unsigned long>(targetAudit.colorResult),
+                    snapshot.sourceColor,
+                    snapshot.colorDescription.format,
+                    snapshot.colorDescription.type,
+                    static_cast<unsigned long>(snapshot.colorDescription.usage),
+                    snapshot.colorDescription.pool,
+                    snapshot.colorDescription.size,
+                    snapshot.colorDescription.multiSampleType,
+                    snapshot.colorDescription.width,
+                    snapshot.colorDescription.height,
+                    static_cast<unsigned long>(targetAudit.depthResult),
+                    snapshot.sourceDepth,
+                    snapshot.depthDescription.format,
+                    snapshot.depthDescription.type,
+                    static_cast<unsigned long>(snapshot.depthDescription.usage),
+                    snapshot.depthDescription.pool,
+                    snapshot.depthDescription.size,
+                    snapshot.depthDescription.multiSampleType,
+                    snapshot.depthDescription.width,
+                    snapshot.depthDescription.height,
+                    static_cast<unsigned long>(targetAudit.viewportResult),
+                    static_cast<unsigned long>(targetAudit.worldResult),
+                    static_cast<unsigned long>(targetAudit.viewResult),
+                    static_cast<unsigned long>(targetAudit.projectionResult),
+                    static_cast<unsigned long>(targetAudit.vertexShaderResult));
+            }
+        }
         InterlockedIncrement(&g_frame.excludedTargetDraws);
         InterlockedIncrement(
             &g_frame.excludedByKind[static_cast<std::size_t>(invocation.kind)]);
@@ -1299,6 +1458,72 @@ bool CompletePresentationFrame(void* device)
 {
     const bool completed = FinalizeFrameTargets(device);
     const LONG sequence = g_runtimeRenderRequest.sequence;
+    if (bfvr::IsD3D8RuntimeDiagnosticsEnabled(g_runtimeDiagnostics))
+    {
+        const LONG worldDraws = InterlockedCompareExchange(
+            &g_frame.worldEyeDraws,
+            0,
+            0);
+        const LONG uiDraws = InterlockedCompareExchange(
+            &g_frame.menuLayerDraws,
+            0,
+            0);
+        const LONG layerMask =
+            (worldDraws != 0 ? 1 : 0) | (uiDraws != 0 ? 2 : 0);
+        const LONG previousLayerMask = InterlockedExchange(
+            &g_lastFrameCompositionLayerMask,
+            layerMask);
+        const bool layerTransition = layerMask != previousLayerMask;
+        const LONG transitionLog = layerTransition
+            ? InterlockedIncrement(&g_frameCompositionTransitionLogs)
+            : InterlockedCompareExchange(
+                &g_frameCompositionTransitionLogs,
+                0,
+                0);
+        if (sequence <= 32 ||
+            (sequence % 120) == 0 ||
+            (layerTransition && transitionLog <= 80))
+        {
+            AppendLog(
+                L"D3D8 frame-composition audit sequence=%ld completed=%d layers=%ld previousLayers=%ld draws=(all=%ld world=%ld UI=%ld excluded=%ld bounded=%ld) policies=(stereo=%ld pretransformed=%ld mono=%ld) semantics=(sky=%ld billboard=%ld treeAlpha=%ld treeSprite=%ld skinning=%ld water=%ld translucent=%ld font=%ld menu=%ld) shaderSafety=(vertexRead=%ld skinPrepare=%ld skinMismatch=%ld skinApply=%ld spritePrepare=%ld spriteMismatch=%ld spriteApply=%ld treePrepare=%ld treeMismatch=%ld treeApply=%ld) restoration=(checks=%ld failures=%ld accepted=%d releases=%ld/%ld).",
+                sequence,
+                completed ? 1 : 0,
+                layerMask,
+                previousLayerMask,
+                InterlockedCompareExchange(&g_frame.mirroredDraws, 0, 0),
+                worldDraws,
+                uiDraws,
+                InterlockedCompareExchange(&g_frame.excludedTargetDraws, 0, 0),
+                InterlockedCompareExchange(&g_frame.boundedDrawSkips, 0, 0),
+                InterlockedCompareExchange(&g_frame.stereoPerspectiveDraws, 0, 0),
+                InterlockedCompareExchange(&g_frame.monoPretransformedDraws, 0, 0),
+                InterlockedCompareExchange(&g_frame.monoNonPerspectiveDraws, 0, 0),
+                InterlockedCompareExchange(&g_frame.skyboxCubeFaceDraws, 0, 0),
+                InterlockedCompareExchange(&g_frame.billboardBatchDraws, 0, 0),
+                InterlockedCompareExchange(&g_frame.treeMeshAlphaBlockDraws, 0, 0),
+                InterlockedCompareExchange(&g_frame.treeMeshProgrammableSpriteDraws, 0, 0),
+                InterlockedCompareExchange(&g_frame.animatedMeshSkinningDraws, 0, 0),
+                InterlockedCompareExchange(&g_frame.waterSurfaceDraws, 0, 0),
+                InterlockedCompareExchange(&g_frame.translucentSpriteDraws, 0, 0),
+                InterlockedCompareExchange(&g_frame.ref2FontGlyphBatchDraws, 0, 0),
+                InterlockedCompareExchange(&g_frame.ref2MenuQuadDraws, 0, 0),
+                InterlockedCompareExchange(&g_frame.vertexShaderReadFailures, 0, 0),
+                InterlockedCompareExchange(&g_frame.skinningShaderPrepareFailures, 0, 0),
+                InterlockedCompareExchange(&g_frame.skinningShaderSourceMismatches, 0, 0),
+                InterlockedCompareExchange(&g_frame.skinningShaderApplyFailures, 0, 0),
+                InterlockedCompareExchange(&g_frame.spriteShaderPrepareFailures, 0, 0),
+                InterlockedCompareExchange(&g_frame.spriteShaderSourceMismatches, 0, 0),
+                InterlockedCompareExchange(&g_frame.spriteShaderApplyFailures, 0, 0),
+                InterlockedCompareExchange(&g_frame.treeSpriteShaderPrepareFailures, 0, 0),
+                InterlockedCompareExchange(&g_frame.treeSpriteShaderSourceMismatches, 0, 0),
+                InterlockedCompareExchange(&g_frame.treeSpriteShaderApplyFailures, 0, 0),
+                InterlockedCompareExchange(&g_frame.restoreChecks, 0, 0),
+                InterlockedCompareExchange(&g_frame.restoreFailures, 0, 0),
+                g_frame.allRestorationsAccepted ? 1 : 0,
+                InterlockedCompareExchange(&g_frame.sourceReleaseChecks, 0, 0),
+                InterlockedCompareExchange(&g_frame.sourceReleaseFailures, 0, 0));
+        }
+    }
     const std::int64_t consumptionWaitStarted =
         bfvr::d3d8probe::ReadPerformanceCounter();
     const bool consumed =
@@ -1306,7 +1531,12 @@ bool CompletePresentationFrame(void* device)
         g_presentationBridge.WaitForConsumption(
             sequence,
             g_runUntilStopped
-                ? kContinuousConsumptionTimeoutMs
+                ? (InterlockedCompareExchange(
+                        &g_presentationRun.presentedFrames,
+                        0,
+                        0) == 0
+                    ? kFirstContinuousConsumptionTimeoutMs
+                    : kContinuousConsumptionTimeoutMs)
                 : 5000);
     g_presentationRun.totalConsumptionWaitQpcTicks +=
         bfvr::d3d8probe::ReadPerformanceCounter() - consumptionWaitStarted;
@@ -1655,6 +1885,100 @@ AttemptResult TryReplayStereoPair(
 
 #include "client/internal/D3D8StereoPairReset.inl"
 
+bool TryBeginFrameCapture(void* device)
+{
+    if (device != g_record.device ||
+        GetCurrentThreadId() != g_record.deviceThreadId ||
+        InterlockedCompareExchange(&g_record.state, 0, 0) != 1)
+    {
+        return false;
+    }
+
+    std::array<void*, 3> presentationTargets = {
+        g_frame.ownedColor[0],
+        g_frame.ownedColor[1],
+        g_frame.menuColor};
+    std::array<void*, bfvr::shared::kDepthTextureCount>
+        presentationDepthTargets = {
+            g_frame.ownedDepth[0],
+            g_frame.ownedDepth[1]};
+    std::array<void*, bfvr::shared::kDepthTextureCount>
+        presentationDepthExports = {
+            g_frame.depthExport[0],
+            g_frame.depthExport[1]};
+    const bool transportReady =
+        !IsPresentationMode() ||
+        g_presentationBridge.EnsureGpuFrameTargets(
+            device,
+            presentationTargets,
+            presentationDepthTargets,
+            presentationDepthExports);
+    g_frame.ownedColor[0] = presentationTargets[0];
+    g_frame.ownedColor[1] = presentationTargets[1];
+    g_frame.menuColor = presentationTargets[2];
+    g_frame.ownedDepth[0] = presentationDepthTargets[0];
+    g_frame.ownedDepth[1] = presentationDepthTargets[1];
+    g_frame.depthExport[0] = presentationDepthExports[0];
+    g_frame.depthExport[1] = presentationDepthExports[1];
+    // The process-lifetime OpenXR route must present Ref2-only startup,
+    // spawn, death, and pause frames. Gameplay overlays retain their own
+    // alive-local-player gates; only frame production starts before spawn.
+    const bool processLifetimePresentation =
+        IsPresentationMode() && g_runUntilStopped;
+    const bool captureEligible =
+        g_offlinePresentation ||
+        processLifetimePresentation ||
+        (g_callbacks.isCaptureEligible != nullptr &&
+         g_callbacks.isCaptureEligible());
+    const bool renderReady =
+        transportReady &&
+        captureEligible &&
+        (!IsPresentationMode() ||
+         g_presentationBridge.RequestRender(
+             g_runtimeRenderRequest,
+             g_runUntilStopped
+                ? kContinuousRenderRequestTimeoutMs
+                : kBoundedRenderRequestTimeoutMs));
+    if (renderReady && IsPresentationMode())
+    {
+        if (!g_presentationTimingStarted)
+        {
+            g_presentationRun.startedAt = GetTickCount();
+            g_presentationTimingStarted = true;
+        }
+        // D3D frame hooks are deliberately live before the slower auxiliary
+        // game hooks so a one-shot static frontend draw cannot escape BFVR.
+        // Until those auxiliary hooks finish, keep this bootstrap frame on
+        // the safe default VIEW-space policy and avoid concurrently touching
+        // their initialization state.
+        if (InterlockedCompareExchange(
+                &g_presentationFeatureHooksReady,
+                0,
+                0) != 0)
+        {
+            PrepareRuntimeRenderRequestPose();
+        }
+        else
+        {
+            g_frameUiPlacement = {};
+            g_frameUiPlacement.headLocked = true;
+            g_runtimeFramePosePolicy = {};
+        }
+    }
+    if (!transportReady)
+    {
+        InterlockedCompareExchange(&g_record.state, 5, 1);
+    }
+    else if (captureEligible)
+    {
+        InterlockedCompareExchange(
+            &g_record.state,
+            renderReady ? 2 : (g_runUntilStopped ? 1 : 5),
+            1);
+    }
+    return renderReady;
+}
+
 HRESULT WINAPI HookPresent(
     void* device,
     const RECT* sourceRectangle,
@@ -1665,6 +1989,28 @@ HRESULT WINAPI HookPresent(
     InterlockedIncrement(&g_record.activeCallbacks);
     if (IsPresentationMode())
     {
+        const LONG presentCheck =
+            InterlockedIncrement(&g_frameLimiterPresentChecks);
+        if (presentCheck <= 8 || (presentCheck % 120) == 0)
+        {
+            const bfvr::BF1942FrameLimiterOverrideResult limiter =
+                bfvr::ApplyRequestedBF1942FrameLimiterOverride(
+                    GetModuleHandleW(nullptr),
+                    true);
+            if (presentCheck == 1 ||
+                limiter.status ==
+                    bfvr::BF1942FrameLimiterOverrideStatus::Applied)
+            {
+                AppendLog(
+                    L"BFVR presentation-time renderer.lockFPS -1 check %ld: %s (ownerSlot=%p value=%p previous=%.3f).",
+                    presentCheck,
+                    bfvr::DescribeBF1942FrameLimiterOverrideStatus(
+                        limiter.status),
+                    reinterpret_cast<void*>(limiter.ownerPointerAddress),
+                    reinterpret_cast<void*>(limiter.valueAddress),
+                    static_cast<double>(limiter.previousValue));
+            }
+        }
         bfvr::PollScopeViewPlayerLifecycle();
         float scopeNormalFov = -1.0F;
         if (bfvr::ConsumeScopeViewNormalFovRestore(scopeNormalFov))
@@ -1721,78 +2067,7 @@ HRESULT WINAPI HookPresent(
         GetCurrentThreadId() == g_record.deviceThreadId &&
         stateAtEntry == 1)
     {
-        std::array<void*, 3> presentationTargets = {
-            g_frame.ownedColor[0],
-            g_frame.ownedColor[1],
-            g_frame.menuColor};
-        std::array<void*, bfvr::shared::kDepthTextureCount>
-            presentationDepthTargets = {
-                g_frame.ownedDepth[0],
-                g_frame.ownedDepth[1]};
-        std::array<void*, bfvr::shared::kDepthTextureCount>
-            presentationDepthExports = {
-                g_frame.depthExport[0],
-                g_frame.depthExport[1]};
-        const bool transportReady =
-            !IsPresentationMode() ||
-            g_presentationBridge.EnsureGpuFrameTargets(
-                device,
-                presentationTargets,
-                presentationDepthTargets,
-                presentationDepthExports);
-        g_frame.ownedColor[0] = presentationTargets[0];
-        g_frame.ownedColor[1] = presentationTargets[1];
-        g_frame.menuColor = presentationTargets[2];
-        g_frame.ownedDepth[0] = presentationDepthTargets[0];
-        g_frame.ownedDepth[1] = presentationDepthTargets[1];
-        g_frame.depthExport[0] = presentationDepthExports[0];
-        g_frame.depthExport[1] = presentationDepthExports[1];
-        // The process-lifetime OpenXR route must present Ref2-only startup,
-        // spawn, death, and pause frames. Gameplay overlays retain their own
-        // alive-local-player gates; only frame production starts before spawn.
-        const bool processLifetimePresentation =
-            IsPresentationMode() && g_runUntilStopped;
-        const bool captureEligible =
-            g_offlinePresentation ||
-            processLifetimePresentation ||
-            (g_callbacks.isCaptureEligible != nullptr &&
-             g_callbacks.isCaptureEligible());
-        const bool renderReady =
-            transportReady &&
-            captureEligible &&
-            (!IsPresentationMode() ||
-            g_presentationBridge.RequestRender(
-                g_runtimeRenderRequest,
-                g_runUntilStopped
-                    ? kContinuousRenderRequestTimeoutMs
-                    : kBoundedRenderRequestTimeoutMs));
-        if (renderReady && IsPresentationMode())
-        {
-            if (!g_presentationTimingStarted)
-            {
-                g_presentationRun.startedAt = GetTickCount();
-                g_presentationTimingStarted = true;
-            }
-            // A continuous-mode request can become ready here after a prior
-            // non-blocking poll left it pending.  Keep RenderView in lockstep
-            // with every accepted request; otherwise BF1942 culls for the
-            // first request while D3D8 replays a later headset pose.
-            PrepareRuntimeRenderRequestPose();
-        }
-        if (!transportReady)
-        {
-            InterlockedCompareExchange(
-                &g_record.state,
-                5,
-                1);
-        }
-        else if (captureEligible)
-        {
-            InterlockedCompareExchange(
-                &g_record.state,
-                renderReady ? 2 : (g_runUntilStopped ? 1 : 5),
-                1);
-        }
+        (void)TryBeginFrameCapture(device);
     }
     else if (IsPresentationMode() &&
         g_runUntilStopped &&
@@ -1824,6 +2099,28 @@ FrameMirrorResult TryMirrorFrameDraw(
     void* device,
     const FrameDrawInvocation& invocation)
 {
+    // A draw-callback start exists only to rescue the process's first static
+    // frontend frame when it was drawn before the first hooked Present. Once
+    // BFVR has presented a source frame, acquiring a later request here would
+    // be too late for that frame's RenderView/culling pass. Steady-state and
+    // transition recovery must wait for Present so the requested pose is
+    // available before the following native world frame begins.
+    if (IsPresentationMode() &&
+        g_runUntilStopped &&
+        InterlockedCompareExchange(
+            &g_presentationRun.presentedFrames,
+            0,
+            0) == 0 &&
+        InterlockedCompareExchange(&g_record.state, 0, 0) == 1 &&
+        TryBeginFrameCapture(device) &&
+        InterlockedCompareExchange(
+            &g_loggedDrawCallbackBootstrap,
+            1,
+            0) == 0)
+    {
+        AppendLog(
+            L"Continuous presentation began its first GPU frame directly from a D3D8 draw callback, before the static frontend's first Present.");
+    }
     if (!IsFullFrameMode() ||
         device != g_record.device ||
         GetCurrentThreadId() != g_record.deviceThreadId ||
@@ -2181,6 +2478,55 @@ bool ResolveDeviceMethods()
         [](const void* target) { return IsTrustedD3D8Target(target); });
 }
 
+bool ReconcileLifecyclePresentationSizeFromTranslator()
+{
+    const HMODULE translator = GetModuleHandleW(L"BFVRD3D8To9.dll");
+    const auto query = translator == nullptr
+        ? nullptr
+        : reinterpret_cast<BFVRD3D8To9GetRuntimeDiagnosticsFn>(
+            GetProcAddress(
+                translator,
+                "BFVRD3D8To9GetRuntimeDiagnostics"));
+    if (query == nullptr)
+    {
+        return false;
+    }
+
+    BFVRD3D8To9RuntimeDiagnostics diagnostics = {};
+    diagnostics.size = sizeof(diagnostics);
+    if (FAILED(query(&diagnostics)) ||
+        diagnostics.version !=
+            BFVR_D3D8TO9_RUNTIME_DIAGNOSTICS_VERSION ||
+        diagnostics.primaryPresentationGeneration <= 0 ||
+        diagnostics.primaryPresentationWidth <= 0 ||
+        diagnostics.primaryPresentationHeight <= 0)
+    {
+        return false;
+    }
+
+    const UINT width =
+        static_cast<UINT>(diagnostics.primaryPresentationWidth);
+    const UINT height =
+        static_cast<UINT>(diagnostics.primaryPresentationHeight);
+    if (width == g_lifecycle.backBufferWidth &&
+        height == g_lifecycle.backBufferHeight)
+    {
+        return true;
+    }
+
+    AppendLog(
+        L"Reconciled the observer's stale %ux%u presentation size to the pinned translator's current primary target %ux%u (generation=%ld). BFVR will size its GPU-resident UI and capture eligibility from the actual BF++-selected resolution.",
+        g_lifecycle.backBufferWidth,
+        g_lifecycle.backBufferHeight,
+        width,
+        height,
+        diagnostics.primaryPresentationGeneration);
+    g_lifecycle.backBufferWidth = width;
+    g_lifecycle.backBufferHeight = height;
+    g_lifecycle.presentationReadable = TRUE;
+    return true;
+}
+
 void RemoveHooks()
 {
     g_playerVrMotionFilter.DisableAndRemove();
@@ -2290,18 +2636,6 @@ bool InstallHooks()
                 reinterpret_cast<LPVOID*>(&g_originalDrawIndexedPrimitiveUP)) == MH_OK &&
             g_originalDrawIndexedPrimitiveUP != nullptr;
     }
-    if (created && IsPresentationMode())
-    {
-        created = g_renderViewPoseHook.Create(
-            reinterpret_cast<void*>(g_gameImageBegin),
-            AppendPresentationLog);
-    }
-    if (created && IsPresentationMode())
-    {
-        created = g_playerVrMotionFilter.Create(
-            reinterpret_cast<void*>(g_gameImageBegin),
-            AppendPresentationLog);
-    }
     if (!created)
     {
         RemoveHooks();
@@ -2309,21 +2643,55 @@ bool InstallHooks()
         return false;
     }
 
-    const bool enabled =
-        MH_EnableHook(g_record.presentTarget) == MH_OK &&
-        MH_EnableHook(g_record.drawIndexedPrimitiveTarget) == MH_OK &&
-        (!IsFullFrameMode() ||
-            (MH_EnableHook(g_record.resetTarget) == MH_OK &&
-                MH_EnableHook(g_record.drawPrimitiveTarget) == MH_OK &&
-                MH_EnableHook(g_record.drawPrimitiveUPTarget) == MH_OK &&
-                MH_EnableHook(g_record.drawIndexedPrimitiveUPTarget) == MH_OK)) &&
-        (!IsPresentationMode() ||
-            (g_renderViewPoseHook.Enable() && g_playerVrMotionFilter.Enable()));
-    if (!enabled)
+    // Activate the complete D3D callback set in one MinHook transaction before
+    // creating the slower auxiliary game hooks. Static BF1942 frontends can
+    // otherwise finish their only menu draw while those hooks are being
+    // prepared, leaving the later Present with no source work to mirror.
+    if (MH_EnableHook(MH_ALL_HOOKS) != MH_OK)
     {
         RemoveHooks();
         MH_Uninitialize();
         return false;
+    }
+
+    const bool continuousPresentation =
+        IsPresentationMode() && g_runUntilStopped;
+    if (continuousPresentation)
+    {
+        InterlockedExchange(&g_record.state, 1);
+    }
+
+    bool auxiliaryHooksReady = true;
+    if (IsPresentationMode())
+    {
+        auxiliaryHooksReady =
+            g_renderViewPoseHook.Create(
+                reinterpret_cast<void*>(g_gameImageBegin),
+                AppendPresentationLog) &&
+            g_playerVrMotionFilter.Create(
+                reinterpret_cast<void*>(g_gameImageBegin),
+                AppendPresentationLog) &&
+            g_renderViewPoseHook.Enable() &&
+            g_playerVrMotionFilter.Enable();
+    }
+    if (!auxiliaryHooksReady)
+    {
+        InterlockedExchange(&g_record.state, 0);
+        (void)MH_DisableHook(MH_ALL_HOOKS);
+        while (InterlockedCompareExchange(
+                &g_record.activeCallbacks,
+                0,
+                0) != 0)
+        {
+            Sleep(0);
+        }
+        RemoveHooks();
+        MH_Uninitialize();
+        return false;
+    }
+    if (IsPresentationMode())
+    {
+        InterlockedExchange(&g_presentationFeatureHooksReady, 1);
     }
     return true;
 }
@@ -2378,6 +2746,10 @@ DWORD WINAPI RunProbe(void*)
         bfvr::SetMainMenuOverlayAvailable(false);
         SignalCompletion();
         return 0;
+    }
+    if (IsPresentationMode())
+    {
+        (void)ReconcileLifecyclePresentationSizeFromTranslator();
     }
     g_vertexShaderIdentityResolver.Resolve();
     if (IsPresentationMode() &&
@@ -2437,6 +2809,12 @@ DWORD WINAPI RunProbe(void*)
         SignalCompletion();
         return 0;
     }
+    // InstallHooks arms continuous presentation in the same transaction that
+    // activates the D3D callbacks. Do not overwrite state 2 here if an early
+    // static-menu draw already began the first GPU frame while the remaining
+    // auxiliary integrations were starting.
+    const bool presentationArmedDuringHookInstall =
+        IsPresentationMode() && g_runUntilStopped;
     // InstallHooks establishes the executable image range consumed by the
     // shared mounted-weapon resolver. Starting it earlier leaves that range
     // null, which disables both the mounted-camera control and the mounted
@@ -2479,7 +2857,10 @@ DWORD WINAPI RunProbe(void*)
             AppendPresentationLog);
     }
 
-    InterlockedExchange(&g_record.state, 1);
+    if (!presentationArmedDuringHookInstall)
+    {
+        InterlockedExchange(&g_record.state, 1);
+    }
     if (IsFullFrameMode())
     {
         AppendLog(

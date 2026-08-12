@@ -34,6 +34,7 @@ HRESULT WINAPI HookReset(void* device, void* presentationParameters)
     g_frame.resetResult = result;
     if (restartContinuousPresentation)
     {
+        (void)ReconcileLifecyclePresentationSizeFromTranslator();
         const bool restarted =
             SUCCEEDED(result) &&
             g_presentationBridge.Initialize(
@@ -57,6 +58,9 @@ HRESULT WINAPI HookReset(void* device, void* presentationParameters)
         g_frameUiPlacement = {};
         bfvr::stereo::ResetUiMenuAnchor(g_menuAnchorTracker);
         g_nativeMenuActive = false;
+        g_retainNativeMenuColor = false;
+        g_uiColorInitialized = false;
+        g_uiColorClearPending = true;
         bfvr::ClearActiveMenuWorldAnchor();
         g_presentationFramePublished = false;
         InterlockedExchange(&g_record.state, restarted ? 1 : 5);

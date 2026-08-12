@@ -61,6 +61,27 @@ if(BFVR_PRESENTER_ONLY)
     stereo/ScopeViewMath.cpp
     stereo/UiPointerMath.cpp
   )
+  add_executable(BFVROpenXRProbe
+    client/QuickMenuArt.cpp
+    client/SettingsMenuArt.cpp
+    openxr/BFVROpenXRProbe.cpp
+    openxr/OpenXRBootstrap.cpp
+    openxr/OpenXRComfortVignette.cpp
+    openxr/OpenXRControllerBindingPolicy.cpp
+    openxr/OpenXRControllerShortcutPolicy.cpp
+    openxr/OpenXRQuickMenu.cpp
+    openxr/OpenXRHapticOutput.cpp
+    openxr/OpenXRPresentation.cpp
+    openxr/OpenXRPresentationSupport.cpp
+    openxr/OpenXRScopeOverlayLayer.cpp
+    openxr/OpenXRTrackingBasis.cpp
+    settings/UserSettings.cpp
+    stereo/ComfortVignette.cpp
+    stereo/QuickMenuInteraction.cpp
+    stereo/SettingsMenuInteraction.cpp
+    stereo/ScopeViewMath.cpp
+    stereo/UiPointerMath.cpp
+  )
   add_executable(BFVRSharedTextureConsumerProbe
     client/MainMenuOverlay.cpp
     presenter/BFVRSharedTextureConsumerProbe.cpp
@@ -90,7 +111,7 @@ if(BFVR_PRESENTER_ONLY)
     presenter/BFVRWaterReflectionGpuProbe.cpp
     presenter/D3D11WaterReflection.cpp
   )
-  foreach(target BFVRPresenter BFVRSharedTextureConsumerProbe BFVRAmbientOcclusionGpuProbe BFVRBloomGpuProbe BFVRScreenSpaceGlobalIlluminationGpuProbe BFVRWaterReflectionGpuProbe)
+  foreach(target BFVRPresenter BFVROpenXRProbe BFVRSharedTextureConsumerProbe BFVRAmbientOcclusionGpuProbe BFVRBloomGpuProbe BFVRScreenSpaceGlobalIlluminationGpuProbe BFVRWaterReflectionGpuProbe)
     target_compile_definitions(${target} PRIVATE
       WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
     target_include_directories(${target} PRIVATE
@@ -110,6 +131,12 @@ if(BFVR_PRESENTER_ONLY)
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
       "${BFVR_OPENXR_LOADER}"
       "$<TARGET_FILE_DIR:BFVRPresenter>/runtime/openxr/win64/openxr_loader.dll")
+  add_custom_command(TARGET BFVROpenXRProbe POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+      "$<TARGET_FILE_DIR:BFVROpenXRProbe>/runtime/openxr/win64"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      "${BFVR_OPENXR_LOADER}"
+      "$<TARGET_FILE_DIR:BFVROpenXRProbe>/runtime/openxr/win64/openxr_loader.dll")
   foreach(target BFVRPresenter BFVRSharedTextureConsumerProbe)
     add_custom_command(TARGET ${target} POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory
@@ -185,6 +212,7 @@ target_compile_definitions(d3d8to9 PRIVATE D3D8TO9NOLOG)
 
 add_library(BFVRClient SHARED
   client/BFVRClient.cpp
+  client/BF1942FrameLimiterOverride.cpp
   client/D3D8CallInventory.cpp
   client/ControllerInputCache.cpp
   client/ControllerHaptics.cpp
@@ -257,6 +285,7 @@ add_library(BFVRD3D8To9FlatClient SHARED
 )
 
 add_library(BFVRStereoMath STATIC
+  stereo/AircraftControlMath.cpp
   stereo/ArmPoleVectorMath.cpp
   stereo/ComfortVignette.cpp
   stereo/D3D8DrawPolicy.cpp
@@ -289,8 +318,19 @@ add_library(BFVRStereoMath STATIC
 )
 
 add_executable(BFVRLoader
+  loader/Bf42PlusPlusCompatibility.cpp
   loader/BFVRLoader.cpp
   loader/BFVR.rc
+)
+
+add_executable(BFVRBf42PlusPlusCompatibilityTests
+  loader/Bf42PlusPlusCompatibility.cpp
+  loader/Bf42PlusPlusCompatibilityTests.cpp
+)
+
+add_executable(BFVRFrameLimiterOverrideTests
+  client/BF1942FrameLimiterOverride.cpp
+  client/BF1942FrameLimiterOverrideTests.cpp
 )
 
 add_executable(BFVROpenXRProbe
@@ -423,6 +463,10 @@ add_executable(BFVRSurfaceVehicleDriveMathTests
   stereo/SurfaceVehicleDriveMathTests.cpp
 )
 
+add_executable(BFVRAircraftControlMathTests
+  stereo/AircraftControlMathTests.cpp
+)
+
 add_executable(BFVRTrackingAnchorTests
   client/D3D8TrackingAnchor.cpp
   client/D3D8TrackingAnchorTests.cpp
@@ -478,7 +522,7 @@ add_executable(BFVRRfaInspect
   tools/RfaInspect.cpp
 )
 
-foreach(target BFVRClient BFVRD3D8To9FlatClient BFVRLoader BFVROpenXRProbe BFVRSharedTextureProducerProbe BFVRD3D8To9SharedSurfaceProbe BFVRAmbientOcclusionDepthProbe BFVRStereoMath BFVRStereoMathTests BFVRWaterReflectionTextureBasisTests BFVRWeaponFireAimMathTests BFVRHandWeaponRecoilMathTests BFVROffHandSupportPolicyTests BFVRArmPoleVectorMathTests BFVRMainMenuOverlayTests BFVRQuickMenuTests BFVRSettingsMenuTests BFVRUserSettingsTests BFVRUserSettingsSeedWriter BFVROpenXRHapticsTests BFVROpenXRControllerShortcutTests BFVROpenXRControllerBindingTests BFVRVehicleMotionAimMathTests BFVRDirectionalLocomotionTests BFVRComfortVignetteTests BFVRSurfaceVehicleDriveMathTests BFVRTrackingAnchorTests BFVRInfantryAuthoritativeAimTests BFVRInfantryPresentationTurnTests BFVRControllerInputCacheTests BFVRMountedCameraMathTests BFVRInfantryCameraMathTests BFVRScopeViewMathTests BFVROpenXRScopeOverlayLayerTests BFVRWorldCrosshairMathTests BFVRRuntimeDiagnosticsTests BFVRSharedControlChannelTests BFVRRfaInspect)
+foreach(target BFVRClient BFVRD3D8To9FlatClient BFVRLoader BFVRBf42PlusPlusCompatibilityTests BFVRFrameLimiterOverrideTests BFVROpenXRProbe BFVRSharedTextureProducerProbe BFVRD3D8To9SharedSurfaceProbe BFVRAmbientOcclusionDepthProbe BFVRStereoMath BFVRStereoMathTests BFVRWaterReflectionTextureBasisTests BFVRWeaponFireAimMathTests BFVRHandWeaponRecoilMathTests BFVROffHandSupportPolicyTests BFVRArmPoleVectorMathTests BFVRMainMenuOverlayTests BFVRQuickMenuTests BFVRSettingsMenuTests BFVRUserSettingsTests BFVRUserSettingsSeedWriter BFVROpenXRHapticsTests BFVROpenXRControllerShortcutTests BFVROpenXRControllerBindingTests BFVRVehicleMotionAimMathTests BFVRDirectionalLocomotionTests BFVRComfortVignetteTests BFVRSurfaceVehicleDriveMathTests BFVRAircraftControlMathTests BFVRTrackingAnchorTests BFVRInfantryAuthoritativeAimTests BFVRInfantryPresentationTurnTests BFVRControllerInputCacheTests BFVRMountedCameraMathTests BFVRInfantryCameraMathTests BFVRScopeViewMathTests BFVROpenXRScopeOverlayLayerTests BFVRWorldCrosshairMathTests BFVRRuntimeDiagnosticsTests BFVRSharedControlChannelTests BFVRRfaInspect)
   target_compile_definitions(${target} PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
   set_property(TARGET ${target} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
   if(MSVC)
@@ -524,11 +568,14 @@ target_link_libraries(BFVRVehicleMotionAimMathTests PRIVATE BFVRStereoMath)
 target_link_libraries(BFVRDirectionalLocomotionTests PRIVATE BFVRStereoMath)
 target_link_libraries(BFVRComfortVignetteTests PRIVATE BFVRStereoMath)
 target_link_libraries(BFVRSurfaceVehicleDriveMathTests PRIVATE BFVRStereoMath)
+target_link_libraries(BFVRAircraftControlMathTests PRIVATE BFVRStereoMath)
 target_link_libraries(BFVRTrackingAnchorTests PRIVATE BFVRStereoMath)
 target_link_libraries(BFVRInfantryAuthoritativeAimTests PRIVATE BFVRStereoMath)
 target_link_libraries(BFVRInfantryPresentationTurnTests PRIVATE BFVRStereoMath)
 target_link_libraries(BFVRControllerInputCacheTests PRIVATE kernel32)
 target_include_directories(BFVRControllerInputCacheTests PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}")
+target_include_directories(BFVRFrameLimiterOverrideTests PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(BFVRMountedCameraMathTests PRIVATE BFVRStereoMath)
 target_link_libraries(BFVRInfantryCameraMathTests PRIVATE BFVRStereoMath)
@@ -562,6 +609,12 @@ target_include_directories(BFVROpenXRScopeOverlayLayerTests PRIVATE
 
 include(CTest)
 if(BUILD_TESTING)
+  add_test(
+    NAME BFVRBf42PlusPlusCompatibilityTests
+    COMMAND BFVRBf42PlusPlusCompatibilityTests)
+  add_test(
+    NAME BFVRFrameLimiterOverrideTests
+    COMMAND BFVRFrameLimiterOverrideTests)
   add_test(NAME BFVRStereoMathTests COMMAND BFVRStereoMathTests)
   add_test(
     NAME BFVRWaterReflectionTextureBasisTests
@@ -614,6 +667,9 @@ if(BUILD_TESTING)
   add_test(
     NAME BFVRSurfaceVehicleDriveMathTests
     COMMAND BFVRSurfaceVehicleDriveMathTests)
+  add_test(
+    NAME BFVRAircraftControlMathTests
+    COMMAND BFVRAircraftControlMathTests)
   add_test(
     NAME BFVRTrackingAnchorTests
     COMMAND BFVRTrackingAnchorTests)

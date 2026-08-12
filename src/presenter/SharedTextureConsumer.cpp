@@ -464,11 +464,17 @@ bool SharedTextureConsumer::ConsumeFrame(
     LONG frameOverlayFlags,
     bool depthValid,
     const SharedDepthFrameParameters* depthFrame,
-    bool waterMaskValid)
+    bool waterMaskValid,
+    bool deferLegacyCompletion)
 {
     ApplySavedLiveSettings();
-    if (context_ == nullptr)
+    if (context_ == nullptr || deferredLegacyCompletionPending_)
     {
+        if (deferredLegacyCompletionPending_)
+        {
+            WriteLog(
+                L"Shared texture consumer rejected a new frame while the prior deferred legacy read was still pending.");
+        }
         return false;
     }
 
@@ -719,8 +725,21 @@ bool SharedTextureConsumer::ConsumeFrame(
     }
     context_->Flush();
 
+    const bool hasKeyedMutexAcquisition =
+        std::any_of(acquired.begin(), acquired.end(), [](const bool value)
+        {
+            return value;
+        }) ||
+        std::any_of(depthAcquired.begin(), depthAcquired.end(), [](const bool value)
+        {
+            return value;
+        });
+    const bool deferCompletion =
+        deferLegacyCompletion &&
+        legacyCompletionQuery_ != nullptr &&
+        !hasKeyedMutexAcquisition;
     bool completed = true;
-    if (legacyCompletionQuery_ != nullptr)
+    if (legacyCompletionQuery_ != nullptr && !deferCompletion)
     {
         completed = false;
         const DWORD waitStarted = GetTickCount();
@@ -752,12 +771,22 @@ bool SharedTextureConsumer::ConsumeFrame(
                 L"Shared texture consumer timed out waiting for legacy-handle GPU reads to complete.");
         }
     }
-    if (aoFrameStarted)
-        ambientOcclusion_.CollectFrameTimings();
-    if (ssgiFrameStarted)
-        screenSpaceGlobalIllumination_.CollectFrameTimings();
-    if (bloomFrameStarted)
-        scaler_.CollectBloomFrameTimings();
+    if (deferCompletion)
+    {
+        deferredLegacyCompletionPending_ = true;
+        deferredAmbientOcclusionTiming_ = aoFrameStarted;
+        deferredScreenSpaceGlobalIlluminationTiming_ = ssgiFrameStarted;
+        deferredBloomTiming_ = bloomFrameStarted;
+    }
+    else
+    {
+        if (aoFrameStarted)
+            ambientOcclusion_.CollectFrameTimings();
+        if (ssgiFrameStarted)
+            screenSpaceGlobalIllumination_.CollectFrameTimings();
+        if (bloomFrameStarted)
+            scaler_.CollectBloomFrameTimings();
+    }
 
     bool released = true;
     for (std::size_t index = 0; index < depthTextures_.size(); ++index)
@@ -777,6 +806,54 @@ bool SharedTextureConsumer::ConsumeFrame(
         }
     }
     return copied && completed && released;
+}
+
+bool SharedTextureConsumer::CompleteFrameConsumption()
+{
+    if (!deferredLegacyCompletionPending_)
+    {
+        return true;
+    }
+
+    bool completed = false;
+    const DWORD waitStarted = GetTickCount();
+    while (GetTickCount() - waitStarted < 1000)
+    {
+        const HRESULT result = context_ != nullptr &&
+                legacyCompletionQuery_ != nullptr
+            ? context_->GetData(legacyCompletionQuery_, nullptr, 0, 0)
+            : E_FAIL;
+        if (result == S_OK)
+        {
+            completed = true;
+            break;
+        }
+        if (FAILED(result))
+        {
+            WriteLog(
+                L"Shared texture consumer deferred legacy-handle GPU completion query failed (HRESULT=0x%08lX).",
+                static_cast<unsigned long>(result));
+            break;
+        }
+        Sleep(1);
+    }
+    if (!completed)
+    {
+        WriteLog(
+            L"Shared texture consumer timed out waiting for its deferred legacy-handle GPU reads to complete.");
+    }
+
+    if (deferredAmbientOcclusionTiming_)
+        ambientOcclusion_.CollectFrameTimings();
+    if (deferredScreenSpaceGlobalIlluminationTiming_)
+        screenSpaceGlobalIllumination_.CollectFrameTimings();
+    if (deferredBloomTiming_)
+        scaler_.CollectBloomFrameTimings();
+    deferredLegacyCompletionPending_ = false;
+    deferredAmbientOcclusionTiming_ = false;
+    deferredScreenSpaceGlobalIlluminationTiming_ = false;
+    deferredBloomTiming_ = false;
+    return completed;
 }
 
 void SharedTextureConsumer::ApplySavedLiveSettings()
@@ -870,6 +947,7 @@ bool SharedTextureConsumer::ReadCenterPixels(DWORD* pixels, std::size_t count)
 
 void SharedTextureConsumer::Shutdown()
 {
+    (void)CompleteFrameConsumption();
     mainMenuOverlay_.Shutdown();
     ambientOcclusion_.Shutdown();
     screenSpaceGlobalIllumination_.Shutdown();
@@ -884,6 +962,10 @@ void SharedTextureConsumer::Shutdown()
     ambientOcclusionEnabled_ = false;
     screenSpaceGlobalIlluminationEnabled_ = false;
     waterReflectionsEnabled_ = false;
+    deferredLegacyCompletionPending_ = false;
+    deferredAmbientOcclusionTiming_ = false;
+    deferredScreenSpaceGlobalIlluminationTiming_ = false;
+    deferredBloomTiming_ = false;
     ambientOcclusionIntensity_ = 1.0F;
     ambientOcclusionRadiusMeters_ = 0.60F;
     ambientOcclusionFrameFailures_ = 0;

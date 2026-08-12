@@ -57,6 +57,14 @@ VR Settings includes:
 - Recenter Forward and standing-height calibration.
 - Comfort vignette.
 - Vehicle/aircraft aim inversion.
+- Two aircraft layout options placed directly below Flight Pitch. `Aircraft
+  Pitch + Roll on Same Stick` chooses whether pitch shares a stick with roll
+  instead of yaw.
+  `Swap Aircraft Sticks` moves that complete pitch stick between the right and
+  left controller. Together they allow pitch/yaw or pitch/roll on either stick.
+  They work with every controller profile BFVR accepts because they rearrange
+  aircraft axes after controller input is read, rather than depending on a
+  Quest-specific button layout.
 - Controller vibration and two-hand grip style.
 - Hand-weapon and mounted-weapon crosshair choices.
 - FXAA, sharpening, ambient occlusion, water reflections, and bloom.
@@ -73,11 +81,16 @@ fresh file containing the release defaults on the next start.
 
 ### BFVR says BF42++ is required
 
-BF42++ must be downloaded separately and installed beside `BF1942.exe` using
-the complete official package with its original filenames. See the BF42++
-section of the [Installation Guide](INSTALLATION.md). Test `bf42++.exe` once
-by itself. For VR, start `BFVR.exe`; it loads the installed `bf42++.dll` before
-loading BFVR into Battlefield 1942.
+If the game package does not already contain a BF42++ `dsound.dll` proxy,
+download BF42++ separately and install it beside `BF1942.exe` using the
+official package with its original filenames. See the BF42++ section of the
+[Installation Guide](INSTALLATION.md). For VR, start `BFVR.exe`; it selects
+one usable BF42++ loading path before loading BFVR into Battlefield 1942.
+
+Do not combine a bundled BF42++ `dsound.dll` with a second copied
+`bf42++.dll`. BFVR recognizes a bundled BF42++ proxy and uses that one directly
+to avoid loading BF42++ twice. If both are already present, BFVR 1.0.1 ignores
+the extra `bf42++.dll` for that launch, so the duplicate should not break BFVR.
 
 If BFVR reports obsolete BF42Plus 1.3.4, remove that old `dsound.dll` and
 install current BF42++ from its official page. That warning is a security
@@ -88,6 +101,11 @@ check, not a claim that the computer has already been compromised.
 Confirm that the headset is connected and that the intended OpenXR runtime is
 active. SteamVR users should check SteamVR's desktop **Settings > OpenXR** page.
 Meta users should check the OpenXR setting in the Meta Quest Link PC app.
+Virtual Desktop users should select **VDXR/VirtualDesktopXR** in Virtual
+Desktop Streamer and confirm that the headset overlay says `Runtime: VDXR`.
+
+The presenter log now records the active runtime's name and version. For a
+VDXR failure, also collect `%ProgramData%\Virtual Desktop\OpenXR.log`.
 
 ### BFVR warns that the BF1942.exe build is unfamiliar
 
@@ -99,7 +117,7 @@ from and exactly what happened in a GitHub issue.
 
 ### Windows or antivirus warns about BFVR
 
-The v1.0.0 installer is unsigned, and BFVR must load its DLL into an old game
+The v1.0.1 installer is unsigned, and BFVR must load its DLL into an old game
 process. Only use files from the official BFVR GitHub Release and compare the
 published checksum. Do not disable antivirus globally.
 

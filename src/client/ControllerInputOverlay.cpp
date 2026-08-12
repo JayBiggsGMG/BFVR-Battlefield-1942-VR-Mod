@@ -3,6 +3,7 @@
 #include "client/ControllerInputCache.h"
 #include "client/HandWeaponRecoilRuntime.h"
 #include "client/InfantryAuthoritativeAimRuntime.h"
+#include "stereo/AircraftControlMath.h"
 #include "client/ScopeViewOverlay.h"
 #include "presenter/SharedPresentationProtocol.h"
 #include "settings/UserSettings.h"
@@ -1223,32 +1224,51 @@ private:
             }
             else if (controlMode == ControllerControlMode::AirVehicle)
             {
-                if ((left.flags &
-                        bfvr::shared::kControllerHandFlagThumbstickActive) != 0)
+                const bool leftStickActive =
+                    (left.flags &
+                        bfvr::shared::kControllerHandFlagThumbstickActive) != 0;
+                const bool rightStickActive =
+                    (right.flags &
+                        bfvr::shared::kControllerHandFlagThumbstickActive) != 0;
+                const bfvr::stereo::AircraftControlInput aircraft =
+                    bfvr::stereo::MapAircraftControlInput(
+                        leftStickActive
+                            ? ApplyThumbstickDeadzone(left.thumbstickX)
+                            : 0.0F,
+                        leftStickActive
+                            ? ApplyThumbstickDeadzone(left.thumbstickY)
+                            : 0.0F,
+                        rightStickActive
+                            ? ApplyThumbstickDeadzone(right.thumbstickX)
+                            : 0.0F,
+                        rightStickActive
+                            ? ApplyThumbstickDeadzone(right.thumbstickY)
+                            : 0.0F,
+                        userSettings.aircraftPitchWithRoll,
+                        userSettings.swapAircraftSticks);
+                if (leftStickActive || rightStickActive)
                 {
                     AddAxisInput(
                         destination,
                         kLogicalInputRoll,
-                        ApplyThumbstickDeadzone(left.thumbstickX));
-                    AddAxisInput(
-                        destination,
-                        kLogicalInputThrottle,
-                        ApplyThumbstickDeadzone(left.thumbstickY));
-                }
-                if ((right.flags &
-                        bfvr::shared::kControllerHandFlagThumbstickActive) != 0)
-                {
-                    // OpenXR +Y is stick-up. BF1942 positive c_PIPitch is
-                    // the stock dive/point-down direction, matching the
-                    // requested up=dive and down=climb layout.
+                        aircraft.roll);
                     AddAxisInput(
                         destination,
                         kLogicalInputYaw,
-                        ApplyThumbstickDeadzone(right.thumbstickX));
+                        aircraft.yaw);
+                    AddAxisInput(
+                        destination,
+                        kLogicalInputThrottle,
+                        aircraft.throttle);
+                    // OpenXR +Y is stick-up. BF1942 positive c_PIPitch is
+                    // the stock dive/point-down direction, matching the
+                    // requested up=dive and down=climb layout. Stick swapping
+                    // changes ownership only; inversion remains one final
+                    // pitch-axis preference for every layout.
                     AddAxisInput(
                         destination,
                         kLogicalInputPitch,
-                        ApplyThumbstickDeadzone(right.thumbstickY) *
+                        aircraft.pitch *
                             (userSettings.invertFlightPitch ? -1.0F : 1.0F));
                 }
             }
@@ -1645,7 +1665,7 @@ private:
         }
         userSettings = updated;
         WriteLog(
-            L"Controller input applied updated UserConfig values: turnMode=%ls infantryTurnSpeed=%lu%% movementDirection=%lu invertFlightPitch=%d invertTurretPitch=%d invertTurretYaw=%d.",
+            L"Controller input applied updated UserConfig values: turnMode=%ls infantryTurnSpeed=%lu%% movementDirection=%lu invertFlightPitch=%d aircraftPitchWithRoll=%d swapAircraftSticks=%d invertTurretPitch=%d invertTurretYaw=%d.",
             userSettings.artificialTurnMode ==
                     bfvr::settings::ArtificialTurnMode::Snap
                 ? L"snap"
@@ -1654,6 +1674,8 @@ private:
                 userSettings.infantryTurnSpeedPercent),
             static_cast<unsigned long>(userSettings.movementDirection),
             userSettings.invertFlightPitch ? 1 : 0,
+            userSettings.aircraftPitchWithRoll ? 1 : 0,
+            userSettings.swapAircraftSticks ? 1 : 0,
             userSettings.invertTurretPitch ? 1 : 0,
             userSettings.invertTurretYaw ? 1 : 0);
     }

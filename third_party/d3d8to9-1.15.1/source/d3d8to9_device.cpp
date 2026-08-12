@@ -248,6 +248,7 @@ HRESULT STDMETHODCALLTYPE Direct3DDevice8::Reset(D3DPRESENT_PARAMETERS8 *pPresen
 
 	const HRESULT hr = ProxyInterface->Reset(&PresentParams);
 	BFVRD3D8To9RecordReset(hr);
+	BFVRD3D8To9RecordPrimaryPresentation(&PresentParams, hr);
 
 	if (SUCCEEDED(hr))
 	{

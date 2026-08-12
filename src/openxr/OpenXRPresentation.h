@@ -31,6 +31,12 @@ enum class OpenXRUiPresentationMode
     EyeFillingScope
 };
 
+enum class OpenXRSwapchainContentMode
+{
+    Update,
+    ReuseLastReleased
+};
+
 // The world and UI sources are BFVR-owned D3D11 textures. They must match the
 // requirements returned by OpenXRPresentation::GetTextureRequirements exactly;
 // this first presentation boundary intentionally does not resample textures or
@@ -213,7 +219,9 @@ public:
     // Two-phase form used by the cross-process presenter. BeginFrame waits for
     // runtime timing and locates both predicted eye views before the x86 game
     // renders. EndFrame consumes the resulting BFVR textures and submits those
-    // exact views. Every successful BeginFrame must be paired with EndFrame.
+    // exact views. ReuseLastReleased keeps the most recently released OpenXR
+    // images while refreshing pose/layer metadata, as permitted by OpenXR 1.0.
+    // Every successful BeginFrame must be paired with EndFrame.
     bool BeginFrame(OpenXRPresentationFrameState& frameState);
     bool EndFrame(
         const OpenXRPresentationTextures& textures,
@@ -221,7 +229,9 @@ public:
             OpenXRUiReferenceMode::HeadLocked,
         const OpenXRPresentationPose* worldUiAnchor = nullptr,
         OpenXRUiPresentationMode uiPresentationMode =
-            OpenXRUiPresentationMode::Standard);
+            OpenXRUiPresentationMode::Standard,
+        OpenXRSwapchainContentMode swapchainContentMode =
+            OpenXRSwapchainContentMode::Update);
 
     // Returns and clears one selection produced by releasing the dedicated
     // right-controller A hold. Rendering never dispatches keyboard input.

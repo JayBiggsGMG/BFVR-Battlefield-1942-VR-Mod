@@ -51,6 +51,8 @@ enum class SettingsMenuSelection : std::uint32_t
     MountedCrosshairPrevious,
     MountedCrosshairNext,
     InvertFlightPitch,
+    AircraftPitchWithRoll,
+    SwapAircraftSticks,
     InvertTurretPitch,
     InvertTurretYaw,
     ControllerHapticsEnabled,
@@ -114,8 +116,8 @@ constexpr std::array<float, 4> kSettingsMenuVrPageTwoRowCentersPixels = {
     135.0F, 300.0F, 515.0F, 700.0F};
 constexpr std::array<float, 3> kSettingsMenuControlsSelectorRowCentersPixels = {
     165.0F, 330.0F, 420.0F};
-constexpr std::array<float, 5> kSettingsMenuControlsToggleRowCentersPixels = {
-    555.0F, 620.0F, 685.0F, 750.0F, 815.0F};
+constexpr std::array<float, 7> kSettingsMenuControlsToggleRowCentersPixels = {
+    520.0F, 573.0F, 626.0F, 679.0F, 732.0F, 785.0F, 838.0F};
 constexpr float kSettingsMenuSelectorLeftArrowCenterPixels = 585.0F;
 constexpr float kSettingsMenuSelectorRightArrowCenterPixels = 910.0F;
 constexpr std::array<float, 9> kSettingsMenuGraphicsRowCentersPixels = {

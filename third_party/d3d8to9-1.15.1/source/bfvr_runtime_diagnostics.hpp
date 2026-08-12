@@ -2,7 +2,7 @@
 
 #include <windows.h>
 
-#define BFVR_D3D8TO9_RUNTIME_DIAGNOSTICS_VERSION 2u
+#define BFVR_D3D8TO9_RUNTIME_DIAGNOSTICS_VERSION 3u
 
 struct BFVRD3D8To9RuntimeDiagnostics
 {
@@ -17,6 +17,9 @@ struct BFVRD3D8To9RuntimeDiagnostics
 	LONG resetCalls;
 	HRESULT lastResetResult;
 	LONG forcedWindowedConversions;
+	LONG primaryPresentationWidth;
+	LONG primaryPresentationHeight;
+	LONG primaryPresentationGeneration;
 };
 
 using BFVRD3D8To9GetRuntimeDiagnosticsFn =
@@ -39,5 +42,8 @@ void BFVRD3D8To9RecordManagedTranslation(
 	BFVRD3D8To9ManagedResourceKind kind,
 	HRESULT result) noexcept;
 void BFVRD3D8To9RecordReset(HRESULT result) noexcept;
+void BFVRD3D8To9RecordPrimaryPresentation(
+	const void* presentParameters,
+	HRESULT result) noexcept;
 void BFVRD3D8To9AdjustPresentParameters(
 	void* presentParameters) noexcept;

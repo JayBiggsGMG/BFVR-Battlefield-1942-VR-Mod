@@ -1,5 +1,6 @@
 #include "openxr/OpenXRBootstrap.h"
 #include "client/D3D8CallInventory.h"
+#include "client/BF1942FrameLimiterOverride.h"
 #include "client/D3D8ImportRoute.h"
 #include "client/D3D8RuntimeRedirect.h"
 #include "client/D3D8RuntimeDiagnostics.h"
@@ -425,7 +426,8 @@ DWORD WINAPI ObserveD3D8To9RuntimeDiagnostics(LPVOID)
                 L"managedCubeTextures=%ld managedVertexBuffers=%ld "
                 L"managedIndexBuffers=%ld managedFailures=%ld "
                 L"resetCalls=%ld lastResetResult=0x%08lX "
-                L"forcedWindowedConversions=%ld.",
+                L"forcedWindowedConversions=%ld primaryPresentation=%ldx%ld "
+                L"generation=%ld.",
                 diagnostics.managedTextureTranslations,
                 diagnostics.managedVolumeTextureTranslations,
                 diagnostics.managedCubeTextureTranslations,
@@ -435,7 +437,10 @@ DWORD WINAPI ObserveD3D8To9RuntimeDiagnostics(LPVOID)
                 diagnostics.resetCalls,
                 static_cast<unsigned long>(
                     diagnostics.lastResetResult),
-                diagnostics.forcedWindowedConversions);
+                diagnostics.forcedWindowedConversions,
+                diagnostics.primaryPresentationWidth,
+                diagnostics.primaryPresentationHeight,
+                diagnostics.primaryPresentationGeneration);
             return 0;
         }
         Sleep(kPollIntervalMs);
@@ -1673,6 +1678,10 @@ extern "C" __declspec(dllexport) DWORD WINAPI BFVRInitializeObserver(LPVOID init
     const bool isD3D8To9OpenXRPresentationProbe =
         initializationRequest ==
         kObserverInitializationRequestD3D8To9OpenXRPresentationProbe;
+    if (isD3D8To9OpenXRPresentationProbe)
+    {
+        bfvr::RequestBF1942FrameLimiterOverride();
+    }
     const bool usesD3D8To9Observer =
         isD3D8To9ObserverProbe ||
         isD3D8To9SharedFrameProbe ||

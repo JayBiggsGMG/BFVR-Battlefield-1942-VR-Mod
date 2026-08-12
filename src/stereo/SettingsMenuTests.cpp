@@ -99,18 +99,33 @@ bool TestBounds()
             false) == SettingsMenuSelection::OffHandGripNext &&
         SettingsMenuSelectionAt(
             0.57F,
-            0.571F,
+            0.508F,
             false,
             false,
             SettingsMenuTab::Controls,
             false) == SettingsMenuSelection::InvertFlightPitch &&
         SettingsMenuSelectionAt(
             0.57F,
-            0.796F,
+            0.818F,
             false,
             false,
             SettingsMenuTab::Controls,
             false) == SettingsMenuSelection::SniperScopeSmoothingEnabled &&
+        SettingsMenuSelectionAt(
+            0.57F,
+            0.560F,
+            false,
+            false,
+            SettingsMenuTab::Controls,
+            false) ==
+            SettingsMenuSelection::AircraftPitchWithRoll &&
+        SettingsMenuSelectionAt(
+            0.57F,
+            0.611F,
+            false,
+            false,
+            SettingsMenuTab::Controls,
+            false) == SettingsMenuSelection::SwapAircraftSticks &&
         SettingsMenuSelectionAt(
             0.889F,
             0.322F,
@@ -431,7 +446,7 @@ bool TestInteractionAndPlacement()
         return false;
     }
     state = interaction.Snapshot();
-    AimAt(input, state.panelPose, state.widthMeters, 0.57F, 0.571F);
+    AimAt(input, state.panelPose, state.widthMeters, 0.57F, 0.508F);
     input.predictedDisplayTime += 11'111'111;
     interaction.Update(input);
     Click(interaction, input);
@@ -443,7 +458,7 @@ bool TestInteractionAndPlacement()
         return false;
     }
     state = interaction.Snapshot();
-    AimAt(input, state.panelPose, state.widthMeters, 0.57F, 0.757F);
+    AimAt(input, state.panelPose, state.widthMeters, 0.57F, 0.767F);
     input.predictedDisplayTime += 11'111'111;
     interaction.Update(input);
     Click(interaction, input);
@@ -453,11 +468,31 @@ bool TestInteractionAndPlacement()
         return false;
     }
     state = interaction.Snapshot();
-    AimAt(input, state.panelPose, state.widthMeters, 0.57F, 0.796F);
+    AimAt(input, state.panelPose, state.widthMeters, 0.57F, 0.818F);
     input.predictedDisplayTime += 11'111'111;
     interaction.Update(input);
     Click(interaction, input);
     if (interaction.Snapshot().values.sniperScopeSmoothingEnabled ||
+        !interaction.TakeValuesChanged())
+    {
+        return false;
+    }
+    state = interaction.Snapshot();
+    AimAt(input, state.panelPose, state.widthMeters, 0.57F, 0.560F);
+    input.predictedDisplayTime += 11'111'111;
+    interaction.Update(input);
+    Click(interaction, input);
+    if (!interaction.Snapshot().values.aircraftPitchWithRoll ||
+        !interaction.TakeValuesChanged())
+    {
+        return false;
+    }
+    state = interaction.Snapshot();
+    AimAt(input, state.panelPose, state.widthMeters, 0.57F, 0.611F);
+    input.predictedDisplayTime += 11'111'111;
+    interaction.Update(input);
+    Click(interaction, input);
+    if (!interaction.Snapshot().values.swapAircraftSticks ||
         !interaction.TakeValuesChanged())
     {
         return false;
@@ -624,6 +659,8 @@ bool TestArt(const wchar_t* directory)
     variant.values.handWeaponCrosshair =
         bfvr::settings::WorldCrosshairMode::HitMarkerOnly;
     variant.values.invertFlightPitch = true;
+    variant.values.aircraftPitchWithRoll = true;
+    variant.values.swapAircraftSticks = true;
     variant.values.controllerHapticsEnabled = false;
     variant.values.sniperScopeSmoothingEnabled = false;
     if (!differs(variant))
@@ -757,6 +794,8 @@ bool CaptureArt(const wchar_t* assetDirectory, const wchar_t* outputDirectory)
             tab == SettingsMenuTab::VrSettings && page == 0;
         state.controllerLayoutVisible = overlay;
         state.values.invertFlightPitch = checked;
+        state.values.aircraftPitchWithRoll = checked;
+        state.values.swapAircraftSticks = checked;
         state.values.invertTurretPitch = checked;
         state.values.invertTurretYaw = checked;
         state.values.sniperScopeSmoothingEnabled = checked;

@@ -541,16 +541,22 @@ int RunPresenter(
     LONG pendingSourceSequence = 0;
     bool sourceGapReported = false;
     std::int64_t totalSourceConsumeQpcTicks = 0;
+    std::int64_t totalSourceFinalizeQpcTicks = 0;
     std::int64_t totalDesktopMirrorQpcTicks = 0;
     std::int64_t totalOpenXrBeginQpcTicks = 0;
     std::int64_t totalOpenXrSubmitOrEndQpcTicks = 0;
+    std::int64_t totalOpenXrUpdatedSubmitQpcTicks = 0;
+    std::int64_t totalOpenXrReusedSubmitQpcTicks = 0;
     std::int64_t totalPredictedDisplayPeriod = 0;
     std::int64_t minimumPredictedDisplayPeriod = 0;
     std::int64_t maximumPredictedDisplayPeriod = 0;
     LONG sourceConsumeCount = 0;
+    LONG sourceFinalizeCount = 0;
     LONG desktopMirrorCount = 0;
     LONG openXrBeginCount = 0;
     LONG openXrSubmitOrEndCount = 0;
+    LONG openXrUpdatedSubmitCount = 0;
+    LONG openXrReusedSubmitCount = 0;
     LONG predictedDisplayPeriodCount = 0;
     LONG mountedCameraToggleSequence = 0;
     LONG consumedShotRightSequence = 0;
@@ -565,7 +571,7 @@ int RunPresenter(
     ULONGLONG lastComfortMotionSampleAt = 0;
     ULONGLONG nextComfortSettingsPollAt = 0;
     bool comfortVignetteEnabled = true;
-    auto consumeSequence = [&](LONG availableSequence)
+    auto consumeSequence = [&]()
     {
         // The producer publishes these pixels/metadata before frameSequence
         // and cannot reuse the shared targets until consumedFrameSequence.
@@ -607,7 +613,8 @@ int RunPresenter(
                 frameOverlayFlags,
                 frameDepthValid,
                 frameDepthValid ? &frameDepth : nullptr,
-                frameWaterMaskValid))
+                frameWaterMaskValid,
+                true))
         {
             return false;
         }
@@ -676,14 +683,6 @@ int RunPresenter(
                         block->frameMovementOriginY,
                         block->frameMovementOriginZ}});
         lastComfortMotionSampleAt = GetTickCount64();
-        consumedSequence = availableSequence;
-        // ConsumeFrame waits for the legacy D3D9 source reads to complete.
-        // Acknowledge only after pairing the frame with its UI metadata; the
-        // producer may overwrite both for the next frame after this point.
-        MemoryBarrier();
-        InterlockedExchange(&block->consumedFrameSequence, consumedSequence);
-        InterlockedIncrement(&block->transportedFrameCount);
-        (void)channel.SignalPresenterUpdate();
         haveFrame = true;
         if (!sampledPixels)
         {
@@ -704,6 +703,31 @@ int RunPresenter(
                 sampledPixels = true;
             }
         }
+        return true;
+    };
+    const auto finalizeConsumedSequence = [&](const LONG availableSequence)
+    {
+        const std::int64_t finalizeStarted = performanceDiagnosticsEnabled
+            ? ReadPerformanceCounter()
+            : 0;
+        const bool completed = consumer.CompleteFrameConsumption();
+        if (performanceDiagnosticsEnabled)
+        {
+            totalSourceFinalizeQpcTicks +=
+                ReadPerformanceCounter() - finalizeStarted;
+            ++sourceFinalizeCount;
+        }
+        if (!completed)
+        {
+            return false;
+        }
+        consumedSequence = availableSequence;
+        // The producer cannot overwrite its legacy shared targets or matching
+        // metadata until the x64 GPU has finished every dependent source read.
+        MemoryBarrier();
+        InterlockedExchange(&block->consumedFrameSequence, consumedSequence);
+        InterlockedIncrement(&block->transportedFrameCount);
+        (void)channel.SignalPresenterUpdate();
         return true;
     };
     const auto currentUiWorldAnchor = [&]()
@@ -937,7 +961,8 @@ int RunPresenter(
     };
     const auto endFrame = [&] (
         const bfvr::OpenXRPresentationTextures& textures,
-        const bfvr::OpenXRPresentationFrameState& frame)
+        const bfvr::OpenXRPresentationFrameState& frame,
+        const bool updateSwapchainImages)
     {
         if (textures.rightWorld != nullptr && textures.ref2Ui != nullptr)
         {
@@ -950,20 +975,37 @@ int RunPresenter(
             textures,
             acceptedUiReferenceMode,
             currentUiWorldAnchor(),
-            acceptedUiPresentationMode);
+            acceptedUiPresentationMode,
+            updateSwapchainImages
+                ? bfvr::OpenXRSwapchainContentMode::Update
+                : bfvr::OpenXRSwapchainContentMode::ReuseLastReleased);
         if (performanceDiagnosticsEnabled)
         {
-            totalOpenXrSubmitOrEndQpcTicks +=
+            const std::int64_t elapsed =
                 ReadPerformanceCounter() - endStarted;
+            totalOpenXrSubmitOrEndQpcTicks += elapsed;
             ++openXrSubmitOrEndCount;
+            if (updateSwapchainImages)
+            {
+                totalOpenXrUpdatedSubmitQpcTicks += elapsed;
+                ++openXrUpdatedSubmitCount;
+            }
+            else
+            {
+                totalOpenXrReusedSubmitQpcTicks += elapsed;
+                ++openXrReusedSubmitCount;
+            }
         }
         return ended;
     };
-    const auto submitFrame = [&]()
+    const auto submitFrame = [&](const bool updateSwapchainImages)
     {
         bfvr::OpenXRPresentationFrameState frame = {};
         return beginFrame(frame) &&
-            endFrame(consumer.GetLocalTextures(), frame);
+            endFrame(
+                consumer.GetLocalTextures(),
+                frame,
+                updateSwapchainImages);
     };
     const auto reportPerformance = [&](const wchar_t* label)
     {
@@ -1004,10 +1046,12 @@ int RunPresenter(
             : 0.0;
         fwprintf(
             g_output,
-            L"[PRESENTER] %s stage timing: sourceConsume=%.3f ms/source (n=%ld) desktopMirror=%.3f ms/render (n=%ld) xrBegin=%.3f ms/call (n=%ld) xrSubmitOrEnd=%.3f ms/call (n=%ld).\n",
+            L"[PRESENTER] %s stage timing: sourceQueue=%.3f ms/source (n=%ld) sourceFinalize=%.3f ms/source (n=%ld) desktopMirror=%.3f ms/render (n=%ld) xrBegin=%.3f ms/call (n=%ld) xrSubmitOrEnd=%.3f ms/call (n=%ld).\n",
             label,
             averageMilliseconds(totalSourceConsumeQpcTicks, sourceConsumeCount),
             sourceConsumeCount,
+            averageMilliseconds(totalSourceFinalizeQpcTicks, sourceFinalizeCount),
+            sourceFinalizeCount,
             averageMilliseconds(totalDesktopMirrorQpcTicks, desktopMirrorCount),
             desktopMirrorCount,
             averageMilliseconds(totalOpenXrBeginQpcTicks, openXrBeginCount),
@@ -1032,6 +1076,18 @@ int RunPresenter(
                 ? 100.0 * static_cast<double>(reusedFrames) /
                     static_cast<double>(submittedFrames)
                 : 0.0);
+        fwprintf(
+            g_output,
+            L"[PRESENTER] %s OpenXR submission split: updatedImages=%.3f ms/call (n=%ld) reusedImages=%.3f ms/call (n=%ld). Reused-image calls refresh tracking and layers without acquiring or copying the unchanged eye/UI swapchain content.\n",
+            label,
+            averageMilliseconds(
+                totalOpenXrUpdatedSubmitQpcTicks,
+                openXrUpdatedSubmitCount),
+            openXrUpdatedSubmitCount,
+            averageMilliseconds(
+                totalOpenXrReusedSubmitQpcTicks,
+                openXrReusedSubmitCount),
+            openXrReusedSubmitCount);
         fflush(g_output);
     };
     const DWORD startedAt = GetTickCount();
@@ -1066,8 +1122,15 @@ int RunPresenter(
                     InterlockedCompareExchange(&block->frameSequence, 0, 0);
                 if (availableSequence == pendingSourceSequence)
                 {
-                    if (!consumeSequence(availableSequence) ||
-                        !submitFrame())
+                    if (!consumeSequence())
+                    {
+                        healthy = false;
+                        break;
+                    }
+                    const bool submitted = submitFrame(true);
+                    const bool finalized =
+                        finalizeConsumedSequence(availableSequence);
+                    if (!submitted || !finalized)
                     {
                         healthy = false;
                         break;
@@ -1121,7 +1184,7 @@ int RunPresenter(
                 // outstanding source sequence for a later acknowledgement.
                 if (haveFrame)
                 {
-                    if (!submitFrame())
+                    if (!submitFrame(false))
                     {
                         healthy = false;
                         break;
@@ -1158,7 +1221,7 @@ int RunPresenter(
             }
             if (!frame.shouldRender || !frame.viewsValid)
             {
-                endFrame({}, frame);
+                endFrame({}, frame, false);
                 continue;
             }
             PublishRenderRequest(
@@ -1205,8 +1268,8 @@ int RunPresenter(
                 // of holding xrBeginFrame open. The matching source remains
                 // outstanding and is acknowledged when BF1942 renders again.
                 const bool submittedFallback = haveFrame
-                    ? endFrame(consumer.GetLocalTextures(), frame)
-                    : endFrame({}, frame);
+                    ? endFrame(consumer.GetLocalTextures(), frame, false)
+                    : endFrame({}, frame, false);
                 if (haveFrame && !submittedFallback)
                 {
                     healthy = false;
@@ -1229,8 +1292,16 @@ int RunPresenter(
                 }
                 continue;
             }
-            if (!consumeSequence(availableSequence) ||
-                !endFrame(consumer.GetLocalTextures(), frame))
+            if (!consumeSequence())
+            {
+                healthy = false;
+                break;
+            }
+            const bool submitted =
+                endFrame(consumer.GetLocalTextures(), frame, true);
+            const bool finalized =
+                finalizeConsumedSequence(availableSequence);
+            if (!submitted || !finalized)
             {
                 healthy = false;
                 break;
@@ -1244,15 +1315,19 @@ int RunPresenter(
 
         const LONG availableSequence =
             InterlockedCompareExchange(&block->frameSequence, 0, 0);
-        if (availableSequence != consumedSequence &&
-            !consumeSequence(availableSequence))
+        const bool sourceUpdated = availableSequence != consumedSequence;
+        if (sourceUpdated &&
+            !consumeSequence())
         {
             healthy = false;
             break;
         }
         if (presentation.IsSessionRunning() && haveFrame)
         {
-            if (!submitFrame())
+            const bool submitted = submitFrame(sourceUpdated);
+            const bool finalized = !sourceUpdated ||
+                finalizeConsumedSequence(availableSequence);
+            if (!submitted || !finalized)
             {
                 healthy = false;
                 break;
@@ -1261,6 +1336,12 @@ int RunPresenter(
         }
         else
         {
+            if (sourceUpdated &&
+                !finalizeConsumedSequence(availableSequence))
+            {
+                healthy = false;
+                break;
+            }
             if (channel.WaitForProducerUpdate(2) == WAIT_FAILED)
             {
                 Sleep(2);

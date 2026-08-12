@@ -21,6 +21,10 @@ void StartMenuPointerOverlay(
     void (*appendLog)(const wchar_t* message));
 void StopMenuPointerOverlay();
 [[nodiscard]] bool IsMenuPointerOverlayActive() noexcept;
+// Only BfMenu state 0 is the retained Battlefield frontend. Ready/deploy and
+// other native menu states contain moving translucent HUD content and must be
+// rendered onto a freshly cleared Ref2 target every frame.
+[[nodiscard]] bool ShouldRetainNativeMenuColor() noexcept;
 
 struct MainMenuOverlayInteractionState
 {

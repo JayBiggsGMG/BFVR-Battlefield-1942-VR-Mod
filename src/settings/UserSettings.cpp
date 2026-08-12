@@ -26,6 +26,10 @@ constexpr std::string_view kStandingEyeHeightKey =
 constexpr std::string_view kComfortVignetteEnabledKey =
     "comfort_vignette_enabled";
 constexpr std::string_view kInvertFlightPitchKey = "invert_flight_pitch";
+constexpr std::string_view kAircraftPitchWithRollKey =
+    "aircraft_pitch_with_roll";
+constexpr std::string_view kSwapAircraftSticksKey =
+    "swap_aircraft_sticks";
 constexpr std::string_view kInvertTurretPitchKey = "invert_turret_pitch";
 constexpr std::string_view kInvertTurretYawKey = "invert_turret_yaw";
 constexpr std::string_view kControllerHapticsEnabledKey =
@@ -459,8 +463,26 @@ UserSettingsSchema SeededUserSettingsSchema()
             std::string(kInvertFlightPitchKey),
             "false",
             {
-                "Inverts the aircraft right-stick vertical pitch axis only. It does not change infantry turning or turret elevation.",
+                "Inverts the aircraft pitch stick's vertical axis only. It does not change infantry turning, aircraft throttle, or turret elevation.",
                 "Accepted values: true or false. false keeps stick-up as dive/nose-down; true makes stick-up climb/nose-up."
+            },
+            IsBoolean
+        },
+        {
+            std::string(kAircraftPitchWithRollKey),
+            "false",
+            {
+                "Chooses the aircraft pitch stick's horizontal action. false pairs pitch with yaw; true pairs pitch with roll.",
+                "Accepted values: true or false. The separate swap_aircraft_sticks option chooses whether that pitch stick is the right or left controller. Applied after Controls > Save."
+            },
+            IsBoolean
+        },
+        {
+            std::string(kSwapAircraftSticksKey),
+            "false",
+            {
+                "Exchanges the complete left- and right-stick aircraft roles. false keeps throttle on the left stick and pitch on the right; true puts pitch on the left and throttle on the right.",
+                "Accepted values: true or false. This works together with aircraft_pitch_with_roll, allowing pitch/yaw or pitch/roll on either physical stick. Applied after Controls > Save."
             },
             IsBoolean
         },
@@ -660,6 +682,12 @@ UserSettingsValues DecodeUserSettings(const UserSettings& settings) noexcept
             : found->second == "true";
     };
     result.invertFlightPitch = readBoolean(kInvertFlightPitchKey, false);
+    result.aircraftPitchWithRoll = readBoolean(
+        kAircraftPitchWithRollKey,
+        false);
+    result.swapAircraftSticks = readBoolean(
+        kSwapAircraftSticksKey,
+        false);
     result.invertTurretPitch = readBoolean(kInvertTurretPitchKey, true);
     result.invertTurretYaw = readBoolean(kInvertTurretYawKey, false);
     result.controllerHapticsEnabled = readBoolean(
@@ -805,6 +833,10 @@ void EncodeUserSettings(
         std::to_string(snappedTurnSpeed);
     settings.values[std::string(kInvertFlightPitchKey)] =
         values.invertFlightPitch ? "true" : "false";
+    settings.values[std::string(kAircraftPitchWithRollKey)] =
+        values.aircraftPitchWithRoll ? "true" : "false";
+    settings.values[std::string(kSwapAircraftSticksKey)] =
+        values.swapAircraftSticks ? "true" : "false";
     settings.values[std::string(kInvertTurretPitchKey)] =
         values.invertTurretPitch ? "true" : "false";
     settings.values[std::string(kInvertTurretYawKey)] =

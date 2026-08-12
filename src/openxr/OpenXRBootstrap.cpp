@@ -14,6 +14,8 @@
 #define XR_USE_GRAPHICS_API_D3D11
 #include <openxr/openxr_platform.h>
 
+#include "openxr/OpenXRApiVersion.h"
+
 namespace
 {
 void WriteLog(bfvr::OpenXRLogCallback logCallback, void* logContext, const wchar_t* format, ...)
@@ -37,7 +39,11 @@ std::wstring BuildLoaderPath(const wchar_t* payloadDirectory)
     {
         return {};
     }
+#if defined(_WIN64)
+    return std::wstring(payloadDirectory) + L"\\runtime\\openxr\\win64\\openxr_loader.dll";
+#else
     return std::wstring(payloadDirectory) + L"\\runtime\\openxr\\win32\\openxr_loader.dll";
+#endif
 }
 
 template <typename T>
@@ -71,6 +77,8 @@ const wchar_t* DescribeOpenXRResult(XrResult result)
         return L"XR_ERROR_FORM_FACTOR_UNAVAILABLE";
     case XR_ERROR_RUNTIME_UNAVAILABLE:
         return L"XR_ERROR_RUNTIME_UNAVAILABLE";
+    case XR_ERROR_API_VERSION_UNSUPPORTED:
+        return L"XR_ERROR_API_VERSION_UNSUPPORTED";
     case XR_ERROR_INITIALIZATION_FAILED:
         return L"XR_ERROR_INITIALIZATION_FAILED";
     default:
@@ -249,7 +257,8 @@ bool ProbeOpenXRRuntime(const wchar_t* payloadDirectory, OpenXRLogCallback logCa
     createInfo.applicationInfo.applicationVersion = 1;
     strcpy_s(createInfo.applicationInfo.engineName, "BFVR");
     createInfo.applicationInfo.engineVersion = 1;
-    createInfo.applicationInfo.apiVersion = XR_CURRENT_API_VERSION;
+    createInfo.applicationInfo.apiVersion =
+        bfvr::kRequestedOpenXRApiVersion;
 
     XrInstance instance = XR_NULL_HANDLE;
     const XrResult createResult = createInstance(&createInfo, &instance);
@@ -258,7 +267,13 @@ bool ProbeOpenXRRuntime(const wchar_t* payloadDirectory, OpenXRLogCallback logCa
         WriteLog(
             logCallback,
             logContext,
-            L"OpenXR instance creation returned %s (%ld); flat fallback remains active.",
+            L"OpenXR instance creation with requested API %u.%u.%u returned %s (%ld); flat fallback remains active.",
+            static_cast<unsigned>(XR_VERSION_MAJOR(
+                bfvr::kRequestedOpenXRApiVersion)),
+            static_cast<unsigned>(XR_VERSION_MINOR(
+                bfvr::kRequestedOpenXRApiVersion)),
+            static_cast<unsigned>(XR_VERSION_PATCH(
+                bfvr::kRequestedOpenXRApiVersion)),
             DescribeOpenXRResult(createResult),
             static_cast<long>(createResult));
         FreeLibrary(loader);
@@ -268,10 +283,13 @@ bool ProbeOpenXRRuntime(const wchar_t* payloadDirectory, OpenXRLogCallback logCa
     WriteLog(
         logCallback,
         logContext,
-        L"OpenXR 1.1.61 instance created through BFVR's x86 loader (runtime API %u.%u.%u).",
-        static_cast<unsigned>(XR_VERSION_MAJOR(XR_CURRENT_API_VERSION)),
-        static_cast<unsigned>(XR_VERSION_MINOR(XR_CURRENT_API_VERSION)),
-        static_cast<unsigned>(XR_VERSION_PATCH(XR_CURRENT_API_VERSION)));
+        L"OpenXR instance created through BFVR's x86 loader (requested API %u.%u.%u).",
+        static_cast<unsigned>(XR_VERSION_MAJOR(
+            bfvr::kRequestedOpenXRApiVersion)),
+        static_cast<unsigned>(XR_VERSION_MINOR(
+            bfvr::kRequestedOpenXRApiVersion)),
+        static_cast<unsigned>(XR_VERSION_PATCH(
+            bfvr::kRequestedOpenXRApiVersion)));
 
     PFN_xrGetInstanceProperties getInstanceProperties = nullptr;
     if (ResolveOpenXRFunction(getInstanceProcAddr, instance, "xrGetInstanceProperties", getInstanceProperties, logCallback, logContext))

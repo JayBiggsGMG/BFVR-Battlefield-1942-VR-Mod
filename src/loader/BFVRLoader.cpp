@@ -10,6 +10,8 @@
 #include <utility>
 #include <vector>
 
+#include "Bf42PlusPlusCompatibility.h"
+
 namespace
 {
 constexpr DWORD kObserverInitializationParametersMagic = 0x52564642;
@@ -25,6 +27,12 @@ constexpr std::array<unsigned char, 32> kUnsafeBf42PlusSha256 = {
     0x50, 0x37, 0xDA, 0x74, 0x33, 0x03, 0xDC, 0x8E,
     0x5F, 0x44, 0x84, 0xA9, 0xF8, 0x0A, 0xF1, 0xD4,
     0x2D, 0xA7, 0xD9, 0x63, 0x6B, 0xDC, 0x16, 0x4C};
+constexpr LONGLONG kTestedBf42PlusPlusProxySize = 413184;
+constexpr std::array<unsigned char, 32> kTestedBf42PlusPlusProxySha256 = {
+    0xF4, 0x31, 0x01, 0x5D, 0x72, 0x66, 0x23, 0xE0,
+    0x37, 0xEA, 0xC3, 0x2B, 0x72, 0xF7, 0x52, 0xD8,
+    0x9A, 0xD7, 0x5F, 0x8F, 0xD3, 0x71, 0xC2, 0x8B,
+    0xD9, 0x95, 0x33, 0xD9, 0xBA, 0x58, 0x8D, 0x0E};
 
 struct ObserverInitializationParameters
 {
@@ -240,7 +248,7 @@ void ReportPlayerGameBuild(
     {
         fwprintf(
             stderr,
-            L"[WARN] This BF1942.exe differs from the build used to develop BFVR 1.0.0. BFVR will try to start it, but compatibility has not been established.\n");
+            L"[WARN] BFVR has worked with several Battlefield 1942 releases, but this exact BF1942.exe has not been verified. BFVR will try to start it.\n");
         fwprintf(
             stderr,
             L"[INFO] Detected size=%lld SHA-256=%ls\n",
@@ -693,7 +701,7 @@ bool ParseOptions(int argc, wchar_t* argv[], Options& options)
 
 void PrintUsage()
 {
-    wprintf(L"BFVR 1.0.0\n");
+    wprintf(L"BFVR 1.0.1\n");
     wprintf(L"Double-click BFVR.exe, or run it without arguments, to start Battlefield 1942 in VR.\n");
     wprintf(L"A diagnostic timeout closes only the game process started by this loader after the requested observation window. --run-until-stopped keeps the combined translated OpenXR test active for BF1942's process lifetime.\n");
     wprintf(L"Usage: BFVR [--play] [--dry-run] [developer diagnostic options] [--game-root <path>] [--client <path>] [-- <game arguments>]\n");
@@ -737,60 +745,94 @@ bool Exists(const std::wstring& path)
 
 bool ValidatePlayerBf42PlusPlus(
     const std::wstring& gameRoot,
-    bool showDialog)
+    bool showDialog,
+    std::wstring& injectionPath,
+    bool& proxySelected)
 {
-    const std::wstring requiredFiles[] = {
-        Combine(gameRoot, L"bf42++.exe"),
-        Combine(gameRoot, L"bf42++.dll"),
-        Combine(gameRoot, L"bf42++BlackScreen.exe")};
-    for (const auto& requiredPath : requiredFiles)
+    injectionPath.clear();
+    proxySelected = false;
+    const std::wstring separateLibraryPath = Combine(gameRoot, L"bf42++.dll");
+    const std::wstring proxyPath = Combine(gameRoot, L"dsound.dll");
+    if (Exists(proxyPath))
     {
-        if (!Exists(requiredPath))
+        std::array<unsigned char, 32> digest = {};
+        LONGLONG size = 0;
+        if (!ComputeFileSha256(proxyPath, digest, size))
+        {
+            fwprintf(stderr, L"[WARN] An additional dsound.dll is present but could not be identified: %ls\n", proxyPath.c_str());
+        }
+        else if (size == kUnsafeBf42PlusSize &&
+            std::equal(digest.begin(), digest.end(), kUnsafeBf42PlusSha256.begin()))
         {
             constexpr wchar_t message[] =
-                L"BFVR requires the complete official BF42++ installation.\n\n"
-                L"Extract BF42++ beside BF1942.exe without renaming its files, then start BFVR again. "
-                L"BF42++ is downloaded separately and is not included with BFVR.";
-            fwprintf(stderr, L"[BLOCKED] %ls\n[INFO] missing=%ls\n", message, requiredPath.c_str());
+                L"BFVR found the obsolete BF42Plus 1.3.4 dsound.dll. Its abandoned updater is unsafe.\n\n"
+                L"Remove that file and install current BF42++ 2.0 or later before starting BFVR.";
+            fwprintf(stderr, L"[BLOCKED] %ls\n[INFO] proxy=%ls\n", message, proxyPath.c_str());
             if (showDialog)
             {
-                MessageBoxW(nullptr, message, L"BFVR requires BF42++", MB_OK | MB_ICONERROR);
+                MessageBoxW(nullptr, message, L"Unsafe BF42Plus version detected", MB_OK | MB_ICONERROR);
             }
             return false;
         }
-    }
-
-    const std::wstring proxyPath = Combine(gameRoot, L"dsound.dll");
-    if (!Exists(proxyPath))
-    {
-        return true;
-    }
-    std::array<unsigned char, 32> digest = {};
-    LONGLONG size = 0;
-    if (!ComputeFileSha256(proxyPath, digest, size))
-    {
-        fwprintf(stderr, L"[WARN] An additional dsound.dll is present but could not be identified: %ls\n", proxyPath.c_str());
-        return true;
-    }
-
-    if (size == kUnsafeBf42PlusSize &&
-        std::equal(digest.begin(), digest.end(), kUnsafeBf42PlusSha256.begin()))
-    {
-        constexpr wchar_t message[] =
-            L"BFVR found the obsolete BF42Plus 1.3.4 dsound.dll. Its abandoned updater is unsafe.\n\n"
-            L"Remove that file and install current BF42++ 2.0 or later before starting BFVR.";
-        fwprintf(stderr, L"[BLOCKED] %ls\n[INFO] proxy=%ls\n", message, proxyPath.c_str());
-        if (showDialog)
+        else if (bfvr::IsBf42PlusPlusProxyFile(proxyPath))
         {
-            MessageBoxW(nullptr, message, L"Unsafe BF42Plus version detected", MB_OK | MB_ICONERROR);
+            injectionPath = proxyPath;
+            proxySelected = true;
+            const bool testedProxy =
+                size == kTestedBf42PlusPlusProxySize &&
+                std::equal(
+                    digest.begin(),
+                    digest.end(),
+                    kTestedBf42PlusPlusProxySha256.begin());
+            fwprintf(
+                stderr,
+                testedProxy
+                    ? L"[INFO] BFVR recognized the tested bundled BF42++ dsound.dll proxy and will use it directly.\n"
+                    : L"[WARN] BFVR structurally recognized a bundled BF42++ dsound.dll proxy. This version is untested; BFVR will try it without blocking.\n");
+            if (Exists(separateLibraryPath))
+            {
+                fwprintf(
+                    stderr,
+                    L"[WARN] A separate bf42++.dll is also present. BFVR will use only the bundled dsound.dll proxy to avoid loading BF42++ twice.\n");
+            }
+            return true;
         }
-        return false;
+        else
+        {
+            fwprintf(
+                stderr,
+                L"[WARN] An additional dsound.dll is present but is not structurally recognized as BF42++.\n");
+        }
     }
 
-    fwprintf(
-        stderr,
-        L"[WARN] An additional dsound.dll is present. BFVR will continue, but that separate mod may conflict with BF42++.\n");
-    return true;
+    if (Exists(separateLibraryPath))
+    {
+        injectionPath = separateLibraryPath;
+        const std::wstring companionPaths[] = {
+            Combine(gameRoot, L"bf42++.exe"),
+            Combine(gameRoot, L"bf42++BlackScreen.exe")};
+        for (const std::wstring& companionPath : companionPaths)
+        {
+            if (!Exists(companionPath))
+            {
+                fwprintf(
+                    stderr,
+                    L"[WARN] Optional BF42++ companion is missing: %ls. BFVR only injects bf42++.dll and will continue.\n",
+                    companionPath.c_str());
+            }
+        }
+        return true;
+    }
+
+    constexpr wchar_t message[] =
+        L"BFVR could not find a usable BF42++ installation.\n\n"
+        L"Install current BF42++ beside BF1942.exe, or use a game package that already includes a recognized BF42++ dsound.dll proxy, then start BFVR again.";
+    fwprintf(stderr, L"[BLOCKED] %ls\n", message);
+    if (showDialog)
+    {
+        MessageBoxW(nullptr, message, L"BFVR requires BF42++", MB_OK | MB_ICONERROR);
+    }
+    return false;
 }
 
 bool InjectLibrary(HANDLE process, const std::wstring& clientPath, DWORD& remoteModuleBase)
@@ -1132,82 +1174,120 @@ bool SetPlayerEnvironment(
     return true;
 }
 
-class IntroMovieSuspension
+class StartupMovieSuspension
 {
 public:
     bool Suspend(const std::wstring& gameRoot)
     {
-        sourcePath_ = Combine(gameRoot, L"Movies\\Intro.bik");
-        disabledPath_ = sourcePath_ + L".bfvr-disabled";
-        const bool sourceExists = Exists(sourcePath_);
-        const bool disabledExists = Exists(disabledPath_);
-        if (sourceExists && disabledExists)
+        constexpr std::array<const wchar_t*, 4> movieNames = {
+            L"Dice.bik",
+            L"EA.bik",
+            L"Intro.bik",
+            L"Legal.bik"};
+        movies_.clear();
+        movies_.reserve(movieNames.size());
+
+        // Check every movie before moving any of them. This avoids beginning a
+        // launch with a partly disabled startup sequence when one path is
+        // already ambiguous.
+        for (const wchar_t* movieName : movieNames)
         {
-            fwprintf(
-                stderr,
-                L"[FAIL] Both Movies\\Intro.bik and Intro.bik.bfvr-disabled exist. BFVR left both untouched; move or rename the extra .bfvr-disabled file, then try again.\n");
-            return false;
+            Movie movie = {};
+            movie.sourcePath = Combine(
+                gameRoot,
+                std::wstring(L"Movies\\") + movieName);
+            movie.disabledPath = movie.sourcePath + L".bfvr-disabled";
+            const bool sourceExists = Exists(movie.sourcePath);
+            const bool disabledExists = Exists(movie.disabledPath);
+            if (sourceExists && disabledExists)
+            {
+                fwprintf(
+                    stderr,
+                    L"[FAIL] Both Movies\\%ls and %ls.bfvr-disabled exist. BFVR left every startup movie untouched; move or rename the extra .bfvr-disabled file, then try again.\n",
+                    movieName,
+                    movieName);
+                return false;
+            }
+            if (sourceExists || disabledExists)
+            {
+                movie.recovered = !sourceExists && disabledExists;
+                movies_.push_back(std::move(movie));
+            }
         }
-        if (!sourceExists && disabledExists)
+
+        for (Movie& movie : movies_)
         {
-            suspended_ = true;
-            AppendLoaderLog(
-                L"Recovered ownership of an Intro.bik.bfvr-disabled file left by an interrupted earlier BFVR launch; it will be restored when this run ends.");
-            return true;
+            if (movie.recovered)
+            {
+                movie.suspended = true;
+                continue;
+            }
+            if (!MoveFileExW(
+                    movie.sourcePath.c_str(),
+                    movie.disabledPath.c_str(),
+                    MOVEFILE_WRITE_THROUGH))
+            {
+                fwprintf(
+                    stderr,
+                    L"[FAIL] BFVR could not temporarily disable %ls (error=%lu). Any earlier startup movies from this attempt will be restored before BFVR exits.\n",
+                    movie.sourcePath.c_str(),
+                    GetLastError());
+                return false;
+            }
+            movie.suspended = true;
         }
-        if (!sourceExists)
-        {
-            return true;
-        }
-        if (!MoveFileExW(
-                sourcePath_.c_str(),
-                disabledPath_.c_str(),
-                MOVEFILE_WRITE_THROUGH))
-        {
-            fwprintf(
-                stderr,
-                L"[FAIL] BFVR could not temporarily disable Movies\\Intro.bik (error=%lu). No game file was overwritten.\n",
-                GetLastError());
-            return false;
-        }
-        suspended_ = true;
         return true;
     }
 
-    ~IntroMovieSuspension()
+    ~StartupMovieSuspension()
     {
         Restore();
     }
 
 private:
+    struct Movie
+    {
+        std::wstring sourcePath;
+        std::wstring disabledPath;
+        bool suspended = false;
+        bool recovered = false;
+    };
+
     void Restore() noexcept
     {
-        if (!suspended_ || disabledPath_.empty() || sourcePath_.empty())
+        for (auto iterator = movies_.rbegin(); iterator != movies_.rend(); ++iterator)
         {
-            return;
-        }
-        if (Exists(sourcePath_))
-        {
-            fwprintf(
-                stderr,
-                L"[WARN] BFVR did not restore Intro.bik because that path already exists. Your original remains at Movies\\Intro.bik.bfvr-disabled.\n");
-            return;
-        }
-        if (!MoveFileExW(
-                disabledPath_.c_str(),
-                sourcePath_.c_str(),
-                MOVEFILE_WRITE_THROUGH))
-        {
-            fwprintf(
-                stderr,
-                L"[WARN] BFVR could not restore Movies\\Intro.bik (error=%lu). Rename Intro.bik.bfvr-disabled to Intro.bik manually.\n",
-                GetLastError());
+            Movie& movie = *iterator;
+            if (!movie.suspended)
+            {
+                continue;
+            }
+            if (Exists(movie.sourcePath))
+            {
+                fwprintf(
+                    stderr,
+                    L"[WARN] BFVR did not restore %ls because that path already exists. Your original remains at %ls.\n",
+                    movie.sourcePath.c_str(),
+                    movie.disabledPath.c_str());
+                continue;
+            }
+            if (!MoveFileExW(
+                    movie.disabledPath.c_str(),
+                    movie.sourcePath.c_str(),
+                    MOVEFILE_WRITE_THROUGH))
+            {
+                fwprintf(
+                    stderr,
+                    L"[WARN] BFVR could not restore %ls (error=%lu). Rename %ls to %ls manually.\n",
+                    movie.sourcePath.c_str(),
+                    GetLastError(),
+                    movie.disabledPath.c_str(),
+                    movie.sourcePath.c_str());
+            }
         }
     }
 
-    std::wstring sourcePath_;
-    std::wstring disabledPath_;
-    bool suspended_ = false;
+    std::vector<Movie> movies_;
 };
 } // namespace
 
@@ -1230,7 +1310,8 @@ int wmain(int argc, wchar_t* argv[])
         options.d3d8StereoFramePresentationProbe;
 
     const std::wstring executablePath = Combine(options.gameRoot, L"BF1942.exe");
-    const std::wstring bf42PlusPlusPath = Combine(options.gameRoot, L"bf42++.dll");
+    std::wstring bf42PlusPlusPath = Combine(options.gameRoot, L"bf42++.dll");
+    bool bf42PlusPlusProxySelected = false;
     const std::wstring activeClientPath = options.d3d8To9FlatProbe
         ? Combine(
             ParentDirectory(options.clientPath),
@@ -1244,7 +1325,11 @@ int wmain(int argc, wchar_t* argv[])
     }
     if (options.bf42PlusPlus)
     {
-        if (!ValidatePlayerBf42PlusPlus(options.gameRoot, !options.dryRun))
+        if (!ValidatePlayerBf42PlusPlus(
+                options.gameRoot,
+                !options.dryRun,
+                bf42PlusPlusPath,
+                bf42PlusPlusProxySelected))
         {
             return 2;
         }
@@ -1301,8 +1386,9 @@ int wmain(int argc, wchar_t* argv[])
         return 0;
     }
 
-    IntroMovieSuspension introMovie;
+    StartupMovieSuspension startupMovies;
     if (options.bf42PlusPlus &&
+        !bf42PlusPlusProxySelected &&
         !SetEnvironmentVariableW(L"BF42PLUSPLUS_INJECTED", L"1"))
     {
         fwprintf(
@@ -1313,14 +1399,14 @@ int wmain(int argc, wchar_t* argv[])
     }
     if (options.playerLaunch &&
         (!SetPlayerEnvironment(payloadDirectory) ||
-         !introMovie.Suspend(options.gameRoot)))
+         !startupMovies.Suspend(options.gameRoot)))
     {
         return 2;
     }
 
-    if (options.bf42PlusPlus)
+    if (options.bf42PlusPlus && !bf42PlusPlusProxySelected)
     {
-        wprintf(L"BFVR 1.0.0 is starting Battlefield 1942 in VR.\n");
+        wprintf(L"BFVR 1.0.1 is starting Battlefield 1942 in VR.\n");
         wprintf(L"Developer diagnostics are off. Close Battlefield 1942 normally to end BFVR.\n");
     }
 
@@ -1333,7 +1419,7 @@ int wmain(int argc, wchar_t* argv[])
     std::vector<wchar_t> mutableCommandLine(commandLine.begin(), commandLine.end());
     ResetLoaderLog();
     AppendLoaderLog(options.playerLaunch
-            ? L"Starting BFVR 1.0.0 with player diagnostics disabled."
+            ? L"Starting BFVR 1.0.1 with player diagnostics disabled."
             : options.weaponMotionProbe
             ? L"Starting the opt-in OpenXR right-hand 6DOF weapon presentation and rendered-weapon-directed local-infantry fire overlays."
             : options.runUntilStopped
@@ -1733,7 +1819,7 @@ int wmain(int argc, wchar_t* argv[])
             }
         }
     }
-    if (options.bf42PlusPlus)
+    if (options.bf42PlusPlus && !bf42PlusPlusProxySelected)
     {
         DWORD bf42PlusPlusModuleBase = 0;
         if (!InjectLibrary(
@@ -1750,6 +1836,11 @@ int wmain(int argc, wchar_t* argv[])
             return 2;
         }
         AppendLoaderLog(L"Injected the separately installed bf42++.dll into the suspended BF1942.exe process before BFVRClient.dll.");
+    }
+    else if (options.bf42PlusPlus)
+    {
+        AppendLoaderLog(
+            L"Left the structurally recognized bundled BF42++ dsound.dll proxy on its normal Battlefield/DirectSound loading path; no additional BF42++ copy was injected.");
     }
     DWORD remoteModuleBase = 0;
     const bool injected = InjectLibrary(processInfo.hProcess, activeClientPath, remoteModuleBase);
@@ -2019,6 +2110,7 @@ int wmain(int argc, wchar_t* argv[])
                 DWORD successorModuleBase = 0;
                 const bool injectedSuccessor =
                     (!options.bf42PlusPlus ||
+                     bf42PlusPlusProxySelected ||
                      InjectLibrary(
                          successor.handle,
                          bf42PlusPlusPath,

@@ -179,9 +179,15 @@ buttons above:
   latter halves physical travel relative to the initial headset build. A future
   in-game VR settings menu is intended to expose horizontal/vertical inversion
   and sensitivity.
-- Aircraft: left Y is proportional throttle, left X is roll, right X is yaw,
-  and right Y is pitch. Stick up uses BF1942's positive pitch/dive direction;
-  stick down climbs.
+- Aircraft defaults to left Y throttle, left X roll, right X yaw, and right Y
+  pitch. The saved Controls option `Aircraft Pitch + Roll on Same Stick` pairs
+  roll with pitch and moves yaw to the other stick. `Swap Aircraft Sticks`
+  exchanges the complete pitch-stick and throttle-stick roles between the left and right
+  controllers. Together these two independent options allow pitch/yaw or
+  pitch/roll on either physical stick. `Flight Pitch (Invert Vertical Stick)`
+  only reverses the chosen pitch stick's vertical direction. With inversion
+  off, stick up uses BF1942's positive pitch/dive direction and stick down
+  climbs.
 
 The switch uses BF1942's current-versus-default control-object relation, not a
 null pointer or configurable key binding. A soldier is the default

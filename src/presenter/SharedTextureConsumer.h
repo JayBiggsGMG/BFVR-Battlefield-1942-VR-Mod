@@ -39,7 +39,12 @@ public:
         LONG frameOverlayFlags = 0,
         bool depthValid = false,
         const SharedDepthFrameParameters* depthFrame = nullptr,
-        bool waterMaskValid = false);
+        bool waterMaskValid = false,
+        bool deferLegacyCompletion = false);
+    // Completes a legacy D3D9-handle read deferred by ConsumeFrame. The game
+    // producer remains blocked until the presenter calls this after OpenXR has
+    // queued/submitted its dependent swapchain copies.
+    bool CompleteFrameConsumption();
     [[nodiscard]] OpenXRPresentationTextures GetLocalTextures() const noexcept;
     bool ReadCenterPixels(DWORD* pixels, std::size_t count);
     void Shutdown();
@@ -106,6 +111,10 @@ private:
     bool ambientOcclusionEnabled_ = false;
     bool screenSpaceGlobalIlluminationEnabled_ = false;
     bool waterReflectionsEnabled_ = false;
+    bool deferredLegacyCompletionPending_ = false;
+    bool deferredAmbientOcclusionTiming_ = false;
+    bool deferredScreenSpaceGlobalIlluminationTiming_ = false;
+    bool deferredBloomTiming_ = false;
     float ambientOcclusionIntensity_ = 1.0F;
     float ambientOcclusionRadiusMeters_ = 0.60F;
     LONG ambientOcclusionFrameFailures_ = 0;

@@ -233,7 +233,7 @@ bool TestProductionSeedAndTypedValues(const std::wstring& directory)
     }
     const auto defaults = store.Defaults();
     const auto decodedDefaults = bfvr::settings::DecodeUserSettings(defaults);
-    if (defaults.values.size() != 25 ||
+    if (defaults.values.size() != 27 ||
         decodedDefaults.playMode != bfvr::settings::PlayMode::Seated ||
         decodedDefaults.artificialTurnMode !=
             bfvr::settings::ArtificialTurnMode::Smooth ||
@@ -245,6 +245,8 @@ bool TestProductionSeedAndTypedValues(const std::wstring& directory)
         decodedDefaults.comfortVignetteEnabled ||
         decodedDefaults.infantryTurnSpeedPercent != 200 ||
         decodedDefaults.invertFlightPitch ||
+        decodedDefaults.aircraftPitchWithRoll ||
+        decodedDefaults.swapAircraftSticks ||
         !decodedDefaults.invertTurretPitch ||
         decodedDefaults.invertTurretYaw ||
         !decodedDefaults.controllerHapticsEnabled ||
@@ -296,6 +298,8 @@ bool TestProductionSeedAndTypedValues(const std::wstring& directory)
     changed.standingEyeHeightCentimeters = 182;
     changed.comfortVignetteEnabled = false;
     changed.invertFlightPitch = true;
+    changed.aircraftPitchWithRoll = true;
+    changed.swapAircraftSticks = true;
     changed.invertTurretPitch = true;
     changed.invertTurretYaw = true;
     changed.controllerHapticsEnabled = false;
@@ -363,6 +367,12 @@ bool TestProductionSeedAndTypedValues(const std::wstring& directory)
         contents.find("does not affect vehicles, aircraft, turrets") !=
             std::string::npos &&
         contents.find("invert_flight_pitch = true") != std::string::npos &&
+        contents.find("aircraft_pitch_with_roll = true") !=
+            std::string::npos &&
+        contents.find("swap_aircraft_sticks = true") !=
+            std::string::npos &&
+        contents.find("pitch with roll") !=
+            std::string::npos &&
         contents.find("including right-stick and right-grip motion aim") !=
             std::string::npos &&
         contents.find("controller_haptics_enabled = false") !=

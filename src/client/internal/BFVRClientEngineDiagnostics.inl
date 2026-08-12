@@ -934,6 +934,23 @@ HRESULT WINAPI HookCreateDevice(
         return E_FAIL;
     }
 
+    const bfvr::BF1942FrameLimiterOverrideResult limiterBefore =
+        bfvr::ApplyRequestedBF1942FrameLimiterOverride(
+            GetModuleHandleW(nullptr));
+    if (limiterBefore.status !=
+            bfvr::BF1942FrameLimiterOverrideStatus::NotRequested &&
+        limiterBefore.status !=
+            bfvr::BF1942FrameLimiterOverrideStatus::AlreadyApplied)
+    {
+        AppendLog(
+            L"BFVR-only renderer.lockFPS -1 before CreateDevice: %s (ownerSlot=%p value=%p previous=%.3f).",
+            bfvr::DescribeBF1942FrameLimiterOverrideStatus(
+                limiterBefore.status),
+            reinterpret_cast<void*>(limiterBefore.ownerPointerAddress),
+            reinterpret_cast<void*>(limiterBefore.valueAddress),
+            static_cast<double>(limiterBefore.previousValue));
+    }
+
     const HRESULT result = g_originalCreateDevice(
         direct3D,
         adapter,
@@ -942,6 +959,23 @@ HRESULT WINAPI HookCreateDevice(
         behaviorFlags,
         presentationParameters,
         returnedDevice);
+
+    const bfvr::BF1942FrameLimiterOverrideResult limiterAfter =
+        bfvr::ApplyRequestedBF1942FrameLimiterOverride(
+            GetModuleHandleW(nullptr));
+    if (limiterAfter.status !=
+            bfvr::BF1942FrameLimiterOverrideStatus::NotRequested &&
+        limiterAfter.status !=
+            bfvr::BF1942FrameLimiterOverrideStatus::AlreadyApplied)
+    {
+        AppendLog(
+            L"BFVR-only renderer.lockFPS -1 after CreateDevice: %s (ownerSlot=%p value=%p previous=%.3f).",
+            bfvr::DescribeBF1942FrameLimiterOverrideStatus(
+                limiterAfter.status),
+            reinterpret_cast<void*>(limiterAfter.ownerPointerAddress),
+            reinterpret_cast<void*>(limiterAfter.valueAddress),
+            static_cast<double>(limiterAfter.previousValue));
+    }
 
     const void* device = returnedDevice == nullptr ? nullptr : *returnedDevice;
     if (presentationParameters == nullptr)
@@ -1041,7 +1075,41 @@ void* WINAPI HookDirect3DCreate8(UINT sdkVersion)
         return nullptr;
     }
 
+    const bfvr::BF1942FrameLimiterOverrideResult limiterBefore =
+        bfvr::ApplyRequestedBF1942FrameLimiterOverride(
+            GetModuleHandleW(nullptr));
+    if (limiterBefore.status !=
+            bfvr::BF1942FrameLimiterOverrideStatus::NotRequested &&
+        limiterBefore.status !=
+            bfvr::BF1942FrameLimiterOverrideStatus::AlreadyApplied)
+    {
+        AppendLog(
+            L"BFVR-only renderer.lockFPS -1 before Direct3DCreate8: %s (ownerSlot=%p value=%p previous=%.3f).",
+            bfvr::DescribeBF1942FrameLimiterOverrideStatus(
+                limiterBefore.status),
+            reinterpret_cast<void*>(limiterBefore.ownerPointerAddress),
+            reinterpret_cast<void*>(limiterBefore.valueAddress),
+            static_cast<double>(limiterBefore.previousValue));
+    }
+
     void* direct3D = g_originalDirect3DCreate8(sdkVersion);
+
+    const bfvr::BF1942FrameLimiterOverrideResult limiterAfter =
+        bfvr::ApplyRequestedBF1942FrameLimiterOverride(
+            GetModuleHandleW(nullptr));
+    if (limiterAfter.status !=
+            bfvr::BF1942FrameLimiterOverrideStatus::NotRequested &&
+        limiterAfter.status !=
+            bfvr::BF1942FrameLimiterOverrideStatus::AlreadyApplied)
+    {
+        AppendLog(
+            L"BFVR-only renderer.lockFPS -1 after Direct3DCreate8: %s (ownerSlot=%p value=%p previous=%.3f).",
+            bfvr::DescribeBF1942FrameLimiterOverrideStatus(
+                limiterAfter.status),
+            reinterpret_cast<void*>(limiterAfter.ownerPointerAddress),
+            reinterpret_cast<void*>(limiterAfter.valueAddress),
+            static_cast<double>(limiterAfter.previousValue));
+    }
     AppendLog(L"Direct3DCreate8 sdkVersion=%u returned=%p.", sdkVersion, direct3D);
     ArmCreateDeviceHardwareBreakpoint(direct3D);
     if constexpr (kEnableCameraTransactionBreakpoints)

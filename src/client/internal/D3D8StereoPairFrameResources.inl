@@ -48,6 +48,8 @@ void ReleaseFrameOwnedResources()
         }
     }
     InterlockedExchange(&g_frame.resourcesReady, 0);
+    g_uiColorInitialized = false;
+    g_uiColorClearPending = true;
 }
 
 bool CreateAndClearFrameResources(void* device, const DrawStateSnapshot& snapshot)
@@ -201,6 +203,20 @@ bool CreateAndClearFrameResources(void* device, const DrawStateSnapshot& snapsho
         }
         if (cleared)
         {
+            // Only the state-0 Battlefield frontend retains its backbuffer and
+            // redraws changed controls. Ready/deploy and the in-game Ref2 HUD
+            // contain moving translucent elements that must start from
+            // transparent every frame.
+            const bool clearMenuColor =
+                !g_uiColorInitialized ||
+                g_uiColorClearPending ||
+                !g_retainNativeMenuColor;
+            const DWORD menuClearFlags =
+                kD3DClearZBuffer |
+                (HasStencil(snapshot.depthDescription.format)
+                    ? kD3DClearStencil
+                    : 0) |
+                (clearMenuColor ? kD3DClearTarget : 0);
             const HRESULT targetResult = g_methods.setRenderTarget(
                 device,
                 g_frame.menuColor,
@@ -213,12 +229,17 @@ bool CreateAndClearFrameResources(void* device, const DrawStateSnapshot& snapsho
                     device,
                     0,
                     nullptr,
-                    clearFlags,
+                    menuClearFlags,
                     kMenuLayerClearColor,
                     1.0F,
                     0)
                 : E_FAIL;
             cleared = SUCCEEDED(clearResult);
+            if (cleared)
+            {
+                g_uiColorInitialized = true;
+                g_uiColorClearPending = false;
+            }
         }
         if (cleared &&
             IsPresentationMode() &&

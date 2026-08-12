@@ -7,6 +7,7 @@
 #include <openxr/openxr.h>
 #include <openxr/openxr_platform.h>
 
+#include "openxr/OpenXRApiVersion.h"
 #include "openxr/OpenXRComfortVignette.h"
 #include "openxr/OpenXRControllerBindingPolicy.h"
 #include "openxr/OpenXRControllerShortcutPolicy.h"
@@ -50,6 +51,7 @@ public:
         PFN_xrGetInstanceProcAddr getInstanceProcAddr = nullptr;
         PFN_xrCreateInstance createInstance = nullptr;
         PFN_xrDestroyInstance destroyInstance = nullptr;
+        PFN_xrGetInstanceProperties getInstanceProperties = nullptr;
         PFN_xrGetSystem getSystem = nullptr;
         PFN_xrStringToPath stringToPath = nullptr;
         PFN_xrPathToString pathToString = nullptr;
@@ -249,7 +251,8 @@ public:
         createInfo.applicationInfo.applicationVersion = 1;
         strcpy_s(createInfo.applicationInfo.engineName, "BFVR");
         createInfo.applicationInfo.engineVersion = 1;
-        createInfo.applicationInfo.apiVersion = XR_CURRENT_API_VERSION;
+        createInfo.applicationInfo.apiVersion =
+            kRequestedOpenXRApiVersion;
         createInfo.enabledExtensionCount = static_cast<uint32_t>(enabledExtensions.size());
         createInfo.enabledExtensionNames = enabledExtensions.empty()
             ? nullptr
@@ -266,11 +269,25 @@ public:
         if (XR_FAILED(createResult) || baselineInstance == XR_NULL_HANDLE)
         {
             WriteLog(
-                L"OpenXR baseline instance creation failed (%s, %ld); flat fallback remains active.",
+                L"OpenXR baseline instance creation with requested API %u.%u.%u failed (%s, %ld); flat fallback remains active.",
+                static_cast<unsigned>(XR_VERSION_MAJOR(
+                    kRequestedOpenXRApiVersion)),
+                static_cast<unsigned>(XR_VERSION_MINOR(
+                    kRequestedOpenXRApiVersion)),
+                static_cast<unsigned>(XR_VERSION_PATCH(
+                    kRequestedOpenXRApiVersion)),
                 DescribeOpenXRResult(createResult),
                 static_cast<long>(createResult));
             return false;
         }
+        WriteLog(
+            L"OpenXR baseline instance created with requested API %u.%u.%u.",
+            static_cast<unsigned>(XR_VERSION_MAJOR(
+                kRequestedOpenXRApiVersion)),
+            static_cast<unsigned>(XR_VERSION_MINOR(
+                kRequestedOpenXRApiVersion)),
+            static_cast<unsigned>(XR_VERSION_PATCH(
+                kRequestedOpenXRApiVersion)));
 
         PFN_xrGetSystem getSystem = nullptr;
         PFN_xrDestroyInstance destroyInstance = nullptr;
@@ -340,6 +357,7 @@ public:
     {
         return
             ResolveInstance("xrDestroyInstance", api.destroyInstance) &&
+            ResolveInstance("xrGetInstanceProperties", api.getInstanceProperties) &&
             ResolveInstance("xrGetSystem", api.getSystem) &&
             ResolveInstance("xrStringToPath", api.stringToPath) &&
             ResolveInstance("xrPathToString", api.pathToString) &&
@@ -1776,7 +1794,8 @@ public:
         const OpenXRPresentationTextures& textures,
         OpenXRUiReferenceMode uiReferenceMode,
         const OpenXRPresentationPose* worldUiAnchor,
-        OpenXRUiPresentationMode uiPresentationMode)
+        OpenXRUiPresentationMode uiPresentationMode,
+        OpenXRSwapchainContentMode swapchainContentMode)
     {
         if (!frameInProgress)
         {
@@ -1793,14 +1812,35 @@ public:
         XrCompositionLayerCylinderKHR cylinderLayer{XR_TYPE_COMPOSITION_LAYER_CYLINDER_KHR};
         std::array<const XrCompositionLayerBaseHeader*, 8> layers = {};
         uint32_t layerCount = 0;
-        bool copiedImages = false;
+        bool imagesReady = false;
         if (pendingFrameState.shouldRender && pendingViewsValid)
         {
-            copiedImages =
-                CopyToSwapchain(eyeSwapchains[0], textures.leftWorld, L"left-world") &&
-                CopyToSwapchain(eyeSwapchains[1], textures.rightWorld, L"right-world") &&
-                CopyToSwapchain(uiSwapchain, textures.ref2Ui, L"Ref2-UI");
-            if (copiedImages)
+            const bool updateSwapchainImages =
+                swapchainContentMode == OpenXRSwapchainContentMode::Update ||
+                !swapchainImagesValid;
+            if (updateSwapchainImages)
+            {
+                imagesReady =
+                    CopyToSwapchain(eyeSwapchains[0], textures.leftWorld, L"left-world") &&
+                    CopyToSwapchain(eyeSwapchains[1], textures.rightWorld, L"right-world") &&
+                    CopyToSwapchain(uiSwapchain, textures.ref2Ui, L"Ref2-UI");
+                swapchainImagesValid = imagesReady;
+            }
+            else
+            {
+                // OpenXR 1.0 explicitly permits xrEndFrame without another
+                // release. Each layer then references the last image released
+                // from its swapchain. Keep new tracking/layer poses while
+                // avoiding three duplicate full-resolution GPU copies.
+                imagesReady = true;
+                if (!swapchainReuseLogged)
+                {
+                    WriteLog(
+                        L"OpenXR repeated-source presentation reuses the last released eye/UI swapchain images while refreshing tracking and layer poses.");
+                    swapchainReuseLogged = true;
+                }
+            }
+            if (imagesReady)
             {
                 projectionLayer.space = trackingBasis.ApplicationSpace();
                 projectionLayer.viewCount = static_cast<uint32_t>(projectionViews.size());
@@ -2009,7 +2049,8 @@ public:
                 textures,
                 uiReferenceMode,
                 worldUiAnchor,
-                uiPresentationMode);
+                uiPresentationMode,
+                OpenXRSwapchainContentMode::Update);
     }
 
     void DestroySwapchain(Swapchain& swapchain)
@@ -2158,6 +2199,8 @@ public:
         pendingViewsValid = false;
         pendingHeadPose = {};
         pendingHeadPoseValid = false;
+        swapchainImagesValid = false;
+        swapchainReuseLogged = false;
         recenterForwardSequence = 0;
         controllerShortcutState = {};
         controllerRecenterPending = false;
@@ -2213,6 +2256,8 @@ public:
     bool frameInProgress = false;
     bool pendingViewsValid = false;
     bool pendingHeadPoseValid = false;
+    bool swapchainImagesValid = false;
+    bool swapchainReuseLogged = false;
     LONG recenterForwardSequence = 0;
     OpenXRControllerShortcutState controllerShortcutState = {};
     bool controllerRecenterPending = false;
@@ -2325,6 +2370,27 @@ bool OpenXRPresentation::Initialize(
     {
         Shutdown();
         return false;
+    }
+
+    XrInstanceProperties instanceProperties{XR_TYPE_INSTANCE_PROPERTIES};
+    result = impl_->api.getInstanceProperties(
+        impl_->instance,
+        &instanceProperties);
+    if (XR_SUCCEEDED(result))
+    {
+        impl_->WriteLog(
+            L"OpenXR active runtime is '%S' version %u.%u.%u.",
+            instanceProperties.runtimeName,
+            static_cast<unsigned>(XR_VERSION_MAJOR(instanceProperties.runtimeVersion)),
+            static_cast<unsigned>(XR_VERSION_MINOR(instanceProperties.runtimeVersion)),
+            static_cast<unsigned>(XR_VERSION_PATCH(instanceProperties.runtimeVersion)));
+    }
+    else
+    {
+        impl_->WriteLog(
+            L"OpenXR active-runtime identity query failed (%s, %ld); presentation will continue.",
+            DescribeOpenXRResult(result),
+            static_cast<long>(result));
     }
 
     XrSystemGetInfo systemInfo{XR_TYPE_SYSTEM_GET_INFO};
@@ -2476,14 +2542,16 @@ bool OpenXRPresentation::EndFrame(
     const OpenXRPresentationTextures& textures,
     OpenXRUiReferenceMode uiReferenceMode,
     const OpenXRPresentationPose* worldUiAnchor,
-    OpenXRUiPresentationMode uiPresentationMode)
+    OpenXRUiPresentationMode uiPresentationMode,
+    OpenXRSwapchainContentMode swapchainContentMode)
 {
     return impl_ != nullptr &&
         impl_->EndFrame(
             textures,
             uiReferenceMode,
             worldUiAnchor,
-            uiPresentationMode);
+            uiPresentationMode,
+            swapchainContentMode);
 }
 stereo::QuickMenuSelection
 OpenXRPresentation::TakeQuickMenuSelection() noexcept

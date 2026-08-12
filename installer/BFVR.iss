@@ -1,7 +1,7 @@
 #define AppName "BFVR"
-#define AppVersion "1.0.0"
+#define AppVersion "1.0.1"
 #ifndef PayloadRoot
-  #define PayloadRoot AddBackslash(SourcePath) + "..\..\build\bfvr-installer-payload-v1.0.0-final\BFVR"
+  #define PayloadRoot AddBackslash(SourcePath) + "..\..\build\bfvr-installer-payload-v1.0.1-test\BFVR"
 #endif
 #ifndef OutputRoot
   #define OutputRoot AddBackslash(SourcePath) + "..\..\build\bfvr-release-output"
@@ -12,12 +12,12 @@ AppId={{1C2646DE-4BFD-4491-B102-7A40AFB0953F}
 AppName={#AppName}
 AppVersion={#AppVersion}
 AppVerName={#AppName} v{#AppVersion}
-VersionInfoVersion=1.0.0.0
-VersionInfoDescription=BFVR v1.0.0 Installer
+VersionInfoVersion=1.0.1.0
+VersionInfoDescription=BFVR v1.0.1 Installer
 DefaultDirName={code:GetDefaultBfvrDirectory}
 DefaultGroupName=BFVR
 OutputDir={#OutputRoot}
-OutputBaseFilename=BFVR-Setup-v1.0.0
+OutputBaseFilename=BFVR-Setup-v1.0.1
 SetupIconFile=..\assets\BFVR.ico
 UninstallDisplayIcon={app}\BFVR.exe
 ArchitecturesAllowed=x64compatible
@@ -71,15 +71,22 @@ begin
   Result := FileExists(AddBackslash(Candidate) + 'BF1942.exe');
 end;
 
-procedure ShowBf42PlusPlusRequired();
+procedure ShowBf42PlusPlusWarning(const BundledProxyPresent: Boolean);
 var
   ErrorCode: Integer;
+  Detail: String;
 begin
+  if BundledProxyPresent then
+    Detail :=
+      'Setup found dsound.dll. BFVR will inspect it when launched and will use it directly only if it is structurally recognized as a BF42++ proxy.'
+  else
+    Detail :=
+      'Setup did not find bf42++.dll or dsound.dll. Installation may continue, but BFVR cannot start until compatible BF42++ files are available.';
   if MsgBox(
-       'BFVR requires the complete official BF42++ installation beside BF1942.exe.' + #13#10 + #13#10 +
-       'Extract the BF42++ package without renaming its files. BF42++ is a separate download and is not included with BFVR.' + #13#10 + #13#10 +
+       Detail + #13#10 + #13#10 +
+       'BF42++ is a separate project and is not included with BFVR. Do not add a second copy if this game package already includes BF42++ as dsound.dll.' + #13#10 + #13#10 +
        'Open the official BF42++ download page now?',
-       mbError,
+       mbInformation,
        MB_YESNO) = IDYES then
     ShellExec(
       '',
@@ -155,14 +162,9 @@ begin
     exit;
   end;
 
-  if (not FileExists(AddBackslash(GameRoot) + 'bf42++.exe')) or
-     (not FileExists(AddBackslash(GameRoot) + 'bf42++.dll')) or
-     (not FileExists(AddBackslash(GameRoot) + 'bf42++BlackScreen.exe')) then
-  begin
-    ShowBf42PlusPlusRequired();
-    Result := False;
-    exit;
-  end;
+  if not FileExists(AddBackslash(GameRoot) + 'bf42++.dll') then
+    ShowBf42PlusPlusWarning(
+      FileExists(AddBackslash(GameRoot) + 'dsound.dll'));
 
 end;
 

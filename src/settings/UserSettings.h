@@ -92,6 +92,8 @@ struct UserSettingsValues
         kDefaultStandingEyeHeightCentimeters;
     bool comfortVignetteEnabled = false;
     bool invertFlightPitch = false;
+    bool aircraftPitchWithRoll = false;
+    bool swapAircraftSticks = false;
     bool invertTurretPitch = true;
     bool invertTurretYaw = false;
     bool controllerHapticsEnabled = true;

@@ -13,6 +13,9 @@ volatile LONG g_managedTranslationFailures = 0;
 volatile LONG g_resetCalls = 0;
 volatile LONG g_lastResetResult = E_PENDING;
 volatile LONG g_forcedWindowedConversions = 0;
+volatile LONG g_primaryPresentationWidth = 0;
+volatile LONG g_primaryPresentationHeight = 0;
+volatile LONG g_primaryPresentationGeneration = 0;
 
 LONG ReadCounter(volatile LONG* counter) noexcept
 {
@@ -49,6 +52,12 @@ extern "C" HRESULT WINAPI BFVRD3D8To9GetRuntimeDiagnostics(
 		static_cast<HRESULT>(ReadCounter(&g_lastResetResult));
 	snapshot.forcedWindowedConversions =
 		ReadCounter(&g_forcedWindowedConversions);
+	snapshot.primaryPresentationWidth =
+		ReadCounter(&g_primaryPresentationWidth);
+	snapshot.primaryPresentationHeight =
+		ReadCounter(&g_primaryPresentationHeight);
+	snapshot.primaryPresentationGeneration =
+		ReadCounter(&g_primaryPresentationGeneration);
 	*diagnostics = snapshot;
 	return S_OK;
 }
@@ -91,6 +100,31 @@ void BFVRD3D8To9RecordReset(HRESULT result) noexcept
 {
 	InterlockedExchange(&g_lastResetResult, result);
 	InterlockedIncrement(&g_resetCalls);
+}
+
+void BFVRD3D8To9RecordPrimaryPresentation(
+	const void* presentParameters,
+	HRESULT result) noexcept
+{
+	if (FAILED(result) || presentParameters == nullptr)
+		return;
+
+	const auto& parameters =
+		*static_cast<const D3DPRESENT_PARAMETERS*>(presentParameters);
+	if (parameters.BackBufferWidth == 0 ||
+		parameters.BackBufferHeight == 0)
+	{
+		return;
+	}
+
+	InterlockedExchange(
+		&g_primaryPresentationWidth,
+		static_cast<LONG>(parameters.BackBufferWidth));
+	InterlockedExchange(
+		&g_primaryPresentationHeight,
+		static_cast<LONG>(parameters.BackBufferHeight));
+	MemoryBarrier();
+	InterlockedIncrement(&g_primaryPresentationGeneration);
 }
 
 void BFVRD3D8To9AdjustPresentParameters(

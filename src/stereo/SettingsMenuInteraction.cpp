@@ -249,8 +249,8 @@ SettingsMenuSelection SettingsMenuSelectionAt(
         {
             if (pixelX >= kSettingsMenuControlColumnPixels &&
                 pixelX <= kSettingsMenuControlColumnPixels + 72.0F &&
-                pixelY >= kSettingsMenuControlsToggleRowCentersPixels[index] - 32.0F &&
-                pixelY <= kSettingsMenuControlsToggleRowCentersPixels[index] + 32.0F)
+                pixelY >= kSettingsMenuControlsToggleRowCentersPixels[index] - 26.0F &&
+                pixelY <= kSettingsMenuControlsToggleRowCentersPixels[index] + 26.0F)
             {
                 return static_cast<SettingsMenuSelection>(
                     static_cast<std::uint32_t>(
@@ -348,6 +348,10 @@ const wchar_t* SettingsMenuSelectionName(
         return L"Controller Haptics";
     case SettingsMenuSelection::SniperScopeSmoothingEnabled:
         return L"Sniper Aim Smoothing";
+    case SettingsMenuSelection::AircraftPitchWithRoll:
+        return L"Aircraft Pitch and Roll on Same Stick";
+    case SettingsMenuSelection::SwapAircraftSticks:
+        return L"Swap Aircraft Sticks";
     case SettingsMenuSelection::FxaaEnabled: return L"FXAA";
     case SettingsMenuSelection::FxaaSharpening:
         return L"FXAA Sharpening slider";
@@ -840,6 +844,16 @@ void SettingsMenuInteraction::Activate(
     case SettingsMenuSelection::SniperScopeSmoothingEnabled:
         values_.sniperScopeSmoothingEnabled =
             !values_.sniperScopeSmoothingEnabled;
+        valuesChanged_ = true;
+        status_ = SettingsMenuStatus::SettingsNotSaved;
+        break;
+    case SettingsMenuSelection::AircraftPitchWithRoll:
+        values_.aircraftPitchWithRoll = !values_.aircraftPitchWithRoll;
+        valuesChanged_ = true;
+        status_ = SettingsMenuStatus::SettingsNotSaved;
+        break;
+    case SettingsMenuSelection::SwapAircraftSticks:
+        values_.swapAircraftSticks = !values_.swapAircraftSticks;
         valuesChanged_ = true;
         status_ = SettingsMenuStatus::SettingsNotSaved;
         break;

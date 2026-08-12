@@ -68,6 +68,7 @@ constexpr BYTE kBfMenuPlayHudMouseOverPrefix[] = {
     0x8B, 0xC8, 0xFF, 0x52, 0x0C, 0x85, 0xC0, 0x74,
     0x09, 0x8B, 0x10, 0x6A, 0x03};
 volatile LONG g_nativeMenuActiveState = 0;
+volatile LONG g_nativeMenuActiveIndex = -1;
 volatile LONG g_mainMenuOverlayAvailable = 0;
 volatile LONG g_mainMenuOverlayVisible = 0;
 volatile LONG g_mainMenuOverlayHovered = 0;
@@ -370,6 +371,7 @@ public:
         }
         InterlockedCompareExchangePointer(&active, nullptr, this);
         InterlockedExchange(&g_nativeMenuActiveState, 0);
+        InterlockedExchange(&g_nativeMenuActiveIndex, -1);
         InterlockedExchange(&g_mainMenuOverlayVisible, 0);
         InterlockedExchange(&g_mainMenuOverlayHovered, 0);
         InterlockedExchange(&g_mainMenuOverlayAvailable, 0);
@@ -802,6 +804,9 @@ private:
             &g_nativeMenuActiveState,
             nativeMenuActive ? 1 : 0);
         InterlockedExchange(
+            &g_nativeMenuActiveIndex,
+            nativeMenuActive ? activeIndex : -1);
+        InterlockedExchange(
             &g_mainMenuOverlayVisible,
             battlefieldMainMenu ? 1 : 0);
         InterlockedExchange(
@@ -1012,6 +1017,14 @@ bool IsMenuPointerOverlayActive() noexcept
         &g_nativeMenuActiveState,
         0,
         0) != 0;
+}
+
+bool ShouldRetainNativeMenuColor() noexcept
+{
+    return InterlockedCompareExchange(
+        &g_nativeMenuActiveIndex,
+        0,
+        0) == kBfMenuBattlefieldState;
 }
 
 MainMenuOverlayInteractionState

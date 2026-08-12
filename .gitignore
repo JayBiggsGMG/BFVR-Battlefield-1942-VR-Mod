@@ -1,5 +1,6 @@
 # Local build products and runtime diagnostics.  Source, profiles, documents,
 # licenses, and the packaged OpenXR runtime loader remain versioned.
+/build/
 /BFVRClient.dll
 /BFVR.exe
 /BFVRLoader.exe

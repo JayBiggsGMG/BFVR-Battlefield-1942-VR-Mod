@@ -229,7 +229,7 @@ bool SettingsMenuArt::InitializeFromDirectory(
         return false;
     }
     WriteLog(
-        L"VR Settings menu loaded its authored layer stack and reusable slider, checkbox, number-box, and white-button controls from %s.",
+        L"VR Settings menu loaded its authored layer stack and reusable slider, checkbox, number-box, and white-button controls from %s. Controls schema=aircraft-layout-v2 (Aircraft Pitch + Roll on Same Stick and Swap Aircraft Sticks).",
         settingsDirectory.c_str());
     return true;
 }
@@ -633,9 +633,9 @@ bool SettingsMenuArt::DrawStatusField(
     stereo::SettingsMenuStatus status) const
 {
     constexpr int left = 64;
-    constexpr int top = 858;
+    constexpr int top = 870;
     constexpr int width = 470;
-    constexpr int height = 60;
+    constexpr int height = 48;
     constexpr int border = 3;
     for (int y = 0; y < height; ++y)
     {
@@ -1154,9 +1154,9 @@ bool SettingsMenuArt::ComposeSettingsBody(
             stereo::SettingsMenuSelection::MountedCrosshairNext) ||
         !DrawWhiteText(
             destination,
-            L"Aim, Feedback & Vehicle Inversion:",
+            L"Aircraft, Aim & Feedback:",
             82,
-            495,
+            452,
             460,
             52,
             27,
@@ -1164,14 +1164,18 @@ bool SettingsMenuArt::ComposeSettingsBody(
     {
         return false;
     }
-    constexpr std::array<const wchar_t*, 5> labels = {
+    constexpr std::array<const wchar_t*, 7> labels = {
         L"Flight Pitch (Invert Vertical Stick)",
+        L"Aircraft Pitch + Roll on Same Stick",
+        L"Swap Aircraft Sticks",
         L"Turret Pitch (Up/Down)",
         L"Turret Yaw (Left/Right)",
         L"Controller Haptics",
         L"Sniper Aim Smoothing"};
-    const std::array<bool, 5> checked = {
+    const std::array<bool, 7> checked = {
         state.values.invertFlightPitch,
+        state.values.aircraftPitchWithRoll,
+        state.values.swapAircraftSticks,
         state.values.invertTurretPitch,
         state.values.invertTurretYaw,
         state.values.controllerHapticsEnabled,
@@ -1184,13 +1188,13 @@ bool SettingsMenuArt::ComposeSettingsBody(
                 destination,
                 labels[index],
                 82,
-                centerY - 36,
+                centerY - 25,
                 450,
-                72,
+                50,
                 27,
                 DT_LEFT | DT_SINGLELINE | DT_VCENTER) ||
             !CompositeLayerAt(
-                checkBox_, destination, controlLeft, centerY - 32, 64, 64))
+                checkBox_, destination, controlLeft + 6, centerY - 26, 52, 52))
         {
             return false;
         }
@@ -1198,10 +1202,10 @@ bool SettingsMenuArt::ComposeSettingsBody(
             !CompositeLayerAt(
                 whiteButton_,
                 destination,
-                controlLeft + 8,
-                centerY - 24,
-                48,
-                48))
+                controlLeft + 13,
+                centerY - 19,
+                38,
+                38))
         {
             return false;
         }

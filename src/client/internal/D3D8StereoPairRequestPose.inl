@@ -22,6 +22,13 @@ bool ReadKeepOriginalFlatBackbuffer()
 void PrepareRuntimeRenderRequestPose()
 {
     const bool nativeMenuActive = bfvr::IsMenuPointerOverlayActive();
+    const bool retainNativeMenuColor =
+        bfvr::ShouldRetainNativeMenuColor();
+    if (nativeMenuActive != g_nativeMenuActive ||
+        retainNativeMenuColor != g_retainNativeMenuColor)
+    {
+        g_uiColorClearPending = true;
+    }
     bfvr::stereo::Pose rawMenuWorldAnchor = {};
     bool rawMenuWorldAnchorValid = false;
     g_frameUiPlacement = {};
@@ -86,6 +93,7 @@ void PrepareRuntimeRenderRequestPose()
         bfvr::ClearActiveMenuWorldAnchor();
     }
     g_nativeMenuActive = nativeMenuActive;
+    g_retainNativeMenuColor = retainNativeMenuColor;
 
     const bfvr::D3D8RuntimeView currentHead =
         bfvr::MakeD3D8RuntimeHeadReference(g_runtimeRenderRequest);

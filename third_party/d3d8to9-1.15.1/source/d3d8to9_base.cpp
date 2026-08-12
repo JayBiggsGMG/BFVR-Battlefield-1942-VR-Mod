@@ -228,6 +228,8 @@ HRESULT STDMETHODCALLTYPE Direct3D8::CreateDevice(UINT Adapter, D3DDEVTYPE Devic
 	if (FAILED(hr))
 		return hr;
 
+	BFVRD3D8To9RecordPrimaryPresentation(&PresentParams, hr);
+
 	*ppReturnedDeviceInterface = new Direct3DDevice8(this, DeviceInterface, BehaviorFlags, PresentParams.EnableAutoDepthStencil ? PresentParams.AutoDepthStencilFormat : D3DFMT_UNKNOWN, (PresentParams.Flags & D3DPRESENTFLAG_DISCARD_DEPTHSTENCIL) != 0, IsExtendedDevice);
 
 	// Set default vertex declaration
