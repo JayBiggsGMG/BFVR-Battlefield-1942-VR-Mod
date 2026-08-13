@@ -31,7 +31,8 @@ a shorter version of the same information.
 - Exact scoped hit feedback now follows the selected **3D Crosshair Color**.
   BFVR temporarily synchronizes BF1942's native crosshair color while scoped
   and restores the original flat-game color afterward; scope artwork and
-  saved profile files are unchanged.
+  saved profile files are unchanged. Owner headset testing confirms the scoped
+  hit marker uses the selected color correctly.
 - The movement and death comfort effects now share one prioritized vignette
   compositor, so enabling both cannot stack duplicate OpenXR layers.
 - Reorganized VR Settings so both comfort-vignette controls are adjacent on
