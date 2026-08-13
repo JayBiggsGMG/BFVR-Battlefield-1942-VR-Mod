@@ -67,7 +67,10 @@ bool IsSliderSelection(
         selection == SettingsMenuSelection::AmbientOcclusionRadius ||
         selection == SettingsMenuSelection::AmbientOcclusionStrength ||
         selection == SettingsMenuSelection::BloomThreshold ||
-        selection == SettingsMenuSelection::BloomIntensity;
+        selection == SettingsMenuSelection::BloomIntensity ||
+        selection == SettingsMenuSelection::ColorExposure ||
+        selection == SettingsMenuSelection::ColorContrast ||
+        selection == SettingsMenuSelection::ColorSaturation;
 }
 } // namespace
 
@@ -195,52 +198,78 @@ SettingsMenuSelection SettingsMenuSelectionAt(
             return SettingsMenuSelection::ComfortVignetteEnabled;
         }
         if (pixelX >= kSettingsMenuControlColumnPixels &&
-            pixelX <= kSettingsMenuSliderRightPixels &&
+            pixelX <= kSettingsMenuControlColumnPixels + 72.0F &&
             pixelY >= kSettingsMenuVrPageTwoRowCentersPixels[1] - 38.0F &&
             pixelY <= kSettingsMenuVrPageTwoRowCentersPixels[1] + 38.0F)
         {
-            return SettingsMenuSelection::VrHeightAdjustment;
+            return SettingsMenuSelection::DeathCameraComfortEnabled;
         }
-        if (pixelX >= 350.0F && pixelX <= 930.0F &&
-            pixelY >= kSettingsMenuVrPageTwoRowCentersPixels[2] - 42.0F &&
-            pixelY <= kSettingsMenuVrPageTwoRowCentersPixels[2] + 42.0F)
+        const float showCenterY = kSettingsMenuVrPageTwoRowCentersPixels[2];
+        if (pixelY >= showCenterY - 38.0F &&
+            pixelY <= showCenterY + 38.0F)
         {
-            return SettingsMenuSelection::AutoCalibrateStandingHeight;
-        }
-        if (pixelX >= 350.0F && pixelX <= 930.0F &&
-            pixelY >= kSettingsMenuVrPageTwoRowCentersPixels[3] - 42.0F &&
-            pixelY <= kSettingsMenuVrPageTwoRowCentersPixels[3] + 42.0F)
-        {
-            return SettingsMenuSelection::RecenterForward;
-        }
-    }
-    if (tab == SettingsMenuTab::Controls)
-    {
-        for (std::size_t index = 0;
-             index < kSettingsMenuControlsSelectorRowCentersPixels.size();
-             ++index)
-        {
-            const float centerY =
-                kSettingsMenuControlsSelectorRowCentersPixels[index];
-            if (pixelY < centerY - 38.0F || pixelY > centerY + 38.0F)
-            {
-                continue;
-            }
-            const SettingsMenuSelection first = static_cast<
-                SettingsMenuSelection>(
-                    static_cast<std::uint32_t>(
-                        SettingsMenuSelection::OffHandGripPrevious) +
-                    static_cast<std::uint32_t>(index) * 2U);
             if (pixelX >= kSettingsMenuSelectorLeftArrowCenterPixels - 40.0F &&
                 pixelX <= kSettingsMenuSelectorLeftArrowCenterPixels + 40.0F)
             {
-                return first;
+                return SettingsMenuSelection::ShowPrevious;
             }
             if (pixelX >= kSettingsMenuSelectorRightArrowCenterPixels - 40.0F &&
                 pixelX <= kSettingsMenuSelectorRightArrowCenterPixels + 40.0F)
             {
-                return static_cast<SettingsMenuSelection>(
-                    static_cast<std::uint32_t>(first) + 1U);
+                return SettingsMenuSelection::ShowNext;
+            }
+        }
+        const float centerY = kSettingsMenuVrPageTwoRowCentersPixels[3];
+        if (pixelY >= centerY - 38.0F && pixelY <= centerY + 38.0F)
+        {
+            if (pixelX >= kSettingsMenuSelectorLeftArrowCenterPixels - 40.0F &&
+                pixelX <= kSettingsMenuSelectorLeftArrowCenterPixels + 40.0F)
+            {
+                return SettingsMenuSelection::CrosshairColorPrevious;
+            }
+            if (pixelX >= kSettingsMenuSelectorRightArrowCenterPixels - 40.0F &&
+                pixelX <= kSettingsMenuSelectorRightArrowCenterPixels + 40.0F)
+            {
+                return SettingsMenuSelection::CrosshairColorNext;
+            }
+        }
+    }
+    if (tab == SettingsMenuTab::VrSettings && page == 2)
+    {
+        if (pixelX >= kSettingsMenuControlColumnPixels &&
+            pixelX <= kSettingsMenuSliderRightPixels &&
+            pixelY >= kSettingsMenuVrPageThreeRowCentersPixels[0] - 38.0F &&
+            pixelY <= kSettingsMenuVrPageThreeRowCentersPixels[0] + 38.0F)
+        {
+            return SettingsMenuSelection::VrHeightAdjustment;
+        }
+        if (pixelX >= 350.0F && pixelX <= 930.0F &&
+            pixelY >= kSettingsMenuVrPageThreeRowCentersPixels[1] - 42.0F &&
+            pixelY <= kSettingsMenuVrPageThreeRowCentersPixels[1] + 42.0F)
+        {
+            return SettingsMenuSelection::AutoCalibrateStandingHeight;
+        }
+        if (pixelX >= 350.0F && pixelX <= 930.0F &&
+            pixelY >= kSettingsMenuVrPageThreeRowCentersPixels[2] - 42.0F &&
+            pixelY <= kSettingsMenuVrPageThreeRowCentersPixels[2] + 42.0F)
+        {
+            return SettingsMenuSelection::RecenterForward;
+        }
+    }
+    if (tab == SettingsMenuTab::Controls && page == 0)
+    {
+        const float gripY = kSettingsMenuControlsGripRowCenterPixels;
+        if (pixelY >= gripY - 38.0F && pixelY <= gripY + 38.0F)
+        {
+            if (pixelX >= kSettingsMenuSelectorLeftArrowCenterPixels - 40.0F &&
+                pixelX <= kSettingsMenuSelectorLeftArrowCenterPixels + 40.0F)
+            {
+                return SettingsMenuSelection::OffHandGripPrevious;
+            }
+            if (pixelX >= kSettingsMenuSelectorRightArrowCenterPixels - 40.0F &&
+                pixelX <= kSettingsMenuSelectorRightArrowCenterPixels + 40.0F)
+            {
+                return SettingsMenuSelection::OffHandGripNext;
             }
         }
         for (std::size_t index = 0;
@@ -259,7 +288,37 @@ SettingsMenuSelection SettingsMenuSelectionAt(
             }
         }
     }
-    if (tab == SettingsMenuTab::GraphicsAudio)
+    if (tab == SettingsMenuTab::Controls && page == 1)
+    {
+        for (std::size_t index = 0;
+             index < kSettingsMenuControlsCrosshairRowCentersPixels.size();
+             ++index)
+        {
+            const float centerY =
+                kSettingsMenuControlsCrosshairRowCentersPixels[index];
+            if (pixelY < centerY - 38.0F || pixelY > centerY + 38.0F)
+            {
+                continue;
+            }
+            const SettingsMenuSelection previous = static_cast<
+                SettingsMenuSelection>(
+                    static_cast<std::uint32_t>(
+                        SettingsMenuSelection::HandCrosshairPrevious) +
+                    static_cast<std::uint32_t>(index) * 2U);
+            if (pixelX >= kSettingsMenuSelectorLeftArrowCenterPixels - 40.0F &&
+                pixelX <= kSettingsMenuSelectorLeftArrowCenterPixels + 40.0F)
+            {
+                return previous;
+            }
+            if (pixelX >= kSettingsMenuSelectorRightArrowCenterPixels - 40.0F &&
+                pixelX <= kSettingsMenuSelectorRightArrowCenterPixels + 40.0F)
+            {
+                return static_cast<SettingsMenuSelection>(
+                    static_cast<std::uint32_t>(previous) + 1U);
+            }
+        }
+    }
+    if (tab == SettingsMenuTab::GraphicsAudio && page == 0)
     {
         for (std::size_t index = 0;
              index < kSettingsMenuGraphicsRowCentersPixels.size();
@@ -282,6 +341,42 @@ SettingsMenuSelection SettingsMenuSelectionAt(
                         SettingsMenuSelection::FxaaEnabled) +
                     static_cast<std::uint32_t>(index));
             }
+        }
+    }
+    if (tab == SettingsMenuTab::GraphicsAudio && page == 1)
+    {
+        const float profileY = kSettingsMenuColorRowCentersPixels[0];
+        if (pixelY >= profileY - 38.0F && pixelY <= profileY + 38.0F)
+        {
+            if (pixelX >= kSettingsMenuSelectorLeftArrowCenterPixels - 40.0F &&
+                pixelX <= kSettingsMenuSelectorLeftArrowCenterPixels + 40.0F)
+            {
+                return SettingsMenuSelection::ColorProfilePrevious;
+            }
+            if (pixelX >= kSettingsMenuSelectorRightArrowCenterPixels - 40.0F &&
+                pixelX <= kSettingsMenuSelectorRightArrowCenterPixels + 40.0F)
+            {
+                return SettingsMenuSelection::ColorProfileNext;
+            }
+        }
+        for (std::size_t index = 1; index <= 3; ++index)
+        {
+            if (pixelX >= kSettingsMenuControlColumnPixels &&
+                pixelX <= kSettingsMenuSliderRightPixels &&
+                pixelY >= kSettingsMenuColorRowCentersPixels[index] - 38.0F &&
+                pixelY <= kSettingsMenuColorRowCentersPixels[index] + 38.0F)
+            {
+                return static_cast<SettingsMenuSelection>(
+                    static_cast<std::uint32_t>(
+                        SettingsMenuSelection::ColorExposure) +
+                    static_cast<std::uint32_t>(index - 1));
+            }
+        }
+        if (pixelX >= 350.0F && pixelX <= 930.0F &&
+            pixelY >= kSettingsMenuColorRowCentersPixels[4] - 42.0F &&
+            pixelY <= kSettingsMenuColorRowCentersPixels[4] + 42.0F)
+        {
+            return SettingsMenuSelection::ResetColorSettings;
         }
     }
     return SettingsMenuSelection::None;
@@ -326,6 +421,15 @@ const wchar_t* SettingsMenuSelectionName(
     case SettingsMenuSelection::RecenterForward: return L"Recenter Forward";
     case SettingsMenuSelection::ComfortVignetteEnabled:
         return L"Comfort Vignette";
+    case SettingsMenuSelection::ShowPrevious:
+        return L"previous Show mode";
+    case SettingsMenuSelection::ShowNext: return L"next Show mode";
+    case SettingsMenuSelection::DeathCameraComfortEnabled:
+        return L"Death Camera Comfort";
+    case SettingsMenuSelection::CrosshairColorPrevious:
+        return L"previous 3D Crosshair Color";
+    case SettingsMenuSelection::CrosshairColorNext:
+        return L"next 3D Crosshair Color";
     case SettingsMenuSelection::OffHandGripPrevious:
         return L"previous Off-hand Grip Style";
     case SettingsMenuSelection::OffHandGripNext:
@@ -338,6 +442,10 @@ const wchar_t* SettingsMenuSelectionName(
         return L"previous Mounted Guns crosshair mode";
     case SettingsMenuSelection::MountedCrosshairNext:
         return L"next Mounted Guns crosshair mode";
+    case SettingsMenuSelection::PointerItemCrosshairPrevious:
+        return L"previous Knives / Throwables / Gadgets crosshair mode";
+    case SettingsMenuSelection::PointerItemCrosshairNext:
+        return L"next Knives / Throwables / Gadgets crosshair mode";
     case SettingsMenuSelection::InvertFlightPitch:
         return L"Flight Pitch inversion";
     case SettingsMenuSelection::InvertTurretPitch:
@@ -368,6 +476,18 @@ const wchar_t* SettingsMenuSelectionName(
         return L"Bloom Intensity slider";
     case SettingsMenuSelection::WaterReflectionsEnabled:
         return L"Water SSR";
+    case SettingsMenuSelection::ColorProfilePrevious:
+        return L"previous Color Profile";
+    case SettingsMenuSelection::ColorProfileNext:
+        return L"next Color Profile";
+    case SettingsMenuSelection::ColorExposure:
+        return L"Exposure slider";
+    case SettingsMenuSelection::ColorContrast:
+        return L"Contrast slider";
+    case SettingsMenuSelection::ColorSaturation:
+        return L"Saturation slider";
+    case SettingsMenuSelection::ResetColorSettings:
+        return L"Reset Color Settings";
     default: return L"none";
     }
 }
@@ -464,6 +584,18 @@ void SettingsMenuInteraction::SetValues(
         settings::kMinimumBloomIntensityPercent,
         settings::kMaximumBloomIntensityPercent,
         settings::kBloomIntensityStepPercent);
+    values_.colorExposureTenthsEv = std::clamp(
+        values_.colorExposureTenthsEv,
+        settings::kMinimumColorExposureTenthsEv,
+        settings::kMaximumColorExposureTenthsEv);
+    values_.colorContrastPercent = std::clamp(
+        values_.colorContrastPercent,
+        settings::kMinimumColorContrastPercent,
+        settings::kMaximumColorContrastPercent);
+    values_.colorSaturationPercent = std::clamp(
+        values_.colorSaturationPercent,
+        settings::kMinimumColorSaturationPercent,
+        settings::kMaximumColorSaturationPercent);
 }
 
 void SettingsMenuInteraction::SetStatus(SettingsMenuStatus status) noexcept
@@ -788,6 +920,42 @@ void SettingsMenuInteraction::Activate(
         valuesChanged_ = true;
         status_ = SettingsMenuStatus::SettingsNotSaved;
         break;
+    case SettingsMenuSelection::ShowPrevious:
+    case SettingsMenuSelection::ShowNext:
+    {
+        constexpr int modeCount = 3;
+        const int direction = selection == SettingsMenuSelection::ShowPrevious
+            ? -1
+            : 1;
+        const int current = static_cast<int>(values_.firstPersonVisibility);
+        values_.firstPersonVisibility =
+            static_cast<settings::FirstPersonVisibility>(
+                (current + direction + modeCount) % modeCount);
+        valuesChanged_ = true;
+        status_ = SettingsMenuStatus::SettingsNotSaved;
+        break;
+    }
+    case SettingsMenuSelection::DeathCameraComfortEnabled:
+        values_.deathCameraComfortEnabled =
+            !values_.deathCameraComfortEnabled;
+        valuesChanged_ = true;
+        status_ = SettingsMenuStatus::SettingsNotSaved;
+        break;
+    case SettingsMenuSelection::CrosshairColorPrevious:
+    case SettingsMenuSelection::CrosshairColorNext:
+    {
+        constexpr int colorCount = 8;
+        const int direction =
+            selection == SettingsMenuSelection::CrosshairColorPrevious
+            ? -1
+            : 1;
+        const int current = static_cast<int>(values_.crosshairColor);
+        values_.crosshairColor = static_cast<settings::CrosshairColor>(
+            (current + direction + colorCount) % colorCount);
+        valuesChanged_ = true;
+        status_ = SettingsMenuStatus::SettingsNotSaved;
+        break;
+    }
     case SettingsMenuSelection::OffHandGripPrevious:
     case SettingsMenuSelection::OffHandGripNext:
         values_.offHandGripStyle =
@@ -801,15 +969,21 @@ void SettingsMenuInteraction::Activate(
     case SettingsMenuSelection::HandCrosshairNext:
     case SettingsMenuSelection::MountedCrosshairPrevious:
     case SettingsMenuSelection::MountedCrosshairNext:
+    case SettingsMenuSelection::PointerItemCrosshairPrevious:
+    case SettingsMenuSelection::PointerItemCrosshairNext:
     {
         settings::WorldCrosshairMode* mode =
             selection == SettingsMenuSelection::HandCrosshairPrevious ||
                 selection == SettingsMenuSelection::HandCrosshairNext
             ? &values_.handWeaponCrosshair
-            : &values_.mountedWeaponCrosshair;
+            : selection == SettingsMenuSelection::MountedCrosshairPrevious ||
+                selection == SettingsMenuSelection::MountedCrosshairNext
+            ? &values_.mountedWeaponCrosshair
+            : &values_.pointerItemCrosshair;
         const int direction =
             selection == SettingsMenuSelection::HandCrosshairPrevious ||
-                selection == SettingsMenuSelection::MountedCrosshairPrevious
+                selection == SettingsMenuSelection::MountedCrosshairPrevious ||
+                selection == SettingsMenuSelection::PointerItemCrosshairPrevious
             ? -1
             : 1;
         constexpr int modeCount = 3;
@@ -878,6 +1052,32 @@ void SettingsMenuInteraction::Activate(
         valuesChanged_ = true;
         status_ = SettingsMenuStatus::SettingsNotSaved;
         break;
+    case SettingsMenuSelection::ColorProfilePrevious:
+    case SettingsMenuSelection::ColorProfileNext:
+    {
+        constexpr int profileCount = 3;
+        const int direction =
+            selection == SettingsMenuSelection::ColorProfilePrevious
+            ? -1
+            : 1;
+        const int current = static_cast<int>(values_.colorProfile);
+        values_.colorProfile = static_cast<settings::ColorProfile>(
+            (current + direction + profileCount) % profileCount);
+        valuesChanged_ = true;
+        status_ = SettingsMenuStatus::SettingsNotSaved;
+        break;
+    }
+    case SettingsMenuSelection::ResetColorSettings:
+        values_.colorProfile = settings::ColorProfile::Original;
+        values_.colorExposureTenthsEv =
+            settings::kDefaultColorExposureTenthsEv;
+        values_.colorContrastPercent =
+            settings::kDefaultColorContrastPercent;
+        values_.colorSaturationPercent =
+            settings::kDefaultColorSaturationPercent;
+        valuesChanged_ = true;
+        status_ = SettingsMenuStatus::ColorSettingsReset;
+        break;
     case SettingsMenuSelection::InfantryTurnSpeed:
     case SettingsMenuSelection::VrHeightAdjustment:
     case SettingsMenuSelection::FxaaSharpening:
@@ -885,6 +1085,9 @@ void SettingsMenuInteraction::Activate(
     case SettingsMenuSelection::AmbientOcclusionStrength:
     case SettingsMenuSelection::BloomThreshold:
     case SettingsMenuSelection::BloomIntensity:
+    case SettingsMenuSelection::ColorExposure:
+    case SettingsMenuSelection::ColorContrast:
+    case SettingsMenuSelection::ColorSaturation:
         break;
     case SettingsMenuSelection::None:
     default:
@@ -924,6 +1127,59 @@ void SettingsMenuInteraction::SetGraphicsSliderFromPointer(
     SettingsMenuSelection selection,
     float pointerU) noexcept
 {
+    const float pixelX = std::clamp(pointerU, 0.0F, 1.0F) *
+        kSettingsMenuTextureSize;
+    const float normalized = std::clamp(
+        (pixelX - kSettingsMenuControlColumnPixels) /
+            (kSettingsMenuSliderRightPixels -
+             kSettingsMenuControlColumnPixels),
+        0.0F,
+        1.0F);
+    std::int32_t* signedDestination = nullptr;
+    std::int32_t signedMinimum = 0;
+    std::int32_t signedMaximum = 0;
+    std::int32_t signedStep = 1;
+    switch (selection)
+    {
+    case SettingsMenuSelection::ColorExposure:
+        signedDestination = &values_.colorExposureTenthsEv;
+        signedMinimum = settings::kMinimumColorExposureTenthsEv;
+        signedMaximum = settings::kMaximumColorExposureTenthsEv;
+        signedStep = settings::kColorExposureStepTenthsEv;
+        break;
+    case SettingsMenuSelection::ColorContrast:
+        signedDestination = &values_.colorContrastPercent;
+        signedMinimum = settings::kMinimumColorContrastPercent;
+        signedMaximum = settings::kMaximumColorContrastPercent;
+        signedStep = settings::kColorContrastStepPercent;
+        break;
+    case SettingsMenuSelection::ColorSaturation:
+        signedDestination = &values_.colorSaturationPercent;
+        signedMinimum = settings::kMinimumColorSaturationPercent;
+        signedMaximum = settings::kMaximumColorSaturationPercent;
+        signedStep = settings::kColorSaturationStepPercent;
+        break;
+    default:
+        break;
+    }
+    if (signedDestination != nullptr)
+    {
+        const float unsnapped = static_cast<float>(signedMinimum) +
+            normalized * static_cast<float>(signedMaximum - signedMinimum);
+        const std::int32_t selected = std::clamp(
+            signedMinimum + static_cast<std::int32_t>(std::lround(
+                (unsnapped - static_cast<float>(signedMinimum)) /
+                static_cast<float>(signedStep))) * signedStep,
+            signedMinimum,
+            signedMaximum);
+        if (*signedDestination != selected)
+        {
+            *signedDestination = selected;
+            valuesChanged_ = true;
+            status_ = SettingsMenuStatus::SettingsNotSaved;
+        }
+        return;
+    }
     std::uint32_t* destination = nullptr;
     std::uint32_t minimum = 0;
     std::uint32_t maximum = 0;
@@ -963,14 +1219,6 @@ void SettingsMenuInteraction::SetGraphicsSliderFromPointer(
     default:
         return;
     }
-    const float pixelX = std::clamp(pointerU, 0.0F, 1.0F) *
-        kSettingsMenuTextureSize;
-    const float normalized = std::clamp(
-        (pixelX - kSettingsMenuControlColumnPixels) /
-            (kSettingsMenuSliderRightPixels -
-             kSettingsMenuControlColumnPixels),
-        0.0F,
-        1.0F);
     const float unsnapped = static_cast<float>(minimum) +
         normalized * static_cast<float>(maximum - minimum);
     const std::uint32_t selected = std::clamp(

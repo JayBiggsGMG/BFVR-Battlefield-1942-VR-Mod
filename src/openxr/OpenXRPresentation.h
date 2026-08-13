@@ -246,9 +246,12 @@ public:
     // only to render the left utility button's coupled/decoupled appearance.
     void SetMountedCameraDecoupled(bool decoupled) noexcept;
 
-    // Sets a normalized translation-derived target. The renderer eases at
-    // OpenXR frame cadence and inserts the effect below HUD/menu layers.
-    void SetComfortVignetteTarget(float strength) noexcept;
+    // Sets independent movement and death targets for the one vignette
+    // compositor. Death styling takes priority; the renderer eases both at
+    // OpenXR frame cadence below every HUD/menu layer.
+    void SetComfortVignetteTargets(
+        float movementStrength,
+        float deathBlend) noexcept;
 
     // Applies one controller pulse through the session's already-bound
     // vibration action. The single saved Controls toggle gates every event.

@@ -32,6 +32,12 @@ namespace bfvr
 void RegisterControllerHapticTransport(
     shared::ControlBlock* controlBlock) noexcept
 {
+    if (controlBlock != nullptr)
+    {
+        InterlockedExchange(
+            &controlBlock->localPlayerLifeState,
+            static_cast<LONG>(shared::LocalPlayerLifeState::Unknown));
+    }
     InterlockedExchangePointer(&g_controlBlock, controlBlock);
     g_observedLocalPlayer = nullptr;
     g_previousAlive = false;
@@ -95,9 +101,24 @@ void PollControllerHapticDeath(void* gameImage) noexcept
 
     if (!readable)
     {
+        if (shared::ControlBlock* const block = CurrentControlBlock())
+        {
+            InterlockedExchange(
+                &block->localPlayerLifeState,
+                static_cast<LONG>(shared::LocalPlayerLifeState::Unknown));
+        }
         g_observedLocalPlayer = nullptr;
         g_aliveStateKnown = false;
         return;
+    }
+    shared::ControlBlock* const block = CurrentControlBlock();
+    if (block != nullptr)
+    {
+        InterlockedExchange(
+            &block->localPlayerLifeState,
+            static_cast<LONG>(alive
+                    ? shared::LocalPlayerLifeState::Alive
+                    : shared::LocalPlayerLifeState::Dead));
     }
     if (!g_aliveStateKnown || localPlayer != g_observedLocalPlayer)
     {
@@ -108,8 +129,9 @@ void PollControllerHapticDeath(void* gameImage) noexcept
     }
     if (g_previousAlive && !alive)
     {
-        if (shared::ControlBlock* const block = CurrentControlBlock())
+        if (block != nullptr)
         {
+            MemoryBarrier();
             InterlockedIncrement(&block->hapticDeathSequence);
         }
     }

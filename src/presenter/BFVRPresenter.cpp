@@ -18,6 +18,8 @@ namespace
 FILE* g_output = stdout;
 constexpr DWORD kRuntimeTimedSourceGraceMs = 100;
 constexpr ULONGLONG kComfortVignetteMotionFreshMs = 150;
+constexpr DWORD kOpenXRStartupRetryWindowMs = 12000;
+constexpr DWORD kOpenXRStartupRetryDelayMs = 500;
 
 std::int64_t ReadPerformanceCounter() noexcept
 {
@@ -423,13 +425,52 @@ int RunPresenter(
         ? bfvr::OpenXRUiLayerMode::Cylinder
         : bfvr::OpenXRUiLayerMode::Quad;
     bfvr::OpenXRPresentation presentation;
-    if (!presentation.Initialize(payloadDirectory, configuration, WriteLog, nullptr))
+    const DWORD openXRStartupStarted = GetTickCount();
+    unsigned int openXRStartupAttempt = 0;
+    while (true)
     {
-        InterlockedExchange(&block->presenterError, 5);
-        bfvr::shared::PublishState(
-            &block->presenterState,
-            bfvr::shared::ProcessState::Failed);
-        return 5;
+        ++openXRStartupAttempt;
+        if (presentation.Initialize(
+                payloadDirectory,
+                configuration,
+                WriteLog,
+                nullptr))
+        {
+            if (openXRStartupAttempt > 1)
+            {
+                fwprintf(
+                    g_output,
+                    L"[PRESENTER] OpenXR startup succeeded on retry %u.\n",
+                    openXRStartupAttempt);
+                fflush(g_output);
+            }
+            break;
+        }
+
+        const DWORD elapsedMs = GetTickCount() - openXRStartupStarted;
+        if (elapsedMs >= kOpenXRStartupRetryWindowMs ||
+            InterlockedCompareExchange(&block->shutdownRequested, 0, 0) != 0 ||
+            !producerIsAlive())
+        {
+            fwprintf(
+                g_output,
+                L"[PRESENTER] OpenXR startup remained unavailable after %u attempt(s) and %lu ms.\n",
+                openXRStartupAttempt,
+                static_cast<unsigned long>(elapsedMs));
+            fflush(g_output);
+            InterlockedExchange(&block->presenterError, 5);
+            bfvr::shared::PublishState(
+                &block->presenterState,
+                bfvr::shared::ProcessState::Failed);
+            return 5;
+        }
+
+        fwprintf(
+            g_output,
+            L"[PRESENTER] OpenXR startup attempt %u was unavailable; retrying while SteamVR and the headset initialize.\n",
+            openXRStartupAttempt);
+        fflush(g_output);
+        Sleep(kOpenXRStartupRetryDelayMs);
     }
 
     const bfvr::OpenXRPresentationTextureRequirements requirements =
@@ -567,10 +608,12 @@ int RunPresenter(
     bool desktopMirrorSourceDirty = false;
     bool quickMenuWasVisibleInMirror = false;
     bfvr::stereo::ComfortVignetteMotionState comfortMotionState = {};
+    bfvr::stereo::DeathComfortState deathComfortState = {};
     float comfortVignetteMotionTarget = 0.0F;
     ULONGLONG lastComfortMotionSampleAt = 0;
     ULONGLONG nextComfortSettingsPollAt = 0;
     bool comfortVignetteEnabled = true;
+    bool deathCameraComfortEnabled = true;
     auto consumeSequence = [&]()
     {
         // The producer publishes these pixels/metadata before frameSequence
@@ -818,18 +861,46 @@ int RunPresenter(
             auto& userSettingsRuntime =
                 bfvr::settings::ProcessUserSettingsRuntime();
             (void)userSettingsRuntime.ReloadIfChanged();
-            comfortVignetteEnabled = userSettingsRuntime.IsReady() &&
-                bfvr::settings::DecodeUserSettings(
-                    userSettingsRuntime.Current()).comfortVignetteEnabled;
+            const bfvr::settings::UserSettingsValues settings =
+                userSettingsRuntime.IsReady()
+                ? bfvr::settings::DecodeUserSettings(
+                    userSettingsRuntime.Current())
+                : bfvr::settings::UserSettingsValues{};
+            comfortVignetteEnabled = settings.comfortVignetteEnabled;
+            deathCameraComfortEnabled =
+                settings.deathCameraComfortEnabled;
             nextComfortSettingsPollAt = now + 250;
         }
         const bool motionFresh = lastComfortMotionSampleAt != 0 &&
             now - lastComfortMotionSampleAt <=
                 kComfortVignetteMotionFreshMs;
-        presentation.SetComfortVignetteTarget(
+        const LONG deathSequence = InterlockedCompareExchange(
+            &block->hapticDeathSequence,
+            0,
+            0);
+        // Producer publishes life state before advancing the death sequence.
+        // Read in the corresponding order so a newly observed event cannot
+        // be paired with the preceding Alive value and cancelled immediately.
+        MemoryBarrier();
+        const LONG lifeState = InterlockedCompareExchange(
+            &block->localPlayerLifeState,
+            0,
+            0);
+        const bool deathComfortActive =
+            bfvr::stereo::UpdateDeathComfortActive(
+                deathComfortState,
+                deathCameraComfortEnabled,
+                static_cast<std::int32_t>(deathSequence),
+                lifeState != static_cast<LONG>(
+                    bfvr::shared::LocalPlayerLifeState::Unknown),
+                lifeState == static_cast<LONG>(
+                    bfvr::shared::LocalPlayerLifeState::Alive),
+                static_cast<std::uint64_t>(now));
+        presentation.SetComfortVignetteTargets(
             comfortVignetteEnabled && motionFresh
                 ? comfortVignetteMotionTarget
-                : 0.0F);
+                : 0.0F,
+            deathComfortActive ? 1.0F : 0.0F);
         presentation.SetMountedCameraDecoupled(
             InterlockedCompareExchange(
                 &block->mountedCameraDecoupled,

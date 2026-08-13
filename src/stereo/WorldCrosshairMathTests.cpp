@@ -1,6 +1,7 @@
 #include "stereo/WorldCrosshairMath.h"
 
 #include "stereo/InfantryItemAimPolicy.h"
+#include "stereo/CrosshairColorPolicy.h"
 
 #include <cmath>
 #include <cstdio>
@@ -148,12 +149,33 @@ bool TestPerEyeProjectionAndRejection()
         !invalidViewport.has_value();
 }
 
+bool TestCrosshairTints()
+{
+    using bfvr::settings::CrosshairColor;
+    return bfvr::stereo::CrosshairTintArgb(CrosshairColor::White) ==
+            0xFFFFFFFFU &&
+        bfvr::stereo::CrosshairTintArgb(CrosshairColor::Green) ==
+            0xFF06FF00U &&
+        bfvr::stereo::CrosshairTintArgb(CrosshairColor::Blue) ==
+            0xFF40A0FFU &&
+        bfvr::stereo::CrosshairTintArgb(CrosshairColor::Purple) ==
+            0xFF9A50FFU &&
+        bfvr::stereo::CrosshairTintArgb(CrosshairColor::Red) ==
+            0xFFFF4040U &&
+        bfvr::stereo::CrosshairTintArgb(CrosshairColor::Pink) ==
+            0xFFFF69B4U &&
+        bfvr::stereo::CrosshairTintArgb(CrosshairColor::Orange) ==
+            0xFFFF8A30U &&
+        bfvr::stereo::CrosshairTintArgb(CrosshairColor::Yellow) ==
+            0xFFFFFF00U;
+}
+
 } // namespace
 
 int main()
 {
     if (!TestStrictEligibility() || !TestFireEndpoints() ||
-        !TestPerEyeProjectionAndRejection())
+        !TestPerEyeProjectionAndRejection() || !TestCrosshairTints())
     {
         std::fprintf(stderr, "World crosshair math tests failed.\n");
         return 1;

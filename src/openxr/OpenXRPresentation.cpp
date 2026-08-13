@@ -1868,7 +1868,10 @@ public:
                         : 1.0F / 90.0F;
                     layerCount += static_cast<std::uint32_t>(
                         comfortVignette.AppendLayers(
-                            comfortVignetteTarget, deltaSeconds, viewSpace,
+                            comfortVignetteTarget,
+                            deathComfortVignetteTarget,
+                            deltaSeconds,
+                            viewSpace,
                             pendingHeadPose, pendingViews,
                             layers.data() + layerCount,
                             layers.size() - layerCount));
@@ -2209,6 +2212,7 @@ public:
         worldLockedUiPoseValid = false;
         uiReferenceModeInitialized = false;
         comfortVignetteTarget = 0.0F;
+        deathComfortVignetteTarget = 0.0F;
         textureRequirements = {};
     }
 
@@ -2273,6 +2277,7 @@ public:
     bool lastEyeFillingScopePresented = false;
     bool scopePresentationInitialized = false;
     float comfortVignetteTarget = 0.0F;
+    float deathComfortVignetteTarget = 0.0F;
     XrSessionState sessionState = XR_SESSION_STATE_UNKNOWN;
     XrResult lastControllerSyncResult = XR_SUCCESS;
 };
@@ -2575,12 +2580,17 @@ void OpenXRPresentation::SetMountedCameraDecoupled(
         impl_->quickMenu.SetMountedCameraDecoupled(decoupled);
     }
 }
-void OpenXRPresentation::SetComfortVignetteTarget(float strength) noexcept
+void OpenXRPresentation::SetComfortVignetteTargets(
+    float movementStrength,
+    float deathBlend) noexcept
 {
     if (impl_ != nullptr)
     {
-        impl_->comfortVignetteTarget = std::isfinite(strength)
-            ? std::clamp(strength, 0.0F, 1.0F)
+        impl_->comfortVignetteTarget = std::isfinite(movementStrength)
+            ? std::clamp(movementStrength, 0.0F, 1.0F)
+            : 0.0F;
+        impl_->deathComfortVignetteTarget = std::isfinite(deathBlend)
+            ? std::clamp(deathBlend, 0.0F, 1.0F)
             : 0.0F;
     }
 }

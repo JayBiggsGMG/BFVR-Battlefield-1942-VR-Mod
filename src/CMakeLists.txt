@@ -220,6 +220,7 @@ add_library(BFVRClient SHARED
   client/InfantryAuthoritativeAimRuntime.cpp
   client/ControllerInputOverlay.cpp
   client/CrosshairOverlay.cpp
+  client/D3D8FirstPersonPartContext.cpp
   client/D3D8WorldCrosshairRenderer.cpp
   client/MainMenuOverlay.cpp
   client/MenuPointerOverlay.cpp

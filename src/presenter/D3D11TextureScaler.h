@@ -9,6 +9,14 @@
 
 namespace bfvr::shared
 {
+struct D3D11ColorGradingConfiguration
+{
+    float profile = 0.0F;
+    float exposureEv = 0.0F;
+    float contrast = 0.0F;
+    float saturation = 0.0F;
+};
+
 class D3D11TextureScaler
 {
 public:
@@ -48,7 +56,8 @@ public:
         float waterReflectionIntensity,
         bool applyBloom,
         float bloomThreshold,
-        float bloomIntensity);
+        float bloomIntensity,
+        const D3D11ColorGradingConfiguration& colorGrading = {});
     bool BeginBloomFrame();
     void EndBloomFrame();
     void CollectBloomFrameTimings();
@@ -72,7 +81,8 @@ private:
         float screenSpaceGlobalIlluminationIntensity,
         float screenSpaceGlobalIlluminationDebugMode,
         float waterReflectionIntensity,
-        float fxaaSharpeningStrength);
+        float fxaaSharpeningStrength,
+        const D3D11ColorGradingConfiguration& colorGrading);
     void WriteLog(const wchar_t* format, ...) const;
 
     ID3D11Device* device_ = nullptr;

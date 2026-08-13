@@ -1958,6 +1958,12 @@ void TestBF1942SemanticDrawPolicy()
         D3D8SemanticDrawClass::AnimatedMeshSkinning, true, 1.60F, 2.84F);
     const bool unclassifiedViewmodel = bfvr::stereo::IsBF1942FirstPersonArmDraw(
         D3D8SemanticDrawClass::Unclassified, true, 2.25F, 3.75F);
+    const bool scopedWorldSoldier = bfvr::stereo::IsBF1942FirstPersonArmDraw(
+        D3D8SemanticDrawClass::AnimatedMeshSkinning,
+        true,
+        2.25F,
+        3.75F,
+        true);
     if (!exactFirstPersonArm)
     {
         Fail(test, "exact animated first-person projection was not suppressible");
@@ -1970,30 +1976,63 @@ void TestBF1942SemanticDrawPolicy()
     {
         Fail(test, "unclassified first-person draw was suppressible");
     }
+    if (scopedWorldSoldier)
+    {
+        Fail(test, "magnified world soldier was suppressible as first-person arms");
+    }
+    using bfvr::stereo::D3D8FirstPersonPartKind;
     if (!bfvr::stereo::ShouldSuppressBF1942FirstPersonArmDraw(
             true,
             exactFirstPersonArm,
-            false))
+            D3D8FirstPersonPartKind::UnknownOrCombined,
+            false,
+            true))
     {
-        Fail(test, "default native-arm policy did not suppress the exact draw");
+        Fail(test, "hands-only policy did not suppress an arm/combined draw");
     }
     if (bfvr::stereo::ShouldSuppressBF1942FirstPersonArmDraw(
             true,
             exactFirstPersonArm,
+            D3D8FirstPersonPartKind::SeparateHand,
+            false,
             true))
     {
-        Fail(test, "enabled native-arm policy still suppressed the exact draw");
+        Fail(test, "hands-only policy suppressed a separate hand draw");
+    }
+    if (!bfvr::stereo::ShouldSuppressBF1942FirstPersonArmDraw(
+            true,
+            exactFirstPersonArm,
+            D3D8FirstPersonPartKind::SeparateHand,
+            false,
+            false))
+    {
+        Fail(test, "no-hands policy retained a separate hand draw");
     }
     if (bfvr::stereo::ShouldSuppressBF1942FirstPersonArmDraw(
             true,
             ordinarySoldier,
-            true) ||
+            D3D8FirstPersonPartKind::UnknownOrCombined,
+            false,
+            false) ||
         bfvr::stereo::ShouldSuppressBF1942FirstPersonArmDraw(
             false,
             exactFirstPersonArm,
+            D3D8FirstPersonPartKind::UnknownOrCombined,
+            false,
             false))
     {
-        Fail(test, "native-arm policy broadened beyond presentation exact-arm draws");
+        Fail(test, "part visibility policy broadened beyond presentation first-person draws");
+    }
+    if (bfvr::stereo::ClassifyD3D8FirstPersonPartTemplateName(
+            "rRightHand") != D3D8FirstPersonPartKind::SeparateHand ||
+        bfvr::stereo::ClassifyD3D8FirstPersonPartTemplateName(
+            "1P-Reb_Left_Hand") != D3D8FirstPersonPartKind::SeparateHand ||
+        bfvr::stereo::ClassifyD3D8FirstPersonPartTemplateName(
+            "rBody") != D3D8FirstPersonPartKind::UnknownOrCombined ||
+        bfvr::stereo::ClassifyD3D8FirstPersonPartTemplateName(
+            "1PMonCal_body") != D3D8FirstPersonPartKind::UnknownOrCombined)
+    {
+        Fail(test, "first-person part template classification changed");
     }
     signature = {
         0x0066800A,

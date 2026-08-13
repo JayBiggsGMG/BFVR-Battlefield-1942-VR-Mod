@@ -25,6 +25,9 @@ constexpr std::string_view kStandingEyeHeightKey =
     "standing_eye_height_centimeters";
 constexpr std::string_view kComfortVignetteEnabledKey =
     "comfort_vignette_enabled";
+constexpr std::string_view kDeathCameraComfortEnabledKey =
+    "death_camera_comfort_enabled";
+constexpr std::string_view kShowArmsKey = "show_arms";
 constexpr std::string_view kInvertFlightPitchKey = "invert_flight_pitch";
 constexpr std::string_view kAircraftPitchWithRollKey =
     "aircraft_pitch_with_roll";
@@ -41,6 +44,9 @@ constexpr std::string_view kHandWeaponCrosshairKey =
     "hand_weapon_3d_crosshair";
 constexpr std::string_view kMountedWeaponCrosshairKey =
     "mounted_weapon_3d_crosshair";
+constexpr std::string_view kPointerItemCrosshairKey =
+    "knife_throwable_gadget_3d_crosshair";
+constexpr std::string_view kCrosshairColorKey = "3d_crosshair_color";
 constexpr std::string_view kFxaaEnabledKey = "fxaa_enabled";
 constexpr std::string_view kFxaaSharpeningKey =
     "fxaa_sharpening_percent";
@@ -55,6 +61,10 @@ constexpr std::string_view kWaterReflectionsEnabledKey =
 constexpr std::string_view kBloomEnabledKey = "bloom_enabled";
 constexpr std::string_view kBloomThresholdKey = "bloom_threshold_percent";
 constexpr std::string_view kBloomIntensityKey = "bloom_intensity_percent";
+constexpr std::string_view kColorProfileKey = "color_profile";
+constexpr std::string_view kColorExposureKey = "color_exposure_ev";
+constexpr std::string_view kColorContrastKey = "color_contrast_percent";
+constexpr std::string_view kColorSaturationKey = "color_saturation_percent";
 
 std::string_view Trim(std::string_view value) noexcept
 {
@@ -100,10 +110,30 @@ bool IsOffHandGripStyle(std::string_view value) noexcept
     return value == "hold" || value == "toggle";
 }
 
+bool IsFirstPersonVisibility(std::string_view value) noexcept
+{
+    // true/false are accepted as a one-save migration path for development
+    // configurations written before the three-state selector existed.
+    return value == "arms_and_hands" || value == "hands_only" ||
+        value == "no_hands_or_arms" || value == "true" || value == "false";
+}
+
 bool IsWorldCrosshairMode(std::string_view value) noexcept
 {
     return value == "off" || value == "on" ||
         value == "hit_marker_only";
+}
+
+bool IsCrosshairColor(std::string_view value) noexcept
+{
+    return value == "white" || value == "green" || value == "blue" ||
+        value == "purple" || value == "red" || value == "pink" ||
+        value == "orange" || value == "yellow" || value == "magenta";
+}
+
+bool IsColorProfile(std::string_view value) noexcept
+{
+    return value == "original" || value == "filmic" || value == "vibrant";
 }
 
 bool IsPlayMode(std::string_view value) noexcept
@@ -195,6 +225,123 @@ bool IsUnsignedInRangeStep(
         parsed.ptr == value.data() + value.size() &&
         parsedValue >= minimum && parsedValue <= maximum &&
         step != 0 && (parsedValue - minimum) % step == 0;
+}
+
+bool IsSignedInRangeStep(
+    std::string_view value,
+    std::int32_t minimum,
+    std::int32_t maximum,
+    std::int32_t step) noexcept
+{
+    std::int32_t parsedValue = 0;
+    const auto parsed = std::from_chars(
+        value.data(),
+        value.data() + value.size(),
+        parsedValue);
+    return parsed.ec == std::errc{} &&
+        parsed.ptr == value.data() + value.size() &&
+        parsedValue >= minimum && parsedValue <= maximum && step > 0 &&
+        (parsedValue - minimum) % step == 0;
+}
+
+bool ParseFixedTenths(
+    std::string_view value,
+    std::int32_t& tenths) noexcept
+{
+    tenths = 0;
+    if (value.empty())
+    {
+        return false;
+    }
+    bool negative = false;
+    std::size_t offset = 0;
+    if (value.front() == '-' || value.front() == '+')
+    {
+        negative = value.front() == '-';
+        offset = 1;
+    }
+    if (offset >= value.size())
+    {
+        return false;
+    }
+    const std::size_t dot = value.find('.', offset);
+    const std::string_view wholeText = dot == std::string_view::npos
+        ? value.substr(offset)
+        : value.substr(offset, dot - offset);
+    if (wholeText.empty() ||
+        (dot != std::string_view::npos && dot + 2 != value.size()))
+    {
+        return false;
+    }
+    std::int32_t whole = 0;
+    const auto parsed = std::from_chars(
+        wholeText.data(),
+        wholeText.data() + wholeText.size(),
+        whole);
+    if (parsed.ec != std::errc{} ||
+        parsed.ptr != wholeText.data() + wholeText.size())
+    {
+        return false;
+    }
+    std::int32_t fraction = 0;
+    if (dot != std::string_view::npos)
+    {
+        const char digit = value[dot + 1];
+        if (digit < '0' || digit > '9')
+        {
+            return false;
+        }
+        fraction = digit - '0';
+    }
+    if (whole > (std::numeric_limits<std::int32_t>::max() - fraction) / 10)
+    {
+        return false;
+    }
+    tenths = whole * 10 + fraction;
+    if (negative)
+    {
+        tenths = -tenths;
+    }
+    return true;
+}
+
+std::string EncodeFixedTenths(std::int32_t value)
+{
+    const bool negative = value < 0;
+    const std::int32_t magnitude = negative ? -value : value;
+    std::string result = negative ? "-" : "";
+    result += std::to_string(magnitude / 10);
+    result.push_back('.');
+    result += std::to_string(magnitude % 10);
+    return result;
+}
+
+bool IsColorExposure(std::string_view value) noexcept
+{
+    std::int32_t tenths = 0;
+    return ParseFixedTenths(value, tenths) &&
+        tenths >= bfvr::settings::kMinimumColorExposureTenthsEv &&
+        tenths <= bfvr::settings::kMaximumColorExposureTenthsEv &&
+        (tenths - bfvr::settings::kMinimumColorExposureTenthsEv) %
+                bfvr::settings::kColorExposureStepTenthsEv == 0;
+}
+
+bool IsColorContrast(std::string_view value) noexcept
+{
+    return IsSignedInRangeStep(
+        value,
+        bfvr::settings::kMinimumColorContrastPercent,
+        bfvr::settings::kMaximumColorContrastPercent,
+        bfvr::settings::kColorContrastStepPercent);
+}
+
+bool IsColorSaturation(std::string_view value) noexcept
+{
+    return IsSignedInRangeStep(
+        value,
+        bfvr::settings::kMinimumColorSaturationPercent,
+        bfvr::settings::kMaximumColorSaturationPercent,
+        bfvr::settings::kColorSaturationStepPercent);
 }
 
 bool IsAmbientOcclusionRadius(std::string_view value) noexcept
@@ -460,6 +607,24 @@ UserSettingsSchema SeededUserSettingsSchema()
             IsBoolean
         },
         {
+            std::string(kDeathCameraComfortEnabledKey),
+            "true",
+            {
+                "Enables BFVR's death-camera comfort effect. A verified local-player alive-to-dead transition quickly closes a stronger muted dark-red peripheral aperture for the native death-camera flight, then eases it away without flattening, freezing, or head-locking the stereo world.",
+                "This effect is independent of comfort_vignette_enabled and takes priority through the same single vignette compositor, so the two effects never stack. Accepted values: true or false. Applied after VR Settings > Save without a restart."
+            },
+            IsBoolean
+        },
+        {
+            std::string(kShowArmsKey),
+            "arms_and_hands",
+            {
+                "Controls BFVR's stereo replay of native first-person arms and hands. arms_and_hands shows the complete game-selected presentation; hands_only hides separate arm/combined meshes while retaining explicitly identified left/right hand meshes; no_hands_or_arms hides every classified first-person part.",
+                "A mod which combines hands and arms into one mesh cannot be split: that combined or unrecognized mesh is hidden in hands_only and restored by arms_and_hands. Native animation, controller IK, hand placement, elbow placement, weapon transforms, and gameplay state continue in every mode. Applied after VR Settings > Save without a restart."
+            },
+            IsFirstPersonVisibility
+        },
+        {
             std::string(kInvertFlightPitchKey),
             "false",
             {
@@ -536,7 +701,7 @@ UserSettingsSchema SeededUserSettingsSchema()
             "hit_marker_only",
             {
                 "Controls the stereo 3D HUD crosshair only for shooting hand weapons such as rifles and pistols. off hides both the aiming crosshair and its hit marker; on shows both; hit_marker_only hides the aiming crosshair but still shows confirmed-hit feedback.",
-                "Accepted values: off, on, or hit_marker_only. Gadget crosshairs always remain enabled. This does not change weapon aim, bullet direction, scopes, or BF1942 hit detection. Applied only after VR Settings > Save."
+                "Accepted values: off, on, or hit_marker_only. Knife, throwable, and gadget items have their own setting. This does not change weapon aim, bullet direction, scopes, or BF1942 hit detection. Applied only after Controls > Save."
             },
             IsWorldCrosshairMode
         },
@@ -548,6 +713,24 @@ UserSettingsSchema SeededUserSettingsSchema()
                 "Accepted values: off, on, or hit_marker_only. This does not change mounted aim, projectile direction, or BF1942 hit detection. Applied only after VR Settings > Save."
             },
             IsWorldCrosshairMode
+        },
+        {
+            std::string(kPointerItemCrosshairKey),
+            "on",
+            {
+                "Controls the stereo 3D HUD crosshair for BFVR's controller-pointer knife, throwable, and gadget item classification. off hides both the aiming crosshair and its hit marker; on shows both; hit_marker_only hides the aiming crosshair but retains confirmed-hit feedback.",
+                "Accepted values: off, on, or hit_marker_only. The default on value preserves the existing BFVR behavior. This does not change aim, item use, projectile direction, or BF1942 hit detection. Applied after Controls > Save without a restart."
+            },
+            IsWorldCrosshairMode
+        },
+        {
+            std::string(kCrosshairColorKey),
+            "green",
+            {
+                "Selects the base tint shared by BFVR's stereo 3D aiming crosshair and 3D hit marker. The existing D3D8 crosshair renderer, endpoint, per-eye projection, angular size, and composition timing remain unchanged.",
+                "Accepted values: white, green, blue, purple, red, pink, orange, or yellow. The legacy value magenta loads as pink. The default green preserves the current appearance. World post-processing and non-neutral Color settings may alter the final displayed tint. Applied after VR Settings > Save without a restart."
+            },
+            IsCrosshairColor
         },
         {
             std::string(kFxaaEnabledKey),
@@ -629,6 +812,42 @@ UserSettingsSchema SeededUserSettingsSchema()
                 "Accepted values: 0 through 100 percent in steps of 5. 45 means an intensity of 0.45. This setting is applied only after VR Settings > Save."
             },
             IsBloomIntensity
+        },
+        {
+            std::string(kColorProfileKey),
+            "original",
+            {
+                "Selects BFVR's world-only final color treatment. original is an identity profile, filmic applies a restrained toe and highlight shoulder, and vibrant applies a richer but bounded treatment. Ref2 HUD, native menus, scope UI, Quick Menu, and VR Settings remain outside this processing.",
+                "Accepted values: original, filmic, or vibrant. The three manual Color adjustments are applied relative to the selected profile. Applied after Graphics > Save without a restart."
+            },
+            IsColorProfile
+        },
+        {
+            std::string(kColorExposureKey),
+            "0.0",
+            {
+                "Adjusts stereo-world exposure in linear light before the selected Color Profile. Zero is neutral and appears at the middle of the in-game slider.",
+                "Units are EV. Accepted values: -1.0 through +1.0 in steps of 0.1. Ref2 HUD and separately composed interface layers are unchanged. Applied after Graphics > Save without a restart."
+            },
+            IsColorExposure
+        },
+        {
+            std::string(kColorContrastKey),
+            "0",
+            {
+                "Adjusts stereo-world contrast after the selected Color Profile. Zero is neutral; negative values reduce contrast and positive values increase it.",
+                "Accepted values: -50 through +50 percent in steps of 1. Ref2 HUD and separately composed interface layers are unchanged. Applied after Graphics > Save without a restart."
+            },
+            IsColorContrast
+        },
+        {
+            std::string(kColorSaturationKey),
+            "0",
+            {
+                "Adjusts stereo-world saturation after the selected Color Profile. Zero is neutral, -100 is grayscale, and positive values increase saturation.",
+                "Accepted values: -100 through +100 percent in steps of 1. BFVR's 3D crosshair is already part of the stereo-world targets and is adjusted with the scene; Ref2 HUD and separately composed interface layers are unchanged. Applied after Graphics > Save without a restart."
+            },
+            IsColorSaturation
         }
     };
 }
@@ -699,6 +918,24 @@ UserSettingsValues DecodeUserSettings(const UserSettings& settings) noexcept
     result.comfortVignetteEnabled = readBoolean(
         kComfortVignetteEnabledKey,
         false);
+    result.deathCameraComfortEnabled = readBoolean(
+        kDeathCameraComfortEnabledKey,
+        true);
+    const auto visibility = settings.values.find(std::string(kShowArmsKey));
+    if (visibility == settings.values.end() ||
+        visibility->second == "arms_and_hands" ||
+        visibility->second == "true")
+    {
+        result.firstPersonVisibility = FirstPersonVisibility::ArmsAndHands;
+    }
+    else if (visibility->second == "hands_only")
+    {
+        result.firstPersonVisibility = FirstPersonVisibility::HandsOnly;
+    }
+    else
+    {
+        result.firstPersonVisibility = FirstPersonVisibility::NoHandsOrArms;
+    }
     const auto readGripStyle = [&settings]() {
         const auto found = settings.values.find(
             std::string(kOffHandGripStyleKey));
@@ -729,6 +966,27 @@ UserSettingsValues DecodeUserSettings(const UserSettings& settings) noexcept
     result.mountedWeaponCrosshair = readCrosshairMode(
         kMountedWeaponCrosshairKey,
         WorldCrosshairMode::On);
+    result.pointerItemCrosshair = readCrosshairMode(
+        kPointerItemCrosshairKey,
+        WorldCrosshairMode::On);
+    const std::string_view crosshairColor = readEnumText(
+        kCrosshairColorKey,
+        "green");
+    result.crosshairColor = crosshairColor == "white"
+        ? CrosshairColor::White
+        : crosshairColor == "blue"
+        ? CrosshairColor::Blue
+        : crosshairColor == "purple"
+        ? CrosshairColor::Purple
+        : crosshairColor == "red"
+        ? CrosshairColor::Red
+        : crosshairColor == "pink" || crosshairColor == "magenta"
+        ? CrosshairColor::Pink
+        : crosshairColor == "orange"
+        ? CrosshairColor::Orange
+        : crosshairColor == "yellow"
+        ? CrosshairColor::Yellow
+        : CrosshairColor::Green;
     result.fxaaEnabled = readBoolean(kFxaaEnabledKey, true);
     result.ambientOcclusionEnabled = readBoolean(
         kAmbientOcclusionEnabledKey,
@@ -782,6 +1040,49 @@ UserSettingsValues DecodeUserSettings(const UserSettings& settings) noexcept
         kStandingEyeHeightKey,
         kDefaultStandingEyeHeightCentimeters,
         IsStandingEyeHeight);
+    const std::string_view colorProfile = readEnumText(
+        kColorProfileKey,
+        "original");
+    result.colorProfile = colorProfile == "filmic"
+        ? ColorProfile::Filmic
+        : colorProfile == "vibrant"
+        ? ColorProfile::Vibrant
+        : ColorProfile::Original;
+    const auto readSigned = [&settings](
+                                std::string_view key,
+                                std::int32_t fallback,
+                                UserSettingValidator validator) {
+        const auto found = settings.values.find(std::string(key));
+        if (found == settings.values.end() || validator == nullptr ||
+            !validator(found->second))
+        {
+            return fallback;
+        }
+        std::int32_t value = fallback;
+        const auto parsed = std::from_chars(
+            found->second.data(),
+            found->second.data() + found->second.size(),
+            value);
+        return parsed.ec == std::errc{} ? value : fallback;
+    };
+    const auto exposure = settings.values.find(std::string(kColorExposureKey));
+    if (exposure != settings.values.end() &&
+        IsColorExposure(exposure->second))
+    {
+        std::int32_t tenths = kDefaultColorExposureTenthsEv;
+        if (ParseFixedTenths(exposure->second, tenths))
+        {
+            result.colorExposureTenthsEv = tenths;
+        }
+    }
+    result.colorContrastPercent = readSigned(
+        kColorContrastKey,
+        kDefaultColorContrastPercent,
+        IsColorContrast);
+    result.colorSaturationPercent = readSigned(
+        kColorSaturationKey,
+        kDefaultColorSaturationPercent,
+        IsColorSaturation);
     const auto height = settings.values.find(
         std::string(kVrHeightAdjustmentKey));
     if (height != settings.values.end() &&
@@ -847,6 +1148,19 @@ void EncodeUserSettings(
         values.sniperScopeSmoothingEnabled ? "true" : "false";
     settings.values[std::string(kComfortVignetteEnabledKey)] =
         values.comfortVignetteEnabled ? "true" : "false";
+    settings.values[std::string(kDeathCameraComfortEnabledKey)] =
+        values.deathCameraComfortEnabled ? "true" : "false";
+    const char* firstPersonVisibility = "arms_and_hands";
+    if (values.firstPersonVisibility == FirstPersonVisibility::HandsOnly)
+    {
+        firstPersonVisibility = "hands_only";
+    }
+    else if (values.firstPersonVisibility ==
+             FirstPersonVisibility::NoHandsOrArms)
+    {
+        firstPersonVisibility = "no_hands_or_arms";
+    }
+    settings.values[std::string(kShowArmsKey)] = firstPersonVisibility;
     settings.values[std::string(kOffHandGripStyleKey)] =
         values.offHandGripStyle == OffHandGripStyle::Toggle
         ? "toggle"
@@ -864,6 +1178,24 @@ void EncodeUserSettings(
         encodeCrosshairMode(values.handWeaponCrosshair);
     settings.values[std::string(kMountedWeaponCrosshairKey)] =
         encodeCrosshairMode(values.mountedWeaponCrosshair);
+    settings.values[std::string(kPointerItemCrosshairKey)] =
+        encodeCrosshairMode(values.pointerItemCrosshair);
+    const auto encodeCrosshairColor = [](CrosshairColor color) {
+        switch (color)
+        {
+        case CrosshairColor::White: return "white";
+        case CrosshairColor::Blue: return "blue";
+        case CrosshairColor::Purple: return "purple";
+        case CrosshairColor::Red: return "red";
+        case CrosshairColor::Pink: return "pink";
+        case CrosshairColor::Orange: return "orange";
+        case CrosshairColor::Yellow: return "yellow";
+        case CrosshairColor::Green:
+        default: return "green";
+        }
+    };
+    settings.values[std::string(kCrosshairColorKey)] =
+        encodeCrosshairColor(values.crosshairColor);
     settings.values[std::string(kFxaaEnabledKey)] =
         values.fxaaEnabled ? "true" : "false";
     settings.values[std::string(kAmbientOcclusionEnabledKey)] =
@@ -926,6 +1258,32 @@ void EncodeUserSettings(
             kMinimumBloomIntensityPercent,
             kMaximumBloomIntensityPercent,
             kBloomIntensityStepPercent));
+    const auto encodeColorProfile = [](ColorProfile profile) {
+        switch (profile)
+        {
+        case ColorProfile::Filmic: return "filmic";
+        case ColorProfile::Vibrant: return "vibrant";
+        case ColorProfile::Original:
+        default: return "original";
+        }
+    };
+    settings.values[std::string(kColorProfileKey)] =
+        encodeColorProfile(values.colorProfile);
+    settings.values[std::string(kColorExposureKey)] = EncodeFixedTenths(
+        std::clamp(
+            values.colorExposureTenthsEv,
+            kMinimumColorExposureTenthsEv,
+            kMaximumColorExposureTenthsEv));
+    settings.values[std::string(kColorContrastKey)] = std::to_string(
+        std::clamp(
+            values.colorContrastPercent,
+            kMinimumColorContrastPercent,
+            kMaximumColorContrastPercent));
+    settings.values[std::string(kColorSaturationKey)] = std::to_string(
+        std::clamp(
+            values.colorSaturationPercent,
+            kMinimumColorSaturationPercent,
+            kMaximumColorSaturationPercent));
 }
 
 bool UserSettingsRequireRestart(

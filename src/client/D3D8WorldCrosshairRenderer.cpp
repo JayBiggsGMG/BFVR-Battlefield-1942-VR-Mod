@@ -46,7 +46,7 @@ constexpr std::size_t kDeviceGetPixelShaderSlot = 89;
 constexpr DWORD kD3DFormatA8R8G8B8 = 21;
 constexpr DWORD kD3DPoolManaged = 1;
 constexpr DWORD kD3DPrimitiveTriangleStrip = 5;
-constexpr DWORD kD3DFvfXyzRhwTex1 = 0x104;
+constexpr DWORD kD3DFvfXyzRhwDiffuseTex1 = 0x144;
 constexpr DWORD kD3DRenderStateZEnable = 7;
 constexpr DWORD kD3DRenderStateZWriteEnable = 14;
 constexpr DWORD kD3DRenderStateAlphaTestEnable = 15;
@@ -61,6 +61,7 @@ constexpr DWORD kD3DBlendInverseSourceAlpha = 6;
 constexpr DWORD kD3DCullNone = 1;
 constexpr DWORD kD3DTextureStageColorOp = 1;
 constexpr DWORD kD3DTextureStageColorArg1 = 2;
+constexpr DWORD kD3DTextureStageColorArg2 = 3;
 constexpr DWORD kD3DTextureStageAlphaOp = 4;
 constexpr DWORD kD3DTextureStageAlphaArg1 = 5;
 constexpr DWORD kD3DTextureStageAddressU = 13;
@@ -70,6 +71,8 @@ constexpr DWORD kD3DTextureStageMinFilter = 17;
 constexpr DWORD kD3DTextureStageMipFilter = 18;
 constexpr DWORD kD3DTextureOpDisable = 1;
 constexpr DWORD kD3DTextureOpSelectArg1 = 2;
+constexpr DWORD kD3DTextureOpModulate = 4;
+constexpr DWORD kD3DTextureArgumentDiffuse = 0;
 constexpr DWORD kD3DTextureArgumentTexture = 2;
 constexpr DWORD kD3DTextureAddressClamp = 3;
 constexpr DWORD kD3DTextureFilterNone = 0;
@@ -176,9 +179,10 @@ struct SavedState
         {kD3DRenderStateFogEnable, 0},
         {kD3DRenderStateLighting, 0},
         {kD3DRenderStateZWriteEnable, 0}}};
-    std::array<TextureStageStateValue, 10> textureStageStates = {{
+    std::array<TextureStageStateValue, 11> textureStageStates = {{
         {0, kD3DTextureStageColorOp, 0},
         {0, kD3DTextureStageColorArg1, 0},
+        {0, kD3DTextureStageColorArg2, 0},
         {0, kD3DTextureStageAlphaOp, 0},
         {0, kD3DTextureStageAlphaArg1, 0},
         {0, kD3DTextureStageAddressU, 0},
@@ -195,6 +199,7 @@ struct Vertex
     float y = 0.0F;
     float z = 0.0F;
     float rhw = 1.0F;
+    DWORD diffuse = 0xFFFFFFFFU;
     float u = 0.0F;
     float v = 0.0F;
 };
@@ -566,7 +571,7 @@ bool SaveDeviceState(
 
 bool ApplyCrosshairState(const DeviceApi& api, void* device) noexcept
 {
-    return SUCCEEDED(api.setVertexShader(device, kD3DFvfXyzRhwTex1)) &&
+    return SUCCEEDED(api.setVertexShader(device, kD3DFvfXyzRhwDiffuseTex1)) &&
         SUCCEEDED(api.setPixelShader(device, 0)) &&
         SUCCEEDED(api.setRenderState(device, kD3DRenderStateZEnable, FALSE)) &&
         SUCCEEDED(api.setRenderState(
@@ -586,9 +591,12 @@ bool ApplyCrosshairState(const DeviceApi& api, void* device) noexcept
         SUCCEEDED(api.setRenderState(
             device, kD3DRenderStateZWriteEnable, FALSE)) &&
         SUCCEEDED(api.setTextureStageState(
-            device, 0, kD3DTextureStageColorOp, kD3DTextureOpSelectArg1)) &&
+            device, 0, kD3DTextureStageColorOp, kD3DTextureOpModulate)) &&
         SUCCEEDED(api.setTextureStageState(
             device, 0, kD3DTextureStageColorArg1, kD3DTextureArgumentTexture)) &&
+        SUCCEEDED(api.setTextureStageState(
+            device, 0, kD3DTextureStageColorArg2,
+            kD3DTextureArgumentDiffuse)) &&
         SUCCEEDED(api.setTextureStageState(
             device, 0, kD3DTextureStageAlphaOp, kD3DTextureOpSelectArg1)) &&
         SUCCEEDED(api.setTextureStageState(
@@ -642,7 +650,8 @@ bool DrawLayer(
     void* device,
     void* texture,
     const bfvr::stereo::WorldCrosshairProjection& projection,
-    const bfvr::d3d8probe::D3DViewport& viewport) noexcept
+    const bfvr::d3d8probe::D3DViewport& viewport,
+    DWORD tintArgb) noexcept
 {
     if (texture == nullptr)
     {
@@ -661,10 +670,10 @@ bool DrawLayer(
         static_cast<float>(viewport.y) + projection.centerY +
         projection.halfExtentPixels;
     const std::array<Vertex, 4> vertices = {{
-        {left, top, projection.depth, 1.0F, 0.0F, 0.0F},
-        {right, top, projection.depth, 1.0F, 1.0F, 0.0F},
-        {left, bottom, projection.depth, 1.0F, 0.0F, 1.0F},
-        {right, bottom, projection.depth, 1.0F, 1.0F, 1.0F}}};
+        {left, top, projection.depth, 1.0F, tintArgb, 0.0F, 0.0F},
+        {right, top, projection.depth, 1.0F, tintArgb, 1.0F, 0.0F},
+        {left, bottom, projection.depth, 1.0F, tintArgb, 0.0F, 1.0F},
+        {right, bottom, projection.depth, 1.0F, tintArgb, 1.0F, 1.0F}}};
     return SUCCEEDED(api.setTexture(device, 0, texture)) &&
         SUCCEEDED(api.drawPrimitiveUp(
             device,
@@ -833,14 +842,16 @@ bool RenderD3D8WorldCrosshair(
                     frame.device,
                     g_crosshairTexture,
                     projections[eye],
-                    frame.viewport));
+                    frame.viewport,
+                    crosshair.tintArgb));
             const bool markerDrawn = !crosshair.hitMarkerVisible ||
                 (targetReady && DrawLayer(
                     api,
                     frame.device,
                     g_hitMarkerTexture,
                     projections[eye],
-                    frame.viewport));
+                    frame.viewport,
+                    crosshair.tintArgb));
             rendered = rendered && baseDrawn && markerDrawn;
         }
     }

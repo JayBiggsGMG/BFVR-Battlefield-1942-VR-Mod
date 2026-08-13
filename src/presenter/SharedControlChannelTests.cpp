@@ -106,6 +106,9 @@ int main()
     InterlockedIncrement(&producerBlock->hapticShotRightSequence);
     InterlockedIncrement(&producerBlock->hapticShotBothSequence);
     InterlockedIncrement(&producerBlock->hapticDeathSequence);
+    InterlockedExchange(
+        &producerBlock->localPlayerLifeState,
+        static_cast<LONG>(bfvr::shared::LocalPlayerLifeState::Dead));
     InterlockedIncrement(&producerBlock->hapticNativeMenuHoverSequence);
     passed = Check(
         producer.SignalProducerUpdate() &&
@@ -116,6 +119,10 @@ int main()
                 &presenterBlock->hapticShotBothSequence, 0, 0) == 1 &&
             InterlockedCompareExchange(
                 &presenterBlock->hapticDeathSequence, 0, 0) == 1 &&
+            InterlockedCompareExchange(
+                &presenterBlock->localPlayerLifeState, 0, 0) ==
+                static_cast<LONG>(
+                    bfvr::shared::LocalPlayerLifeState::Dead) &&
             InterlockedCompareExchange(
                 &presenterBlock->hapticNativeMenuHoverSequence,
                 0,

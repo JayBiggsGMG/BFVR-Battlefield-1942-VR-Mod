@@ -124,4 +124,37 @@ float AdvanceComfortVignetteStrength(
     return std::max(current - maximumStep, target);
 }
 
+bool UpdateDeathComfortActive(
+    DeathComfortState& state,
+    bool enabled,
+    std::int32_t deathSequence,
+    bool localPlayerLifeKnown,
+    bool localPlayerAlive,
+    std::uint64_t nowMilliseconds) noexcept
+{
+    const bool newDeath = deathSequence != state.observedDeathSequence;
+    state.observedDeathSequence = deathSequence;
+    if (!enabled)
+    {
+        state.active = false;
+        state.activeUntilMilliseconds = 0;
+        return false;
+    }
+    if (newDeath)
+    {
+        state.active = true;
+        state.activeUntilMilliseconds = nowMilliseconds +
+            kDeathComfortDurationMilliseconds;
+    }
+    if (state.active && localPlayerLifeKnown && localPlayerAlive)
+    {
+        state.active = false;
+    }
+    if (state.active && nowMilliseconds >= state.activeUntilMilliseconds)
+    {
+        state.active = false;
+    }
+    return state.active;
+}
+
 } // namespace bfvr::stereo

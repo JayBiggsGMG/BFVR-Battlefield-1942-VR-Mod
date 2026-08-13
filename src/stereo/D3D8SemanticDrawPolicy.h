@@ -50,11 +50,14 @@ struct BF1942D3D8DrawSignature
 // above, but unlike remote soldiers they are rendered through BF1942's narrow
 // viewmodel projection. This fail-closed conjunction lets the VR replay omit
 // those assets globally without changing the game's flat render or content.
+// An active magnified world view invalidates projection as an ownership cue:
+// scoped world soldiers use the same narrow projection and must remain drawn.
 [[nodiscard]] bool IsBF1942FirstPersonArmDraw(
     D3D8SemanticDrawClass semanticClass,
     bool perspective,
     float projectionM00,
-    float projectionM11) noexcept;
+    float projectionM11,
+    bool magnifiedWorldViewActive = false) noexcept;
 
 // BF1942's second water pass uses fixed-function camera-space reflection
 // coordinates. In stereo, use a shared head-centre material View and

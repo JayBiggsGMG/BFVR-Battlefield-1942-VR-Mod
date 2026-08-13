@@ -116,6 +116,31 @@ desktop mirror, controller actions, haptics, and composition-layer submission.
 updates preserve an existing user file. New keys require a safe default,
 decode/encode coverage, menu wiring where applicable, and persistence tests.
 
+The potential 1.0.2 settings group adds these runtime invariants:
+
+- `show_arms` is a migration-compatible three-state visibility setting:
+  `arms_and_hands`, `hands_only`, or `no_hands_or_arms`. Hands Only retains
+  only game-selected mesh templates with explicit left/right-hand names;
+  combined and unrecognized meshes fail closed to hidden. Tracking, native
+  animation, controller weapon transforms, hand placement, and elbow solving
+  continue while draws are hidden. Do not treat a narrow projection alone as
+  ownership during an active or entering scope: magnified world soldiers
+  satisfy the same lower bounds, so suppression must fail closed there.
+- Hand weapons, mounted guns, and controller-pointer knife/throwable/gadget
+  items each own an independent `WorldCrosshairMode`. Crosshair color is a
+  shared base tint inside the existing D3D8 per-eye renderer; do not move this
+  path into an OpenXR overlay merely to isolate it from grading.
+- `hapticDeathSequence` and `localPlayerLifeState` share the verified
+  local-player observer. Shared protocol version 21 lets the presenter start
+  a bounded death effect and cancel it on a verified respawn.
+- Movement and death comfort are two targets of one `OpenXRComfortVignette`.
+  Death styling takes priority inside that compositor, which remains above
+  the stereo world and below Ref2/interface layers.
+- Color profile, exposure, contrast, and saturation are fused into the final
+  world scaler shader after AO/SSGI/reflections/bloom. Both world eyes always
+  retain that pass for live changes. Ref2 is passed neutral color settings;
+  separately composed UI never enters the shader.
+
 ## Critical compatibility invariants
 
 These are established behaviors, not cleanup opportunities.

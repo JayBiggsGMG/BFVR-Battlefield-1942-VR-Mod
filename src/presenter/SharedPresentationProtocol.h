@@ -11,7 +11,7 @@ namespace bfvr::shared
 using SharedTextureLogCallback = void (*)(void* context, const wchar_t* message);
 
 constexpr DWORD kProtocolMagic = 0x52564642; // "BFVR"
-constexpr DWORD kProtocolVersion = 20;
+constexpr DWORD kProtocolVersion = 21;
 constexpr std::size_t kTextureCount = 3;
 constexpr std::size_t kDepthTextureCount = 2;
 constexpr std::size_t kSharedNameCapacity = 128;
@@ -22,6 +22,13 @@ constexpr DWORD kProducerFlagScreenSpaceGlobalIlluminationRequested = 0x8;
 constexpr LONG kFrameOverlayBackToGameVisible = 0x1;
 constexpr LONG kFrameOverlayBackToGameHovered = 0x2;
 constexpr LONG kFramePresentationEyeFillingScope = 0x1;
+
+enum class LocalPlayerLifeState : LONG
+{
+    Unknown = 0,
+    Alive = 1,
+    Dead = 2
+};
 
 constexpr DWORD kControllerSampleFlagSessionFocused = 0x1;
 constexpr DWORD kControllerHandFlagAimActive = 0x1;
@@ -243,6 +250,11 @@ struct ControlBlock
     volatile LONG hapticShotBothSequence = 0;
     volatile LONG hapticDeathSequence = 0;
     volatile LONG hapticNativeMenuHoverSequence = 0;
+    // Continuously published by the same verified local-player poll that
+    // emits hapticDeathSequence. The presenter uses Alive to end the bounded
+    // death-comfort interval immediately on respawn.
+    volatile LONG localPlayerLifeState =
+        static_cast<LONG>(LocalPlayerLifeState::Unknown);
     // Published by the x86 producer before frameSequence. Gameplay HUD uses
     // VIEW; native menus use a latched LOCAL pose.
     volatile LONG frameUiReferenceMode =

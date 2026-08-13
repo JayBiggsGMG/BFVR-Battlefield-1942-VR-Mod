@@ -44,7 +44,8 @@ constexpr char kPixelShader[] = R"(
 cbuffer Configuration : register(b0)
 {
     float strength;
-    float3 padding;
+    float deathBlend;
+    float2 padding;
 };
 
 float4 main(float4 position : SV_Position, float2 texcoord : TEXCOORD0) : SV_Target
@@ -56,8 +57,18 @@ float4 main(float4 position : SV_Position, float2 texcoord : TEXCOORD0) : SV_Tar
     // reserve inside the physical headset FOV instead of ending at its edge.
     const float innerRadius = lerp(1.50, 0.38, saturate(strength));
     const float outerRadius = lerp(1.80, 0.68, saturate(strength));
-    const float opacity = smoothstep(innerRadius, outerRadius, radius);
-    return float4(0.0, 0.0, 0.0, opacity);
+    const float movementOpacity = smoothstep(innerRadius, outerRadius, radius);
+    // Death comfort takes priority inside this same compositor. It narrows
+    // farther than movement comfort and uses a muted dark red rather than a
+    // bright warning red. The clear center remains fully stereo and tracked.
+    const float deathOpacity = smoothstep(0.16, 0.52, radius);
+    const float death = saturate(deathBlend);
+    const float opacity = lerp(movementOpacity, deathOpacity, death);
+    const float3 color = lerp(
+        float3(0.0, 0.0, 0.0),
+        float3(0.22, 0.012, 0.008),
+        death);
+    return float4(color * opacity, opacity);
 }
 )";
 
@@ -172,6 +183,7 @@ bool OpenXRComfortVignette::Initialize(
 
 std::size_t OpenXRComfortVignette::AppendLayers(
     float targetStrength,
+    float targetDeathBlend,
     float deltaSeconds,
     XrSpace viewSpace,
     const XrPosef& headInLocalSpace,
@@ -183,13 +195,20 @@ std::size_t OpenXRComfortVignette::AppendLayers(
         currentStrength_,
         targetStrength,
         deltaSeconds);
-    if (currentStrength_ <= kVisibleStrengthThreshold)
+    currentDeathBlend_ = stereo::AdvanceComfortVignetteStrength(
+        currentDeathBlend_,
+        targetDeathBlend,
+        deltaSeconds);
+    if (currentStrength_ <= kVisibleStrengthThreshold &&
+        currentDeathBlend_ <= kVisibleStrengthThreshold)
     {
         currentStrength_ = 0.0F;
+        currentDeathBlend_ = 0.0F;
         return 0;
     }
     if (destination == nullptr || capacity < layers_.size() ||
-        swapchain_.handle == XR_NULL_HANDLE || !Render(currentStrength_) ||
+        swapchain_.handle == XR_NULL_HANDLE ||
+        !Render(currentStrength_, currentDeathBlend_) ||
         !BuildOpenXREyeFillingScopeLayers(
             viewSpace,
             swapchain_.handle,
@@ -209,9 +228,17 @@ std::size_t OpenXRComfortVignette::AppendLayers(
     if (!firstVisibleFrameLogged_)
     {
         WriteLog(
-            L"Comfort vignette submitted its first movement-only world layer at strength %.3f; Ref2 HUD, scope, Quick Menu, and VR Settings remain above it and unobscured.",
-            currentStrength_);
+            L"Comfort vignette submitted its first world-only layer at movement strength %.3f and death blend %.3f; Ref2 HUD, scope, Quick Menu, and VR Settings remain above it and unobscured.",
+            currentStrength_,
+            currentDeathBlend_);
         firstVisibleFrameLogged_ = true;
+    }
+    if (currentDeathBlend_ > kVisibleStrengthThreshold &&
+        !firstDeathFrameLogged_)
+    {
+        WriteLog(
+            L"Death-camera comfort submitted its first muted dark-red aperture through the existing single vignette compositor.");
+        firstDeathFrameLogged_ = true;
     }
     return layers_.size();
 }
@@ -234,7 +261,9 @@ void OpenXRComfortVignette::Shutdown()
     swapchainFormat_ = DXGI_FORMAT_UNKNOWN;
     layers_ = {};
     currentStrength_ = 0.0F;
+    currentDeathBlend_ = 0.0F;
     firstVisibleFrameLogged_ = false;
+    firstDeathFrameLogged_ = false;
     logCallback_ = nullptr;
     logContext_ = nullptr;
 }
@@ -395,7 +424,7 @@ bool OpenXRComfortVignette::CreateSwapchain()
     return true;
 }
 
-bool OpenXRComfortVignette::Render(float strength)
+bool OpenXRComfortVignette::Render(float strength, float deathBlend)
 {
     std::uint32_t imageIndex = 0;
     XrSwapchainImageAcquireInfo acquireInfo{
@@ -414,7 +443,10 @@ bool OpenXRComfortVignette::Render(float strength)
     if (XR_SUCCEEDED(result) && swapchain_.targets[imageIndex] != nullptr)
     {
         const std::array<float, 4> configuration = {
-            std::clamp(strength, 0.0F, 1.0F), 0.0F, 0.0F, 0.0F};
+            std::clamp(strength, 0.0F, 1.0F),
+            std::clamp(deathBlend, 0.0F, 1.0F),
+            0.0F,
+            0.0F};
         context_->UpdateSubresource(
             configurationBuffer_,
             0,

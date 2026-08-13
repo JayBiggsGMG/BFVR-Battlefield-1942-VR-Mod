@@ -3,6 +3,48 @@
 This file records user-visible changes to BFVR. GitHub Release notes should use
 a shorter version of the same information.
 
+## [Unreleased] - potential 1.0.2
+
+### Added
+
+- Added a live **Show** selector with Arms & Hands, Hands Only, and No
+  Hands/Arms choices, plus a default-on **Death Camera Comfort** option to VR
+  Settings. The visibility selector leaves native animation and pose solving
+  active. Death comfort uses a tighter muted dark-red vignette during the
+  native death-camera flight without flattening or freezing VR.
+- Added an independent **Knives / Throwables / Gadgets** 3D crosshair mode
+  with On, Hit Marker Only, and Off choices. It defaults to On.
+- Added an eight-choice **3D Crosshair Color** selector with White, Green,
+  Blue, Purple, Red, Pink, Orange, and Yellow choices for the crosshair and hit
+  marker. The existing per-eye world renderer now tints neutral grayscale art
+  without changing endpoint calculation, placement, or angular size.
+- Added a second Graphics page with **Original**, **Filmic**, and **Vibrant**
+  color profiles plus centered exposure, contrast, and saturation sliders and
+  a dedicated color reset action.
+
+### Changed
+
+- World color treatment is fused into BFVR's existing final D3D11 composite.
+  It affects both stereo world eyes and the world-drawn 3D crosshair, while
+  native HUD/menu pixels, scopes, Quick Menu, VR Settings, and other separate
+  interface layers retain their original colors.
+- Exact scoped hit feedback now follows the selected **3D Crosshair Color**.
+  BFVR temporarily synchronizes BF1942's native crosshair color while scoped
+  and restores the original flat-game color afterward; scope artwork and
+  saved profile files are unchanged.
+- The movement and death comfort effects now share one prioritized vignette
+  compositor, so enabling both cannot stack duplicate OpenXR layers.
+- Reorganized VR Settings so both comfort-vignette controls are adjacent on
+  the live-presentation page, while height adjustment, standing calibration,
+  and recentering share a separate physical-calibration page.
+
+### Fixed
+
+- Fixed hidden first-person parts incorrectly hiding other soldiers' skinned bodies through a
+  scope. Arm suppression now fails closed during scope activation and scoped
+  world rendering; helmets, attachments, weapons, and full soldier bodies
+  remain visible.
+
 ## [1.0.1] - 2026-08-11
 
 ### Added

@@ -18,6 +18,7 @@ constexpr float kComfortVignetteMaximumSampleIntervalSeconds = 0.25F;
 constexpr float kComfortVignetteMaximumPlausibleSpeedMetersPerSecond = 200.0F;
 constexpr float kComfortVignetteEaseInSeconds = 0.20F;
 constexpr float kComfortVignetteEaseOutSeconds = 0.45F;
+constexpr std::uint64_t kDeathComfortDurationMilliseconds = 3000;
 
 struct ComfortVignetteMotionSample
 {
@@ -37,6 +38,13 @@ struct ComfortVignetteMotionState
     bool valid = false;
 };
 
+struct DeathComfortState
+{
+    std::int32_t observedDeathSequence = 0;
+    std::uint64_t activeUntilMilliseconds = 0;
+    bool active = false;
+};
+
 // Returns a stable binary target from translation alone. Orientation is
 // deliberately absent from the sample: HMD look, artificial turning, turret
 // aim, and vehicle rotation in place cannot activate the effect. A context
@@ -51,5 +59,17 @@ struct ComfortVignetteMotionState
     float currentStrength,
     float targetStrength,
     float deltaSeconds) noexcept;
+
+// Starts only on a new verified alive-to-dead event, remains bounded to the
+// native camera's roughly three-second flight, and cancels immediately once
+// the producer verifies that the local player is alive again. Disabling the
+// setting consumes the current sequence so re-enabling cannot replay it.
+[[nodiscard]] bool UpdateDeathComfortActive(
+    DeathComfortState& state,
+    bool enabled,
+    std::int32_t deathSequence,
+    bool localPlayerLifeKnown,
+    bool localPlayerAlive,
+    std::uint64_t nowMilliseconds) noexcept;
 
 } // namespace bfvr::stereo

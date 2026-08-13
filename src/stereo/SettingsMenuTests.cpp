@@ -83,8 +83,8 @@ bool TestBounds()
             SettingsMenuTab::VrSettings, false, 0) ==
             SettingsMenuSelection::PlayModeNext &&
         SettingsMenuSelectionAt(
-            0.70F, 0.293F, true, false,
-            SettingsMenuTab::VrSettings, false, 1) ==
+            0.70F, 0.176F, true, false,
+            SettingsMenuTab::VrSettings, false, 2) ==
             SettingsMenuSelection::VrHeightAdjustment &&
         SettingsMenuSelectionAt(
             0.57F, 0.132F, true, false,
@@ -92,28 +92,28 @@ bool TestBounds()
             SettingsMenuSelection::ComfortVignetteEnabled &&
         SettingsMenuSelectionAt(
             0.889F,
-            0.161F,
+            0.146F,
             false,
             false,
             SettingsMenuTab::Controls,
             false) == SettingsMenuSelection::OffHandGripNext &&
         SettingsMenuSelectionAt(
             0.57F,
-            0.508F,
+            0.327F,
             false,
             false,
             SettingsMenuTab::Controls,
             false) == SettingsMenuSelection::InvertFlightPitch &&
         SettingsMenuSelectionAt(
             0.57F,
-            0.818F,
+            0.767F,
             false,
             false,
             SettingsMenuTab::Controls,
             false) == SettingsMenuSelection::SniperScopeSmoothingEnabled &&
         SettingsMenuSelectionAt(
             0.57F,
-            0.560F,
+            0.400F,
             false,
             false,
             SettingsMenuTab::Controls,
@@ -121,18 +121,35 @@ bool TestBounds()
             SettingsMenuSelection::AircraftPitchWithRoll &&
         SettingsMenuSelectionAt(
             0.57F,
-            0.611F,
+            0.474F,
             false,
             false,
             SettingsMenuTab::Controls,
             false) == SettingsMenuSelection::SwapAircraftSticks &&
         SettingsMenuSelectionAt(
             0.889F,
-            0.322F,
+            0.293F,
             false,
             false,
             SettingsMenuTab::Controls,
-            false) == SettingsMenuSelection::HandCrosshairNext &&
+            false,
+            1) == SettingsMenuSelection::HandCrosshairNext &&
+        SettingsMenuSelectionAt(
+            0.889F, 0.625F, false, false,
+            SettingsMenuTab::Controls, false, 1) ==
+            SettingsMenuSelection::PointerItemCrosshairNext &&
+        SettingsMenuSelectionAt(
+            0.889F, 0.503F, false, false,
+            SettingsMenuTab::VrSettings, false, 1) ==
+            SettingsMenuSelection::ShowNext &&
+        SettingsMenuSelectionAt(
+            0.57F, 0.293F, false, false,
+            SettingsMenuTab::VrSettings, false, 1) ==
+            SettingsMenuSelection::DeathCameraComfortEnabled &&
+        SettingsMenuSelectionAt(
+            0.889F, 0.684F, false, false,
+            SettingsMenuTab::VrSettings, false, 1) ==
+            SettingsMenuSelection::CrosshairColorNext &&
         SettingsMenuSelectionAt(
             0.57F,
             0.571F,
@@ -175,6 +192,22 @@ bool TestBounds()
             false,
             SettingsMenuTab::GraphicsAudio,
             true) == SettingsMenuSelection::None &&
+        SettingsMenuSelectionAt(
+            0.889F, 0.156F, false, false,
+            SettingsMenuTab::GraphicsAudio, false, 1) ==
+            SettingsMenuSelection::ColorProfileNext &&
+        SettingsMenuSelectionAt(
+            0.70F, 0.308F, false, false,
+            SettingsMenuTab::GraphicsAudio, false, 1) ==
+            SettingsMenuSelection::ColorExposure &&
+        SettingsMenuSelectionAt(
+            0.70F, 0.610F, false, false,
+            SettingsMenuTab::GraphicsAudio, false, 1) ==
+            SettingsMenuSelection::ColorSaturation &&
+        SettingsMenuSelectionAt(
+            0.60F, 0.776F, false, false,
+            SettingsMenuTab::GraphicsAudio, false, 1) ==
+            SettingsMenuSelection::ResetColorSettings &&
         SettingsMenuSelectionAt(-0.1F, 0.5F, false, false) ==
             SettingsMenuSelection::None;
 }
@@ -359,13 +392,13 @@ bool TestInteractionAndPlacement()
         return false;
     }
 
-    // Page 2 exposes the comfort toggle, keeps manual trim separate from the
-    // measured physical floor-to-eye height, and retains immediate recenter.
+    // Page 2 groups both comfort effects with the other live presentation
+    // controls, including the base tint shared by both 3D crosshair layers.
     state = interaction.Snapshot();
     AimAt(input, state.panelPose, state.widthMeters, 0.66F, 0.87F);
     Click(interaction, input);
     state = interaction.Snapshot();
-    if (state.page != 1 || !state.arrowLeftVisible || state.arrowRightVisible)
+    if (state.page != 1 || !state.arrowLeftVisible || !state.arrowRightVisible)
     {
         return false;
     }
@@ -379,9 +412,45 @@ bool TestInteractionAndPlacement()
         return false;
     }
     state = interaction.Snapshot();
+    AimAt(input, state.panelPose, state.widthMeters, 0.57F, 0.293F);
+    Click(interaction, input);
+    if (interaction.Snapshot().values.deathCameraComfortEnabled ||
+        !interaction.TakeValuesChanged())
+    {
+        return false;
+    }
+    state = interaction.Snapshot();
+    AimAt(input, state.panelPose, state.widthMeters, 0.889F, 0.503F);
+    Click(interaction, input);
+    if (interaction.Snapshot().values.firstPersonVisibility !=
+            bfvr::settings::FirstPersonVisibility::HandsOnly ||
+        !interaction.TakeValuesChanged())
+    {
+        return false;
+    }
+    state = interaction.Snapshot();
+    AimAt(input, state.panelPose, state.widthMeters, 0.889F, 0.684F);
+    Click(interaction, input);
+    if (interaction.Snapshot().values.crosshairColor !=
+            bfvr::settings::CrosshairColor::Blue ||
+        !interaction.TakeValuesChanged())
+    {
+        return false;
+    }
+
+    // Page 3 keeps manual trim, measured standing height, and immediate
+    // forward recentering together as physical calibration controls.
+    state = interaction.Snapshot();
+    AimAt(input, state.panelPose, state.widthMeters, 0.66F, 0.87F);
+    Click(interaction, input);
+    state = interaction.Snapshot();
+    if (state.page != 2 || !state.arrowLeftVisible || state.arrowRightVisible)
+    {
+        return false;
+    }
     input.standingHeightValid = true;
     input.standingHeightMeters = 1.82F;
-    AimAt(input, state.panelPose, state.widthMeters, 0.60F, 0.503F);
+    AimAt(input, state.panelPose, state.widthMeters, 0.60F, 0.361F);
     Click(interaction, input);
     if (interaction.Snapshot().values.standingEyeHeightCentimeters != 182 ||
         interaction.Snapshot().values.vrHeightAdjustmentCentimeters != 0 ||
@@ -392,7 +461,7 @@ bool TestInteractionAndPlacement()
         return false;
     }
     state = interaction.Snapshot();
-    AimAt(input, state.panelPose, state.widthMeters, 0.60F, 0.684F);
+    AimAt(input, state.panelPose, state.widthMeters, 0.60F, 0.596F);
     Click(interaction, input);
     if (interaction.TakeCommand() != SettingsMenuCommand::RecenterForward ||
         interaction.Snapshot().status !=
@@ -400,6 +469,9 @@ bool TestInteractionAndPlacement()
     {
         return false;
     }
+    state = interaction.Snapshot();
+    AimAt(input, state.panelPose, state.widthMeters, 0.59F, 0.87F);
+    Click(interaction, input);
     state = interaction.Snapshot();
     AimAt(input, state.panelPose, state.widthMeters, 0.59F, 0.87F);
     Click(interaction, input);
@@ -418,7 +490,7 @@ bool TestInteractionAndPlacement()
         return false;
     }
     state = interaction.Snapshot();
-    AimAt(input, state.panelPose, state.widthMeters, 0.889F, 0.161F);
+    AimAt(input, state.panelPose, state.widthMeters, 0.889F, 0.146F);
     input.predictedDisplayTime += 11'111'111;
     interaction.Update(input);
     Click(interaction, input);
@@ -429,7 +501,14 @@ bool TestInteractionAndPlacement()
         return false;
     }
     state = interaction.Snapshot();
-    AimAt(input, state.panelPose, state.widthMeters, 0.889F, 0.322F);
+    AimAt(input, state.panelPose, state.widthMeters, 0.66F, 0.87F);
+    Click(interaction, input);
+    state = interaction.Snapshot();
+    if (state.page != 1 || !state.arrowLeftVisible || state.arrowRightVisible)
+    {
+        return false;
+    }
+    AimAt(input, state.panelPose, state.widthMeters, 0.889F, 0.293F);
     input.predictedDisplayTime += 11'111'111;
     interaction.Update(input);
     Click(interaction, input);
@@ -446,7 +525,19 @@ bool TestInteractionAndPlacement()
         return false;
     }
     state = interaction.Snapshot();
-    AimAt(input, state.panelPose, state.widthMeters, 0.57F, 0.508F);
+    AimAt(input, state.panelPose, state.widthMeters, 0.889F, 0.625F);
+    Click(interaction, input);
+    if (interaction.Snapshot().values.pointerItemCrosshair !=
+            bfvr::settings::WorldCrosshairMode::HitMarkerOnly ||
+        !interaction.TakeValuesChanged())
+    {
+        return false;
+    }
+    state = interaction.Snapshot();
+    AimAt(input, state.panelPose, state.widthMeters, 0.59F, 0.87F);
+    Click(interaction, input);
+    state = interaction.Snapshot();
+    AimAt(input, state.panelPose, state.widthMeters, 0.57F, 0.327F);
     input.predictedDisplayTime += 11'111'111;
     interaction.Update(input);
     Click(interaction, input);
@@ -458,7 +549,7 @@ bool TestInteractionAndPlacement()
         return false;
     }
     state = interaction.Snapshot();
-    AimAt(input, state.panelPose, state.widthMeters, 0.57F, 0.767F);
+    AimAt(input, state.panelPose, state.widthMeters, 0.57F, 0.693F);
     input.predictedDisplayTime += 11'111'111;
     interaction.Update(input);
     Click(interaction, input);
@@ -468,7 +559,7 @@ bool TestInteractionAndPlacement()
         return false;
     }
     state = interaction.Snapshot();
-    AimAt(input, state.panelPose, state.widthMeters, 0.57F, 0.818F);
+    AimAt(input, state.panelPose, state.widthMeters, 0.57F, 0.767F);
     input.predictedDisplayTime += 11'111'111;
     interaction.Update(input);
     Click(interaction, input);
@@ -478,7 +569,7 @@ bool TestInteractionAndPlacement()
         return false;
     }
     state = interaction.Snapshot();
-    AimAt(input, state.panelPose, state.widthMeters, 0.57F, 0.560F);
+    AimAt(input, state.panelPose, state.widthMeters, 0.57F, 0.400F);
     input.predictedDisplayTime += 11'111'111;
     interaction.Update(input);
     Click(interaction, input);
@@ -488,7 +579,7 @@ bool TestInteractionAndPlacement()
         return false;
     }
     state = interaction.Snapshot();
-    AimAt(input, state.panelPose, state.widthMeters, 0.57F, 0.611F);
+    AimAt(input, state.panelPose, state.widthMeters, 0.57F, 0.474F);
     input.predictedDisplayTime += 11'111'111;
     interaction.Update(input);
     Click(interaction, input);
@@ -546,6 +637,53 @@ bool TestInteractionAndPlacement()
     Click(interaction, input);
     if (interaction.Snapshot().values.waterReflectionsEnabled ||
         !interaction.TakeValuesChanged())
+    {
+        return false;
+    }
+    state = interaction.Snapshot();
+    AimAt(input, state.panelPose, state.widthMeters, 0.66F, 0.87F);
+    Click(interaction, input);
+    state = interaction.Snapshot();
+    if (state.page != 1 || !state.arrowLeftVisible || state.arrowRightVisible)
+    {
+        return false;
+    }
+    AimAt(input, state.panelPose, state.widthMeters, 0.889F, 0.156F);
+    Click(interaction, input);
+    if (interaction.Snapshot().values.colorProfile !=
+            bfvr::settings::ColorProfile::Filmic ||
+        !interaction.TakeValuesChanged())
+    {
+        return false;
+    }
+    state = interaction.Snapshot();
+    AimAt(input, state.panelPose, state.widthMeters, 0.75F, 0.308F);
+    Click(interaction, input);
+    if (interaction.Snapshot().values.colorExposureTenthsEv <= 0 ||
+        !interaction.TakeValuesChanged())
+    {
+        return false;
+    }
+    state = interaction.Snapshot();
+    AimAt(input, state.panelPose, state.widthMeters, 0.61F, 0.610F);
+    Click(interaction, input);
+    if (interaction.Snapshot().values.colorSaturationPercent >= 0 ||
+        !interaction.TakeValuesChanged())
+    {
+        return false;
+    }
+    state = interaction.Snapshot();
+    AimAt(input, state.panelPose, state.widthMeters, 0.60F, 0.776F);
+    Click(interaction, input);
+    const auto& resetColorValues = interaction.Snapshot().values;
+    if (resetColorValues.colorProfile !=
+            bfvr::settings::ColorProfile::Original ||
+        resetColorValues.colorExposureTenthsEv != 0 ||
+        resetColorValues.colorContrastPercent != 0 ||
+        resetColorValues.colorSaturationPercent != 0 ||
+        !interaction.TakeValuesChanged() ||
+        interaction.Snapshot().status !=
+            bfvr::stereo::SettingsMenuStatus::ColorSettingsReset)
     {
         return false;
     }
@@ -653,6 +791,16 @@ bool TestArt(const wchar_t* directory)
         return false;
     }
     variant = state;
+    variant.page = 1;
+    variant.values.firstPersonVisibility =
+        bfvr::settings::FirstPersonVisibility::HandsOnly;
+    variant.values.deathCameraComfortEnabled = false;
+    variant.values.crosshairColor = bfvr::settings::CrosshairColor::Pink;
+    if (!differs(variant))
+    {
+        return false;
+    }
+    variant = state;
     variant.tab = SettingsMenuTab::Controls;
     variant.values.offHandGripStyle =
         bfvr::settings::OffHandGripStyle::Toggle;
@@ -667,8 +815,24 @@ bool TestArt(const wchar_t* directory)
     {
         return false;
     }
+    variant.page = 1;
+    variant.values.pointerItemCrosshair =
+        bfvr::settings::WorldCrosshairMode::HitMarkerOnly;
+    if (!differs(variant))
+    {
+        return false;
+    }
     variant = state;
     variant.tab = SettingsMenuTab::GraphicsAudio;
+    if (!differs(variant))
+    {
+        return false;
+    }
+    variant.page = 1;
+    variant.values.colorProfile = bfvr::settings::ColorProfile::Vibrant;
+    variant.values.colorExposureTenthsEv = -5;
+    variant.values.colorContrastPercent = 25;
+    variant.values.colorSaturationPercent = -40;
     if (!differs(variant))
     {
         return false;
@@ -790,8 +954,9 @@ bool CaptureArt(const wchar_t* assetDirectory, const wchar_t* outputDirectory)
         state.tab = tab;
         state.page = page;
         state.arrowLeftVisible = page > 0;
-        state.arrowRightVisible =
-            tab == SettingsMenuTab::VrSettings && page == 0;
+        state.arrowRightVisible = page + 1 <
+            bfvr::stereo::kSettingsMenuPageCounts[
+                static_cast<std::size_t>(tab)];
         state.controllerLayoutVisible = overlay;
         state.values.invertFlightPitch = checked;
         state.values.aircraftPitchWithRoll = checked;
@@ -832,6 +997,12 @@ bool CaptureArt(const wchar_t* assetDirectory, const wchar_t* outputDirectory)
             false,
             1) &&
         capture(
+            SettingsMenuTab::VrSettings,
+            L"Settings-VR-Page3.bmp",
+            false,
+            false,
+            2) &&
+        capture(
             SettingsMenuTab::Controls,
             L"Settings-Controls.bmp",
             false,
@@ -842,10 +1013,22 @@ bool CaptureArt(const wchar_t* assetDirectory, const wchar_t* outputDirectory)
             false,
             true) &&
         capture(
+            SettingsMenuTab::Controls,
+            L"Settings-Controls-Crosshairs.bmp",
+            false,
+            true,
+            1) &&
+        capture(
             SettingsMenuTab::GraphicsAudio,
             L"Settings-Graphics-Audio.bmp",
             false,
             false) &&
+        capture(
+            SettingsMenuTab::GraphicsAudio,
+            L"Settings-Graphics-Color.bmp",
+            false,
+            false,
+            1) &&
         capture(
             SettingsMenuTab::Controls,
             L"Settings-Controls-Overlay.bmp",

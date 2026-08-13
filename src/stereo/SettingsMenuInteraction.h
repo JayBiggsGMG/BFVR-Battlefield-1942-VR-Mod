@@ -44,12 +44,19 @@ enum class SettingsMenuSelection : std::uint32_t
     AutoCalibrateStandingHeight,
     RecenterForward,
     ComfortVignetteEnabled,
+    ShowPrevious,
+    ShowNext,
+    DeathCameraComfortEnabled,
+    CrosshairColorPrevious,
+    CrosshairColorNext,
     OffHandGripPrevious,
     OffHandGripNext,
     HandCrosshairPrevious,
     HandCrosshairNext,
     MountedCrosshairPrevious,
     MountedCrosshairNext,
+    PointerItemCrosshairPrevious,
+    PointerItemCrosshairNext,
     InvertFlightPitch,
     AircraftPitchWithRoll,
     SwapAircraftSticks,
@@ -65,7 +72,13 @@ enum class SettingsMenuSelection : std::uint32_t
     BloomEnabled,
     BloomThreshold,
     BloomIntensity,
-    WaterReflectionsEnabled
+    WaterReflectionsEnabled,
+    ColorProfilePrevious,
+    ColorProfileNext,
+    ColorExposure,
+    ColorContrast,
+    ColorSaturation,
+    ResetColorSettings
 };
 
 enum class SettingsMenuCommand : std::uint32_t
@@ -92,7 +105,8 @@ enum class SettingsMenuStatus : std::uint32_t
     StandingHeightUnavailable,
     StandingModeRequired,
     ForwardRecentered,
-    ForwardRecenterFailed
+    ForwardRecenterFailed,
+    ColorSettingsReset
 };
 
 constexpr std::uint32_t kSettingsMenuTextureSize = 1024;
@@ -114,18 +128,24 @@ constexpr std::array<float, 4> kSettingsMenuVrPageOneRowCentersPixels = {
     165.0F, 315.0F, 465.0F, 650.0F};
 constexpr std::array<float, 4> kSettingsMenuVrPageTwoRowCentersPixels = {
     135.0F, 300.0F, 515.0F, 700.0F};
-constexpr std::array<float, 3> kSettingsMenuControlsSelectorRowCentersPixels = {
-    165.0F, 330.0F, 420.0F};
+constexpr std::array<float, 3> kSettingsMenuVrPageThreeRowCentersPixels = {
+    180.0F, 370.0F, 610.0F};
+constexpr float kSettingsMenuControlsGripRowCenterPixels = 150.0F;
+constexpr std::array<float, 3>
+    kSettingsMenuControlsCrosshairRowCentersPixels = {
+        300.0F, 470.0F, 640.0F};
 constexpr std::array<float, 7> kSettingsMenuControlsToggleRowCentersPixels = {
-    520.0F, 573.0F, 626.0F, 679.0F, 732.0F, 785.0F, 838.0F};
+    335.0F, 410.0F, 485.0F, 560.0F, 635.0F, 710.0F, 785.0F};
 constexpr float kSettingsMenuSelectorLeftArrowCenterPixels = 585.0F;
 constexpr float kSettingsMenuSelectorRightArrowCenterPixels = 910.0F;
 constexpr std::array<float, 9> kSettingsMenuGraphicsRowCentersPixels = {
     125.0F, 210.0F, 295.0F, 380.0F,
     465.0F, 550.0F, 635.0F, 720.0F, 805.0F};
+constexpr std::array<float, 5> kSettingsMenuColorRowCentersPixels = {
+    160.0F, 315.0F, 470.0F, 625.0F, 795.0F};
 constexpr std::array<std::uint32_t,
     static_cast<std::size_t>(SettingsMenuTab::Count)>
-    kSettingsMenuPageCounts = {2, 1, 1};
+    kSettingsMenuPageCounts = {3, 2, 2};
 
 struct SettingsMenuSnapshot
 {

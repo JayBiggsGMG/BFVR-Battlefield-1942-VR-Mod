@@ -233,7 +233,7 @@ bool TestProductionSeedAndTypedValues(const std::wstring& directory)
     }
     const auto defaults = store.Defaults();
     const auto decodedDefaults = bfvr::settings::DecodeUserSettings(defaults);
-    if (defaults.values.size() != 27 ||
+    if (defaults.values.size() != 35 ||
         decodedDefaults.playMode != bfvr::settings::PlayMode::Seated ||
         decodedDefaults.artificialTurnMode !=
             bfvr::settings::ArtificialTurnMode::Smooth ||
@@ -243,6 +243,9 @@ bool TestProductionSeedAndTypedValues(const std::wstring& directory)
         decodedDefaults.vrHeightAdjustmentCentimeters != 0 ||
         decodedDefaults.standingEyeHeightCentimeters != 170 ||
         decodedDefaults.comfortVignetteEnabled ||
+        !decodedDefaults.deathCameraComfortEnabled ||
+        decodedDefaults.firstPersonVisibility !=
+            bfvr::settings::FirstPersonVisibility::ArmsAndHands ||
         decodedDefaults.infantryTurnSpeedPercent != 200 ||
         decodedDefaults.invertFlightPitch ||
         decodedDefaults.aircraftPitchWithRoll ||
@@ -257,6 +260,10 @@ bool TestProductionSeedAndTypedValues(const std::wstring& directory)
             bfvr::settings::WorldCrosshairMode::HitMarkerOnly ||
         decodedDefaults.mountedWeaponCrosshair !=
             bfvr::settings::WorldCrosshairMode::On ||
+        decodedDefaults.pointerItemCrosshair !=
+            bfvr::settings::WorldCrosshairMode::On ||
+        decodedDefaults.crosshairColor !=
+            bfvr::settings::CrosshairColor::Green ||
         !decodedDefaults.fxaaEnabled ||
         decodedDefaults.fxaaSharpeningPercent != 30 ||
         !decodedDefaults.ambientOcclusionEnabled ||
@@ -265,7 +272,12 @@ bool TestProductionSeedAndTypedValues(const std::wstring& directory)
         !decodedDefaults.waterReflectionsEnabled ||
          !decodedDefaults.bloomEnabled ||
         decodedDefaults.bloomThresholdPercent != 75 ||
-        decodedDefaults.bloomIntensityPercent != 45)
+        decodedDefaults.bloomIntensityPercent != 45 ||
+        decodedDefaults.colorProfile !=
+            bfvr::settings::ColorProfile::Original ||
+        decodedDefaults.colorExposureTenthsEv != 0 ||
+        decodedDefaults.colorContrastPercent != 0 ||
+        decodedDefaults.colorSaturationPercent != 0)
     {
         return false;
     }
@@ -297,6 +309,9 @@ bool TestProductionSeedAndTypedValues(const std::wstring& directory)
     changed.vrHeightAdjustmentCentimeters = 12;
     changed.standingEyeHeightCentimeters = 182;
     changed.comfortVignetteEnabled = false;
+    changed.deathCameraComfortEnabled = false;
+    changed.firstPersonVisibility =
+        bfvr::settings::FirstPersonVisibility::HandsOnly;
     changed.invertFlightPitch = true;
     changed.aircraftPitchWithRoll = true;
     changed.swapAircraftSticks = true;
@@ -309,6 +324,9 @@ bool TestProductionSeedAndTypedValues(const std::wstring& directory)
         bfvr::settings::WorldCrosshairMode::HitMarkerOnly;
     changed.mountedWeaponCrosshair =
         bfvr::settings::WorldCrosshairMode::Off;
+    changed.pointerItemCrosshair =
+        bfvr::settings::WorldCrosshairMode::HitMarkerOnly;
+    changed.crosshairColor = bfvr::settings::CrosshairColor::Purple;
     changed.fxaaEnabled = false;
     changed.fxaaSharpeningPercent = 80;
     changed.ambientOcclusionEnabled = false;
@@ -318,10 +336,25 @@ bool TestProductionSeedAndTypedValues(const std::wstring& directory)
     changed.bloomEnabled = false;
     changed.bloomThresholdPercent = 55;
     changed.bloomIntensityPercent = 70;
+    changed.colorProfile = bfvr::settings::ColorProfile::Filmic;
+    changed.colorExposureTenthsEv = -7;
+    changed.colorContrastPercent = 18;
+    changed.colorSaturationPercent = -35;
     auto encoded = defaults;
     bfvr::settings::EncodeUserSettings(changed, encoded);
     if (!store.Save(encoded) ||
         bfvr::settings::DecodeUserSettings(store.Load().settings) != changed)
+    {
+        return false;
+    }
+    auto legacySettings = defaults;
+    legacySettings.values["show_arms"] = "false";
+    legacySettings.values["3d_crosshair_color"] = "magenta";
+    const auto legacyDecoded =
+        bfvr::settings::DecodeUserSettings(legacySettings);
+    if (legacyDecoded.firstPersonVisibility !=
+            bfvr::settings::FirstPersonVisibility::NoHandsOrArms ||
+        legacyDecoded.crosshairColor != bfvr::settings::CrosshairColor::Pink)
     {
         return false;
     }
@@ -362,6 +395,9 @@ bool TestProductionSeedAndTypedValues(const std::wstring& directory)
             std::string::npos &&
         contents.find("comfort_vignette_enabled = false") !=
             std::string::npos &&
+        contents.find("death_camera_comfort_enabled = false") !=
+            std::string::npos &&
+        contents.find("show_arms = hands_only") != std::string::npos &&
         contents.find("HUD, scope, Quick Menu, VR Settings") !=
             std::string::npos &&
         contents.find("does not affect vehicles, aircraft, turrets") !=
@@ -384,11 +420,16 @@ bool TestProductionSeedAndTypedValues(const std::wstring& directory)
         contents.find("deliberate movement catches up to raw immediately") !=
             std::string::npos &&
         contents.find("off_hand_grip_style = toggle") != std::string::npos &&
-        contents.find("Gadget crosshairs always remain enabled") !=
+        contents.find("Knife, throwable, and gadget items have their own setting") !=
             std::string::npos &&
         contents.find("hand_weapon_3d_crosshair = hit_marker_only") !=
             std::string::npos &&
         contents.find("mounted_weapon_3d_crosshair = off") !=
+            std::string::npos &&
+        contents.find(
+            "knife_throwable_gadget_3d_crosshair = hit_marker_only") !=
+            std::string::npos &&
+        contents.find("3d_crosshair_color = purple") !=
             std::string::npos &&
         contents.find("fxaa_enabled = false") != std::string::npos &&
         contents.find("fxaa_sharpening_percent = 80") !=
@@ -404,6 +445,14 @@ bool TestProductionSeedAndTypedValues(const std::wstring& directory)
         contents.find("bloom_threshold_percent = 55") !=
             std::string::npos &&
         contents.find("bloom_intensity_percent = 70") !=
+            std::string::npos &&
+        contents.find("color_profile = filmic") != std::string::npos &&
+        contents.find("color_exposure_ev = -0.7") != std::string::npos &&
+        contents.find("color_contrast_percent = 18") !=
+            std::string::npos &&
+        contents.find("color_saturation_percent = -35") !=
+            std::string::npos &&
+        contents.find("Ref2 HUD and separately composed interface layers are unchanged") !=
             std::string::npos &&
         [&]() {
             auto legacy = defaults;

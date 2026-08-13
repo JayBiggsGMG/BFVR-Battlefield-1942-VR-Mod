@@ -45,6 +45,18 @@ constexpr std::uint32_t kMinimumBloomIntensityPercent = 0;
 constexpr std::uint32_t kMaximumBloomIntensityPercent = 100;
 constexpr std::uint32_t kBloomIntensityStepPercent = 5;
 constexpr std::uint32_t kDefaultBloomIntensityPercent = 45;
+constexpr std::int32_t kMinimumColorExposureTenthsEv = -10;
+constexpr std::int32_t kMaximumColorExposureTenthsEv = 10;
+constexpr std::int32_t kColorExposureStepTenthsEv = 1;
+constexpr std::int32_t kDefaultColorExposureTenthsEv = 0;
+constexpr std::int32_t kMinimumColorContrastPercent = -50;
+constexpr std::int32_t kMaximumColorContrastPercent = 50;
+constexpr std::int32_t kColorContrastStepPercent = 1;
+constexpr std::int32_t kDefaultColorContrastPercent = 0;
+constexpr std::int32_t kMinimumColorSaturationPercent = -100;
+constexpr std::int32_t kMaximumColorSaturationPercent = 100;
+constexpr std::int32_t kColorSaturationStepPercent = 1;
+constexpr std::int32_t kDefaultColorSaturationPercent = 0;
 
 enum class OffHandGripStyle : std::uint32_t
 {
@@ -57,6 +69,32 @@ enum class WorldCrosshairMode : std::uint32_t
     Off = 0,
     On,
     HitMarkerOnly
+};
+
+enum class CrosshairColor : std::uint32_t
+{
+    White = 0,
+    Green,
+    Blue,
+    Purple,
+    Red,
+    Pink,
+    Orange,
+    Yellow
+};
+
+enum class ColorProfile : std::uint32_t
+{
+    Original = 0,
+    Filmic,
+    Vibrant
+};
+
+enum class FirstPersonVisibility : std::uint32_t
+{
+    ArmsAndHands = 0,
+    HandsOnly,
+    NoHandsOrArms
 };
 
 enum class PlayMode : std::uint32_t
@@ -91,6 +129,9 @@ struct UserSettingsValues
     std::uint32_t standingEyeHeightCentimeters =
         kDefaultStandingEyeHeightCentimeters;
     bool comfortVignetteEnabled = false;
+    bool deathCameraComfortEnabled = true;
+    FirstPersonVisibility firstPersonVisibility =
+        FirstPersonVisibility::ArmsAndHands;
     bool invertFlightPitch = false;
     bool aircraftPitchWithRoll = false;
     bool swapAircraftSticks = false;
@@ -102,6 +143,8 @@ struct UserSettingsValues
     WorldCrosshairMode handWeaponCrosshair =
         WorldCrosshairMode::HitMarkerOnly;
     WorldCrosshairMode mountedWeaponCrosshair = WorldCrosshairMode::On;
+    WorldCrosshairMode pointerItemCrosshair = WorldCrosshairMode::On;
+    CrosshairColor crosshairColor = CrosshairColor::Green;
     bool fxaaEnabled = true;
     std::uint32_t fxaaSharpeningPercent = kDefaultFxaaSharpeningPercent;
     bool ambientOcclusionEnabled = true;
@@ -113,6 +156,10 @@ struct UserSettingsValues
     bool bloomEnabled = true;
     std::uint32_t bloomThresholdPercent = kDefaultBloomThresholdPercent;
     std::uint32_t bloomIntensityPercent = kDefaultBloomIntensityPercent;
+    ColorProfile colorProfile = ColorProfile::Original;
+    std::int32_t colorExposureTenthsEv = kDefaultColorExposureTenthsEv;
+    std::int32_t colorContrastPercent = kDefaultColorContrastPercent;
+    std::int32_t colorSaturationPercent = kDefaultColorSaturationPercent;
 
     [[nodiscard]] bool operator==(const UserSettingsValues&) const = default;
 };

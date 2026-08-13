@@ -57,7 +57,7 @@ int main()
 {
     bool passed = true;
     const auto profiles = bfvr::OpenXRControllerBindingProfiles();
-    passed &= Expect(profiles.size() == 4, "exactly four profiles expected");
+    passed &= Expect(profiles.size() == 5, "exactly five profiles expected");
 
     const Profile* touch = FindProfile(
         "/interaction_profiles/oculus/touch_controller");
@@ -132,6 +132,32 @@ int main()
                 Hand::Right,
                 "/input/menu/click"),
         "Vive Wand trackpad, squeeze, map, and Quick Menu fallbacks required");
+
+    const Profile* microsoft = FindProfile(
+        "/interaction_profiles/microsoft/motion_controller");
+    passed &= Expect(
+        microsoft != nullptr && microsoft->bindings.size() == 18,
+        "Microsoft motion controllers must expose the Odyssey/WMR layout");
+    for (const Hand hand : {Hand::Left, Hand::Right})
+    {
+        passed &= Expect(
+            HasBinding(
+                microsoft,
+                Action::MovementTurnAxis,
+                hand,
+                "/input/thumbstick") &&
+                HasBinding(
+                    microsoft,
+                    Action::PrimaryFace,
+                    hand,
+                    "/input/trackpad/click") &&
+                HasBinding(
+                    microsoft,
+                    Action::Squeeze,
+                    hand,
+                    "/input/squeeze/click"),
+            "Microsoft thumbstick, trackpad, and squeeze bindings required");
+    }
 
     if (!passed)
     {

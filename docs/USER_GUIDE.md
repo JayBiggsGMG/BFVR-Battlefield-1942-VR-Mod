@@ -52,10 +52,19 @@ Settings panel.
 
 VR Settings includes:
 
-- Seated/Standing play mode and manual height adjustment.
+- Seated/Standing play mode.
 - Snap/Smooth turning, turn speed, and movement direction.
-- Recenter Forward and standing-height calibration.
-- Comfort vignette.
+- A presentation page that places Comfort Vignette and the default-on dark-red
+  Death Camera Comfort effect together, followed by Show and 3D Crosshair
+  Color.
+- A physical-calibration page with manual height adjustment, standing-height
+  calibration, and Recenter Forward.
+- A live **Show** selector with Arms & Hands, Hands Only, and No Hands/Arms.
+  Hands Only retains explicitly named separate hand meshes while hiding arm,
+  combined, and unrecognized meshes. Mods that combine hands and arms cannot
+  be split, so their combined mesh is hidden in Hands Only. Animation,
+  controller hand/elbow placement, and weapon pose solving stay active in all
+  modes, and scoped world characters remain fully visible.
 - Vehicle/aircraft aim inversion.
 - Two aircraft layout options placed directly below Flight Pitch. `Aircraft
   Pitch + Roll on Same Stick` chooses whether pitch shares a stick with roll
@@ -66,8 +75,18 @@ VR Settings includes:
   aircraft axes after controller input is read, rather than depending on a
   Quest-specific button layout.
 - Controller vibration and two-hand grip style.
-- Hand-weapon and mounted-weapon crosshair choices.
+- Hand-weapon, mounted-weapon, and knives/throwables/gadgets crosshair choices,
+  each with On, Hit Marker Only, and Off modes.
+- White, green, blue, purple, red, pink, orange, and yellow 3D crosshair
+  colors. The same color is used for the hit marker, including BF1942's native
+  hit feedback while looking through an exact scope. The original flat-game
+  crosshair color is restored when the scope closes.
 - FXAA, sharpening, ambient occlusion, water reflections, and bloom.
+- A second Graphics page containing Original, Filmic, and Vibrant world color
+  profiles plus exposure, contrast, and saturation controls. Zero is neutral
+  at the center of each manual slider. These settings affect the stereo world
+  and its 3D crosshair, but not the native HUD, menus, scopes, Quick Menu, or
+  VR Settings panel.
 
 Choose **Save** to apply changes. Settings involving startup graphics resources
 say that a BFVR restart is required. **Cancel** discards unsaved changes, and

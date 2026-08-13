@@ -154,12 +154,15 @@ These mappings use the interaction-profile paths standardized by OpenXR. In
 particular, each runtime owns its controller-specific aim pose, so BFVR does
 not apply a Quest-derived angular correction to Index or Vive pointer rays.
 
-VR Settings page 2 includes a default-On `Comfort Vignette` toggle. While the
-local soldier or occupied vehicle translates, BFVR smoothly closes to a stable,
-feathered black peripheral aperture and restores the full view after movement
-stops. A filtered movement-state trigger prevents quantized game transforms
-from making the aperture pulse between simulation updates. Head movement,
-artificial turning, turret aiming, and a
+VR Settings page 2 groups `Comfort Vignette`, `Death Camera Comfort`, `Show`,
+and `3D Crosshair Color`. `Show` selects Arms & Hands, Hands Only, or No
+Hands/Arms. While the local soldier or occupied vehicle
+translates, BFVR smoothly closes to a stable, feathered black peripheral
+aperture and restores the full view after movement stops. A filtered
+movement-state trigger prevents quantized game transforms from making the
+aperture pulse between simulation updates. Page 3 groups manual height,
+standing calibration, and forward recentering. Head movement, artificial
+turning, turret aiming, and a
 vehicle rotating in place do not trigger it. The effect is procedural—there is
 no vignette image asset—and OpenXR composites it over the world but under the
 native HUD, scope texture, Quick Menu, Settings, and other overlays.
@@ -285,11 +288,12 @@ or gameplay-state changes are involved. Set `BFVR_NATIVE_1P_ARMS=0` before
 launch to opt out and restore the prior arm suppression.
 The exact native CrossHair visibility setter is forced off without disabling
 the rest of the HUD. BFVR replaces it with the supplied 64x64 world crosshair
-only for the gadget slots: grenades/TNT (4),
-mines/binoculars/medpack (5), and wrench (6). Knives, pistols, ordinary guns,
-launchers, and the detonator remain excluded. Unknown modded items which reuse
-slots 4/5/6 remain enabled by policy because those slots are conventionally
-gadget families; all other infantry slots remain excluded. A non-default
+for controller-pointer items: knife (1), grenades/TNT (4),
+mines/binoculars/medpack (5), and wrench (6). Pistols, ordinary guns, launchers,
+and the detonator remain outside that pointer family and use their established
+aim paths. Unknown modded items which reuse slots 1/4/5/6 remain enabled by
+policy because those slots are conventionally pointer-item families; all other
+infantry slots remain excluded. A non-default
 vehicle or mounted control object additionally requires BF1942 itself to
 request its crosshair and expose a readable native weapon, so unarmed or
 unresolved stations fail closed. The gadget endpoint uses the exact direct
@@ -306,6 +310,22 @@ and `BFVR_CROSSHAIR_ANGULAR_DIAMETER_DEGREES` adjusts apparent size from
 The aligned `HitMarker.png` layer appears only while BF1942's own local network
 hit-indication timer is positive. BFVR reads that timer without changing or
 extending it; it does not infer hits from health, depth, or collision.
+
+Exact scope is the exception: BFVR suppresses these world-overlay layers while
+BF1942's native CrossHair path carries the scope raster and native hit
+feedback. During active/pending exact scope only, BFVR applies the selected 3D
+Crosshair Color through the prefix-verified native color setter, then restores
+the captured live native RGB on exit. This does not edit profile files or
+recolor scope artwork.
+
+The potential 1.0.2 settings work keeps that architecture intact. The hand,
+mounted, and controller-pointer knife/throwable/gadget sources now each use a
+saved three-state display mode. `Crosshair.png` and `HitMarker.png` remain
+aligned 64x64 premultiplied layers but are neutral grayscale art; one vertex
+diffuse tint selects White, Green, Blue, Purple, Red, Pink, Orange, or Yellow
+for both eyes and both layers. The tint draw still occurs immediately before transport into
+the owned stereo-world targets, so later world color treatment intentionally
+affects it with the scene.
 
 ### Native arm ownership trace
 
@@ -731,6 +751,18 @@ default-off. When explicitly enabled, only the world eyes compile and execute
 the independent quarter-resolution brightness extraction/blur and bind its
 HDR result at the final linear composite; the default path still compiles no
 bloom shaders and allocates no bloom resources.
+
+The potential 1.0.2 color page extends this same final world pass with
+Original, Filmic, and Vibrant profiles followed by signed exposure, contrast,
+and saturation adjustments. Original with zero adjustments is the identity
+configuration. `LeftWorld` and `RightWorld` always use the scaler so saved
+changes apply live; Ref2 receives neutral constants and separately composed
+scope/menu/settings layers remain outside the pass. Death-camera comfort also
+extends the established comfort-vignette layer rather than adding another:
+the x86 alive-to-dead observer publishes protocol-v21 life state, and x64
+blends a tighter muted dark-red profile for up to three seconds or until a
+verified respawn while ordinary locomotion comfort continues updating behind
+the same compositor.
 
 The 2026-07-24 Oculus Link validation passed both synthetic modes on the exact
 runtime-selected adapter. The user saw the deliberately different per-eye

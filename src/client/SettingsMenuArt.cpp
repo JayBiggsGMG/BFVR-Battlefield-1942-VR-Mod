@@ -698,6 +698,9 @@ bool SettingsMenuArt::DrawStatusField(
     case stereo::SettingsMenuStatus::ForwardRecenterFailed:
         message = L"Recenter unavailable - tracking not ready";
         break;
+    case stereo::SettingsMenuStatus::ColorSettingsReset:
+        message = L"Color settings reset - not saved";
+        break;
     case stereo::SettingsMenuStatus::SettingsLoaded:
     default:
         break;
@@ -764,6 +767,52 @@ bool SettingsMenuArt::ComposeSettingsBody(
                     centerY - 32, 128, 64, 25,
                     DT_CENTER | DT_SINGLELINE | DT_VCENTER);
         };
+        const auto drawToggleAt = [&](int centerY,
+                                      const wchar_t* label,
+                                      bool checked,
+                                      const wchar_t* description) {
+            return DrawWhiteText(destination, label, 82, centerY - 31,
+                       440, 62, 27,
+                       DT_LEFT | DT_SINGLELINE | DT_VCENTER) &&
+                CompositeLayerAt(checkBox_, destination, controlLeft,
+                    centerY - 32, 64, 64) &&
+                (!checked || CompositeLayerAt(whiteButton_, destination,
+                    controlLeft + 8, centerY - 24, 48, 48)) &&
+                DrawWhiteText(destination, checked ? L"ON" : L"OFF",
+                    controlLeft + 82, centerY - 31, 120, 62, 23,
+                    DT_LEFT | DT_SINGLELINE | DT_VCENTER) &&
+                DrawWhiteText(destination, description, 82, centerY + 35,
+                    860, 42, 18,
+                    DT_LEFT | DT_SINGLELINE | DT_VCENTER);
+        };
+        const auto crosshairColorName = [](
+                                            settings::CrosshairColor color) {
+            switch (color)
+            {
+            case settings::CrosshairColor::White: return L"WHITE";
+            case settings::CrosshairColor::Blue: return L"BLUE";
+            case settings::CrosshairColor::Purple: return L"PURPLE";
+            case settings::CrosshairColor::Red: return L"RED";
+            case settings::CrosshairColor::Pink: return L"PINK";
+            case settings::CrosshairColor::Orange: return L"ORANGE";
+            case settings::CrosshairColor::Yellow: return L"YELLOW";
+            case settings::CrosshairColor::Green:
+            default: return L"GREEN";
+            }
+        };
+        const auto firstPersonVisibilityName = [](
+                settings::FirstPersonVisibility visibility) {
+            switch (visibility)
+            {
+            case settings::FirstPersonVisibility::HandsOnly:
+                return L"HANDS ONLY";
+            case settings::FirstPersonVisibility::NoHandsOrArms:
+                return L"NO HANDS/ARMS";
+            case settings::FirstPersonVisibility::ArmsAndHands:
+            default:
+                return L"ARMS & HANDS";
+            }
+        };
         if (state.page == 0)
         {
             const wchar_t* playMode =
@@ -818,10 +867,38 @@ bool SettingsMenuArt::ComposeSettingsBody(
                 stereo::SettingsMenuSelection::MovementDirectionPrevious,
                 stereo::SettingsMenuSelection::MovementDirectionNext);
         }
-        const int comfortY = static_cast<int>(
-            stereo::kSettingsMenuVrPageTwoRowCentersPixels[0]);
+        if (state.page == 1)
+        {
+            return drawToggleAt(
+                       static_cast<int>(
+                           stereo::kSettingsMenuVrPageTwoRowCentersPixels[0]),
+                       L"Comfort Vignette",
+                       state.values.comfortVignetteEnabled,
+                       L"Movement translation only; HUD and overlays stay clear.") &&
+                drawToggleAt(
+                    static_cast<int>(
+                        stereo::kSettingsMenuVrPageTwoRowCentersPixels[1]),
+                    L"Death Camera Comfort",
+                    state.values.deathCameraComfortEnabled,
+                    L"Uses a strong muted dark-red vignette during the death-camera flight.") &&
+                drawSelectorAt(
+                    static_cast<int>(
+                        stereo::kSettingsMenuVrPageTwoRowCentersPixels[2]),
+                    L"Show",
+                    firstPersonVisibilityName(
+                        state.values.firstPersonVisibility),
+                    stereo::SettingsMenuSelection::ShowPrevious,
+                    stereo::SettingsMenuSelection::ShowNext) &&
+                drawSelectorAt(
+                    static_cast<int>(
+                        stereo::kSettingsMenuVrPageTwoRowCentersPixels[3]),
+                    L"3D Crosshair Color",
+                    crosshairColorName(state.values.crosshairColor),
+                    stereo::SettingsMenuSelection::CrosshairColorPrevious,
+                    stereo::SettingsMenuSelection::CrosshairColorNext);
+        }
         const int heightY = static_cast<int>(
-            stereo::kSettingsMenuVrPageTwoRowCentersPixels[1]);
+            stereo::kSettingsMenuVrPageThreeRowCentersPixels[0]);
         const float normalizedHeight = static_cast<float>(
             state.values.vrHeightAdjustmentCentimeters -
             settings::kMinimumVrHeightAdjustmentCentimeters) /
@@ -843,55 +920,18 @@ bool SettingsMenuArt::ComposeSettingsBody(
                     state.hovered == selection ? 27 : 24,
                     DT_CENTER | DT_SINGLELINE | DT_VCENTER);
         };
-        const bool comfortDrawn = DrawWhiteText(
-                destination,
-                L"Comfort Vignette",
-                82,
-                comfortY - 31,
-                440,
-                62,
-                27,
-                DT_LEFT | DT_SINGLELINE | DT_VCENTER) &&
-            CompositeLayerAt(
-                checkBox_, destination, controlLeft, comfortY - 32, 64, 64) &&
-            (!state.values.comfortVignetteEnabled || CompositeLayerAt(
-                whiteButton_,
-                destination,
-                controlLeft + 8,
-                comfortY - 24,
-                48,
-                48)) &&
-            DrawWhiteText(
-                destination,
-                state.values.comfortVignetteEnabled ? L"ON" : L"OFF",
-                controlLeft + 82,
-                comfortY - 31,
-                120,
-                62,
-                23,
-                DT_LEFT | DT_SINGLELINE | DT_VCENTER) &&
-            DrawWhiteText(
-                destination,
-                L"Movement translation only; HUD and overlays stay clear.",
-                82,
-                comfortY + 33,
-                860,
-                38,
-                18,
-                DT_LEFT | DT_SINGLELINE | DT_VCENTER);
-        return comfortDrawn &&
-            drawSliderAt(heightY, L"Manual Height Adjustment",
+        return drawSliderAt(heightY, L"Manual Height Adjustment",
                    normalizedHeight, height) &&
             DrawWhiteText(destination,
                 L"Infantry only; vehicles and mounted seats use independent neutral poses.",
                 82, heightY + 42, 860, 46, 18,
                 DT_LEFT | DT_SINGLELINE | DT_VCENTER) &&
             drawAction(static_cast<int>(
-                    stereo::kSettingsMenuVrPageTwoRowCentersPixels[2]),
+                    stereo::kSettingsMenuVrPageThreeRowCentersPixels[1]),
                 L"CALIBRATE STANDING",
                 stereo::SettingsMenuSelection::AutoCalibrateStandingHeight) &&
             drawAction(static_cast<int>(
-                    stereo::kSettingsMenuVrPageTwoRowCentersPixels[3]),
+                    stereo::kSettingsMenuVrPageThreeRowCentersPixels[2]),
                 L"RECENTER FORWARD",
                 stereo::SettingsMenuSelection::RecenterForward);
     }
@@ -982,6 +1022,127 @@ bool SettingsMenuArt::ComposeSettingsBody(
                     21,
                     DT_CENTER | DT_SINGLELINE | DT_VCENTER);
         };
+        if (state.page == 1)
+        {
+            const auto drawSelectorAt = [&](int centerY,
+                                            const wchar_t* label,
+                                            const wchar_t* value,
+                                            stereo::SettingsMenuSelection previous,
+                                            stereo::SettingsMenuSelection next) {
+                const int leftCenter = static_cast<int>(
+                    stereo::kSettingsMenuSelectorLeftArrowCenterPixels);
+                const int rightCenter = static_cast<int>(
+                    stereo::kSettingsMenuSelectorRightArrowCenterPixels);
+                return DrawWhiteText(destination, label, 82, centerY - 32,
+                           445, 64, 27,
+                           DT_LEFT | DT_SINGLELINE | DT_VCENTER) &&
+                    DrawWhiteText(destination, L"<", leftCenter - 38,
+                        centerY - 38, 76, 76,
+                        state.hovered == previous ? 38 : 30,
+                        DT_CENTER | DT_SINGLELINE | DT_VCENTER) &&
+                    DrawWhiteText(destination, value, leftCenter + 38,
+                        centerY - 32, rightCenter - leftCenter - 76, 64, 23,
+                        DT_CENTER | DT_SINGLELINE | DT_VCENTER) &&
+                    DrawWhiteText(destination, L">", rightCenter - 38,
+                        centerY - 38, 76, 76,
+                        state.hovered == next ? 38 : 30,
+                        DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+            };
+            const auto drawSignedSliderAt = [&](int centerY,
+                                                const wchar_t* label,
+                                                std::int32_t value,
+                                                std::int32_t minimum,
+                                                std::int32_t maximum,
+                                                const std::wstring& display) {
+                const float normalized = static_cast<float>(value - minimum) /
+                    static_cast<float>(maximum - minimum);
+                const int markerCenter = controlLeft + 12 +
+                    static_cast<int>(std::lround(
+                        std::clamp(normalized, 0.0F, 1.0F) * 232.0F));
+                return DrawWhiteText(destination, label, 82, centerY - 31,
+                           450, 62, 25,
+                           DT_LEFT | DT_SINGLELINE | DT_VCENTER) &&
+                    CompositeLayerAt(sliderBar_, destination, controlLeft,
+                        centerY - 32, 256, 64) &&
+                    CompositeLayerAt(numberBox_, destination,
+                        static_cast<int>(
+                            stereo::kSettingsMenuNumberBoxLeftPixels),
+                        centerY - 32, 128, 64) &&
+                    CompositeLayerAt(whiteButton_, destination,
+                        markerCenter - 24, centerY - 24, 48, 48) &&
+                    DrawWhiteText(destination, display.c_str(),
+                        static_cast<int>(
+                            stereo::kSettingsMenuNumberBoxLeftPixels),
+                        centerY - 32, 128, 64, 21,
+                        DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+            };
+            const auto profileName = [](settings::ColorProfile profile) {
+                switch (profile)
+                {
+                case settings::ColorProfile::Filmic: return L"FILMIC";
+                case settings::ColorProfile::Vibrant: return L"VIBRANT";
+                case settings::ColorProfile::Original:
+                default: return L"ORIGINAL";
+                }
+            };
+            const auto signedPercent = [](std::int32_t value) {
+                return (value > 0 ? L"+" : L"") + std::to_wstring(value) +
+                    L"%";
+            };
+            wchar_t exposure[16] = {};
+            const std::int32_t exposureMagnitude =
+                std::abs(state.values.colorExposureTenthsEv);
+            _snwprintf_s(
+                exposure,
+                std::size(exposure),
+                _TRUNCATE,
+                L"%s%d.%d EV",
+                state.values.colorExposureTenthsEv > 0
+                    ? L"+"
+                    : state.values.colorExposureTenthsEv < 0 ? L"-" : L"",
+                exposureMagnitude / 10,
+                exposureMagnitude % 10);
+            const int profileY = static_cast<int>(
+                stereo::kSettingsMenuColorRowCentersPixels[0]);
+            const int exposureY = static_cast<int>(
+                stereo::kSettingsMenuColorRowCentersPixels[1]);
+            const int contrastY = static_cast<int>(
+                stereo::kSettingsMenuColorRowCentersPixels[2]);
+            const int saturationY = static_cast<int>(
+                stereo::kSettingsMenuColorRowCentersPixels[3]);
+            const int resetY = static_cast<int>(
+                stereo::kSettingsMenuColorRowCentersPixels[4]);
+            return drawSelectorAt(
+                       profileY,
+                       L"Color Profile",
+                       profileName(state.values.colorProfile),
+                       stereo::SettingsMenuSelection::ColorProfilePrevious,
+                       stereo::SettingsMenuSelection::ColorProfileNext) &&
+                drawSignedSliderAt(exposureY, L"Exposure",
+                    state.values.colorExposureTenthsEv,
+                    settings::kMinimumColorExposureTenthsEv,
+                    settings::kMaximumColorExposureTenthsEv,
+                    exposure) &&
+                drawSignedSliderAt(contrastY, L"Contrast",
+                    state.values.colorContrastPercent,
+                    settings::kMinimumColorContrastPercent,
+                    settings::kMaximumColorContrastPercent,
+                    signedPercent(state.values.colorContrastPercent)) &&
+                drawSignedSliderAt(saturationY, L"Saturation",
+                    state.values.colorSaturationPercent,
+                    settings::kMinimumColorSaturationPercent,
+                    settings::kMaximumColorSaturationPercent,
+                    signedPercent(state.values.colorSaturationPercent)) &&
+                CompositeLayerAt(numberBox_, destination, 306, resetY - 42,
+                    580, 84) &&
+                DrawWhiteText(destination, L"RESET COLOR SETTINGS", 316,
+                    resetY - 42, 392, 84,
+                    state.hovered ==
+                            stereo::SettingsMenuSelection::ResetColorSettings
+                        ? 27
+                        : 24,
+                    DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+        }
         wchar_t aoRadius[32] = {};
         _snwprintf_s(
             aoRadius,
@@ -1077,13 +1238,11 @@ bool SettingsMenuArt::ComposeSettingsBody(
         default: return L"ON";
         }
     };
-    const auto drawSelector = [&](std::size_t row,
+    const auto drawSelector = [&](int centerY,
                                   const wchar_t* label,
                                   const wchar_t* value,
                                   stereo::SettingsMenuSelection previous,
                                   stereo::SettingsMenuSelection next) {
-        const int centerY = static_cast<int>(
-            stereo::kSettingsMenuControlsSelectorRowCentersPixels[row]);
         const int leftCenter = static_cast<int>(
             stereo::kSettingsMenuSelectorLeftArrowCenterPixels);
         const int rightCenter = static_cast<int>(
@@ -1125,42 +1284,44 @@ bool SettingsMenuArt::ComposeSettingsBody(
                 state.hovered == next ? 38 : 30,
                 DT_CENTER | DT_SINGLELINE | DT_VCENTER);
     };
+    if (state.page == 1)
+    {
+        return DrawWhiteText(destination, L"3D HUD Crosshairs:", 82, 120,
+                   520, 52, 27, DT_LEFT | DT_SINGLELINE | DT_VCENTER) &&
+            drawSelector(
+                static_cast<int>(
+                    stereo::kSettingsMenuControlsCrosshairRowCentersPixels[0]),
+                L"Hand Weapons",
+                crosshairModeName(state.values.handWeaponCrosshair),
+                stereo::SettingsMenuSelection::HandCrosshairPrevious,
+                stereo::SettingsMenuSelection::HandCrosshairNext) &&
+            drawSelector(
+                static_cast<int>(
+                    stereo::kSettingsMenuControlsCrosshairRowCentersPixels[1]),
+                L"Mounted Guns",
+                crosshairModeName(state.values.mountedWeaponCrosshair),
+                stereo::SettingsMenuSelection::MountedCrosshairPrevious,
+                stereo::SettingsMenuSelection::MountedCrosshairNext) &&
+            drawSelector(
+                static_cast<int>(
+                    stereo::kSettingsMenuControlsCrosshairRowCentersPixels[2]),
+                L"Knives / Throwables / Gadgets",
+                crosshairModeName(state.values.pointerItemCrosshair),
+                stereo::SettingsMenuSelection::PointerItemCrosshairPrevious,
+                stereo::SettingsMenuSelection::PointerItemCrosshairNext) &&
+            DrawWhiteText(destination,
+                L"Each setting controls its aiming crosshair and confirmed-hit marker.",
+                82, 730, 860, 44, 18,
+                DT_LEFT | DT_SINGLELINE | DT_VCENTER);
+    }
     if (!drawSelector(
-            0,
+            static_cast<int>(stereo::kSettingsMenuControlsGripRowCenterPixels),
             L"Off-hand Grip Style",
             gripStyleName(state.values.offHandGripStyle),
             stereo::SettingsMenuSelection::OffHandGripPrevious,
             stereo::SettingsMenuSelection::OffHandGripNext) ||
-        !DrawWhiteText(
-            destination,
-            L"3D HUD Crosshairs:",
-            82,
-            245,
-            460,
-            52,
-            27,
-            DT_LEFT | DT_SINGLELINE | DT_VCENTER) ||
-        !drawSelector(
-            1,
-            L"Hand Weapons",
-            crosshairModeName(state.values.handWeaponCrosshair),
-            stereo::SettingsMenuSelection::HandCrosshairPrevious,
-            stereo::SettingsMenuSelection::HandCrosshairNext) ||
-        !drawSelector(
-            2,
-            L"Mounted Guns",
-            crosshairModeName(state.values.mountedWeaponCrosshair),
-            stereo::SettingsMenuSelection::MountedCrosshairPrevious,
-            stereo::SettingsMenuSelection::MountedCrosshairNext) ||
-        !DrawWhiteText(
-            destination,
-            L"Aircraft, Aim & Feedback:",
-            82,
-            452,
-            460,
-            52,
-            27,
-            DT_LEFT | DT_SINGLELINE | DT_VCENTER))
+        !DrawWhiteText(destination, L"Aircraft, Aim & Feedback:", 82, 240,
+            460, 52, 27, DT_LEFT | DT_SINGLELINE | DT_VCENTER))
     {
         return false;
     }

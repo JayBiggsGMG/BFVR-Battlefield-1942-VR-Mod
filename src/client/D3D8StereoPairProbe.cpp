@@ -11,6 +11,7 @@
 #include "client/ControllerHaptics.h"
 #include "client/ControllerInputCache.h"
 #include "client/CrosshairOverlay.h"
+#include "client/D3D8FirstPersonPartContext.h"
 #include "client/D3D8WorldCrosshairRenderer.h"
 #include "client/MainMenuOverlay.h"
 #include "client/MenuPointerOverlay.h"
@@ -1188,17 +1189,34 @@ FrameMirrorResult MirrorDrawIntoFrame(
     {
         LogWaterPassState(device, snapshot);
     }
+    const bool nativeFirstPersonPartsEnabled =
+        g_presentationConfiguration.nativeFirstPersonArmsEnabled;
+    const bool armsAndCombinedEnabled = nativeFirstPersonPartsEnabled &&
+        g_trackingUserSettings.firstPersonVisibility ==
+            bfvr::settings::FirstPersonVisibility::ArmsAndHands;
+    const bool separateHandsEnabled = nativeFirstPersonPartsEnabled &&
+        g_trackingUserSettings.firstPersonVisibility !=
+            bfvr::settings::FirstPersonVisibility::NoHandsOrArms;
+    const bool magnifiedWorldViewActive =
+        (!armsAndCombinedEnabled || !separateHandsEnabled) &&
+        snapshot.semanticClass ==
+            bfvr::stereo::D3D8SemanticDrawClass::AnimatedMeshSkinning &&
+        (bfvr::IsScopeViewActive() ||
+            bfvr::IsScopeViewActivationPending());
     const bool firstPersonArmDraw =
         bfvr::stereo::IsBF1942FirstPersonArmDraw(
             snapshot.semanticClass,
             snapshot.drawPolicy ==
                 bfvr::stereo::D3D8DrawPolicy::StereoPerspective,
             snapshot.projection.values[0][0],
-            snapshot.projection.values[1][1]);
+            snapshot.projection.values[1][1],
+            magnifiedWorldViewActive);
     if (bfvr::stereo::ShouldSuppressBF1942FirstPersonArmDraw(
             IsPresentationMode(),
             firstPersonArmDraw,
-            g_presentationConfiguration.nativeFirstPersonArmsEnabled))
+            bfvr::ReadD3D8FirstPersonPartKind(),
+            armsAndCombinedEnabled,
+            separateHandsEnabled))
     {
         InterlockedIncrement(&g_frame.suppressedFirstPersonArmDraws);
         ReleaseFrameSourceReferences(snapshot);
@@ -2529,6 +2547,7 @@ bool ReconcileLifecyclePresentationSizeFromTranslator()
 
 void RemoveHooks()
 {
+    bfvr::StopD3D8FirstPersonPartContext();
     g_playerVrMotionFilter.DisableAndRemove();
     g_renderViewPoseHook.DisableAndRemove();
     if (IsFullFrameMode())
@@ -2673,6 +2692,12 @@ bool InstallHooks()
                 AppendPresentationLog) &&
             g_renderViewPoseHook.Enable() &&
             g_playerVrMotionFilter.Enable();
+        if (auxiliaryHooksReady)
+        {
+            (void)bfvr::StartD3D8FirstPersonPartContext(
+                reinterpret_cast<void*>(g_gameImageBegin),
+                AppendPresentationLog);
+        }
     }
     if (!auxiliaryHooksReady)
     {

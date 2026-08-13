@@ -250,9 +250,11 @@ bool IsBF1942FirstPersonArmDraw(
     D3D8SemanticDrawClass semanticClass,
     bool perspective,
     float projectionM00,
-    float projectionM11) noexcept
+    float projectionM11,
+    bool magnifiedWorldViewActive) noexcept
 {
     return
+        !magnifiedWorldViewActive &&
         semanticClass == D3D8SemanticDrawClass::AnimatedMeshSkinning &&
         perspective &&
         std::isfinite(projectionM00) &&

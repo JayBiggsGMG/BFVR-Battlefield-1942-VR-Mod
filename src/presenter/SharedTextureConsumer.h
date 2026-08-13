@@ -125,6 +125,7 @@ private:
     LONG waterReflectionFrameFailures_ = 0;
     float worldBloomThreshold_ = 0.55F;
     float worldBloomIntensity_ = 0.35F;
+    D3D11ColorGradingConfiguration worldColorGrading_ = {};
     std::array<Texture, kTextureCount> textures_ = {};
     std::array<DepthTexture, kDepthTextureCount> depthTextures_ = {};
     SharedTextureLogCallback logCallback_ = nullptr;
