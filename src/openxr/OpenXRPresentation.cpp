@@ -2565,6 +2565,13 @@ OpenXRPresentation::TakeQuickMenuSelection() noexcept
         ? stereo::QuickMenuSelection::None
         : impl_->quickMenu.TakeReleasedSelection();
 }
+OpenXRNativeMenuSoundRequests
+OpenXRPresentation::TakeNativeMenuSoundRequests() noexcept
+{
+    return impl_ == nullptr
+        ? OpenXRNativeMenuSoundRequests{}
+        : impl_->quickMenu.TakeNativeMenuSoundRequests();
+}
 void OpenXRPresentation::OpenSettingsMenu() noexcept
 {
     if (impl_ != nullptr)

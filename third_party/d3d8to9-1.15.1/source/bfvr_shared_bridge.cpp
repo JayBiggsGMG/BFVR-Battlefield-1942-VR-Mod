@@ -48,6 +48,57 @@ HRESULT ValidateTranslatedDevice(
 	return D3D_OK;
 }
 
+void PopulateAdapterDiagnostics(
+	Direct3DDevice8* translatedDevice,
+	BFVRD3D8To9SharedDeviceDiagnostics& diagnostics)
+{
+	diagnostics.adapterOrdinal = static_cast<UINT>(-1);
+	diagnostics.getCreationParametersResult = E_PENDING;
+	diagnostics.getDirect3DResult = E_PENDING;
+	diagnostics.queryDirect3D9ExResult = E_PENDING;
+	diagnostics.getAdapterLuidResult = E_PENDING;
+
+	IDirect3DDevice9* const gameDevice =
+		translatedDevice->GetProxyInterface();
+	D3DDEVICE_CREATION_PARAMETERS creation = {};
+	IDirect3D9* direct3D9 = nullptr;
+	IDirect3D9Ex* direct3D9Ex = nullptr;
+	diagnostics.getCreationParametersResult =
+		gameDevice->GetCreationParameters(&creation);
+	if (SUCCEEDED(diagnostics.getCreationParametersResult))
+	{
+		diagnostics.adapterOrdinal = creation.AdapterOrdinal;
+		diagnostics.getDirect3DResult =
+			gameDevice->GetDirect3D(&direct3D9);
+	}
+	if (SUCCEEDED(diagnostics.getDirect3DResult) && direct3D9 != nullptr)
+	{
+		diagnostics.queryDirect3D9ExResult =
+			direct3D9->QueryInterface(
+				__uuidof(IDirect3D9Ex),
+				reinterpret_cast<void**>(&direct3D9Ex));
+	}
+	if (SUCCEEDED(diagnostics.queryDirect3D9ExResult) &&
+		direct3D9Ex != nullptr)
+	{
+		LUID adapterLuid = {};
+		diagnostics.getAdapterLuidResult =
+			direct3D9Ex->GetAdapterLUID(
+				creation.AdapterOrdinal,
+				&adapterLuid);
+		if (SUCCEEDED(diagnostics.getAdapterLuidResult))
+		{
+			diagnostics.adapterLuidHigh = adapterLuid.HighPart;
+			diagnostics.adapterLuidLow = adapterLuid.LowPart;
+		}
+	}
+
+	if (direct3D9Ex != nullptr)
+		direct3D9Ex->Release();
+	if (direct3D9 != nullptr)
+		direct3D9->Release();
+}
+
 bool IsSupportedSharedFormat(D3DFORMAT format)
 {
 	return format == D3DFMT_A2B10G10R10 ||
@@ -293,6 +344,7 @@ extern "C" HRESULT WINAPI BFVRD3D8To9GetSharedDeviceDiagnostics(
 			&g_lastGameOpenResult,
 			0,
 			0);
+	PopulateAdapterDiagnostics(translatedDevice, snapshot);
 	*diagnostics = snapshot;
 	translatedDevice->Release();
 	return D3D_OK;

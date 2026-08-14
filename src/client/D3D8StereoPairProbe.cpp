@@ -11,6 +11,7 @@
 #include "client/ControllerHaptics.h"
 #include "client/ControllerInputCache.h"
 #include "client/CrosshairOverlay.h"
+#include "client/KillSoundEventHook.h"
 #include "client/D3D8FirstPersonPartContext.h"
 #include "client/D3D8WorldCrosshairRenderer.h"
 #include "client/MainMenuOverlay.h"
@@ -2871,6 +2872,9 @@ DWORD WINAPI RunProbe(void*)
             g_lifecycle.backBufferWidth,
             g_lifecycle.backBufferHeight,
             AppendPresentationLog);
+        bfvr::StartKillSoundEventHook(
+            reinterpret_cast<void*>(g_gameImageBegin),
+            AppendPresentationLog);
         bfvr::StartD3D8WeaponMotionOverlay(AppendPresentationLog);
         bfvr::StartWeaponAimOverlay(
             reinterpret_cast<void*>(g_gameImageBegin),
@@ -2978,6 +2982,7 @@ DWORD WINAPI RunProbe(void*)
 
     if (IsPresentationMode() && !g_offlinePresentation)
     {
+        bfvr::StopKillSoundEventHook();
         bfvr::StopCrosshairOverlay();
         bfvr::StopScopeViewOverlay();
         bfvr::StopWeaponAimOverlay();

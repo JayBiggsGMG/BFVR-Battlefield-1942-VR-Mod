@@ -1486,8 +1486,6 @@ int wmain(int argc, wchar_t* argv[])
     PROCESS_INFORMATION processInfo = {};
     constexpr wchar_t kForceWindowedEnvironment[] =
         L"BFVR_D3D8TO9_FORCE_WINDOWED";
-    constexpr wchar_t kForceSharedHelperEnvironment[] =
-        L"BFVR_D3D8TO9_FORCE_SHARED_HELPER";
     constexpr wchar_t kWorldRenderScaleEnvironment[] =
         L"BFVR_OPENXR_WORLD_RENDER_SCALE";
     constexpr wchar_t kRunUntilStoppedEnvironment[] =
@@ -1534,30 +1532,6 @@ int wmain(int argc, wchar_t* argv[])
                 error);
             AppendLoaderError(
                 L"SetEnvironmentVariableW(BFVR_D3D8TO9_FORCE_WINDOWED)",
-                error);
-            return 2;
-        }
-        // Private compatibility candidate: some drivers report successful
-        // shared-texture creation on the translated game device but return a
-        // legacy handle that x64 D3D11 rejects. The existing D3D9Ex helper
-        // creates the same GPU-only resources through the documented
-        // D3D9Ex-to-D3D11 interoperability route.
-        if (!SetEnvironmentVariableW(
-                kForceSharedHelperEnvironment,
-                L"1"))
-        {
-            const DWORD error = GetLastError();
-            SetEnvironmentVariableW(
-                kForceWindowedEnvironment,
-                hadPriorForceWindowed
-                    ? priorForceWindowed.c_str()
-                    : nullptr);
-            fwprintf(
-                stderr,
-                L"[FAIL] Could not enable the D3D9Ex shared-texture helper (error=%lu).\n",
-                error);
-            AppendLoaderError(
-                L"SetEnvironmentVariableW(BFVR_D3D8TO9_FORCE_SHARED_HELPER)",
                 error);
             return 2;
         }
@@ -1742,9 +1716,6 @@ int wmain(int argc, wchar_t* argv[])
             &processInfo);
     if (d3d8To9SharedFrameProbe || d3d8To9OpenXRPresentationProbe)
     {
-        SetEnvironmentVariableW(
-            kForceSharedHelperEnvironment,
-            nullptr);
         SetEnvironmentVariableW(
             kForceWindowedEnvironment,
             hadPriorForceWindowed

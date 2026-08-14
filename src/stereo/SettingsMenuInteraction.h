@@ -78,7 +78,8 @@ enum class SettingsMenuSelection : std::uint32_t
     ColorExposure,
     ColorContrast,
     ColorSaturation,
-    ResetColorSettings
+    ResetColorSettings,
+    KillSoundEnabled
 };
 
 enum class SettingsMenuCommand : std::uint32_t
@@ -143,9 +144,10 @@ constexpr std::array<float, 9> kSettingsMenuGraphicsRowCentersPixels = {
     465.0F, 550.0F, 635.0F, 720.0F, 805.0F};
 constexpr std::array<float, 5> kSettingsMenuColorRowCentersPixels = {
     160.0F, 315.0F, 470.0F, 625.0F, 795.0F};
+constexpr float kSettingsMenuAudioRowCenterPixels = 310.0F;
 constexpr std::array<std::uint32_t,
     static_cast<std::size_t>(SettingsMenuTab::Count)>
-    kSettingsMenuPageCounts = {3, 2, 2};
+    kSettingsMenuPageCounts = {3, 2, 3};
 
 struct SettingsMenuSnapshot
 {
@@ -185,6 +187,8 @@ public:
     [[nodiscard]] bool IsActive() const noexcept;
     [[nodiscard]] SettingsMenuCommand TakeCommand() noexcept;
     [[nodiscard]] bool TakeValuesChanged() noexcept;
+    [[nodiscard]] SettingsMenuSelection
+    TakeMenuSoundActivation() noexcept;
 
 private:
     void Activate(SettingsMenuSelection selection) noexcept;
@@ -200,6 +204,8 @@ private:
     SettingsMenuTab tab_ = SettingsMenuTab::VrSettings;
     SettingsMenuSelection hovered_ = SettingsMenuSelection::None;
     SettingsMenuSelection pressed_ = SettingsMenuSelection::None;
+    SettingsMenuSelection menuSoundActivation_ =
+        SettingsMenuSelection::None;
     SettingsMenuCommand command_ = SettingsMenuCommand::None;
     settings::UserSettingsValues values_ = {};
     SettingsMenuStatus status_ = SettingsMenuStatus::SettingsLoaded;

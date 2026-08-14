@@ -2,6 +2,7 @@
 
 #include "client/ControllerInputCache.h"
 #include "client/ControllerHaptics.h"
+#include "client/D3D8To9InteropPrimer.h"
 #include "client/D3D8To9SharedTextureProducer.h"
 #include "client/D3D8StereoProbeRecords.h"
 #include "client/ScopeViewOverlay.h"
@@ -528,6 +529,13 @@ public:
                 shared::ProcessState::Failed);
             return false;
         }
+        // Best-effort compatibility initialization for graphics stacks that
+        // reject a legacy D3D9 allocation when its first D3D11 open occurs in
+        // the separate x64 presenter. The temporary local open is released
+        // before publication and does not alter the normal transport path.
+        (void)PrimeD3D8To9D3D11SharedTextureInterop(
+            gpuProducer.DeviceDiagnostics(),
+            shared::LoadLegacySharedHandle(descriptions[0]));
         for (std::size_t index = 0; index < descriptions.size(); ++index)
         {
             block->textures[index] = descriptions[index];

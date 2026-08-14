@@ -21,6 +21,11 @@ a shorter version of the same information.
 - Added a second Graphics page with **Original**, **Filmic**, and **Vibrant**
   color profiles plus centered exposure, contrast, and saturation sliders and
   a dedicated color reset action.
+- Added a default-on **Kill Sound** option on a dedicated Graphics / Audio
+  page. Battlefield's authoritative score handling drives the supplied sound
+  in single-player and multiplayer. Separate kills use independent overlapping
+  voices instead of restarting the previous sound, while confirmations within
+  300 ms collapse into one grenade-style multi-kill sound.
 
 ### Changed
 
@@ -38,9 +43,20 @@ a shorter version of the same information.
 - Reorganized VR Settings so both comfort-vignette controls are adjacent on
   the live-presentation page, while height adjustment, standing calibration,
   and recentering share a separate physical-calibration page.
+- BFVR's Quick Menu, VR Settings controls, and Back-to-Game button now reuse
+  Battlefield's native highlight, confirm, and cancel menu sounds. Active
+  game/mod menu-sound replacements and the game's normal menu-audio path are
+  preserved; there is no separate BFVR menu-sounds toggle.
 
 ### Fixed
 
+- Corrected Kill Sound delivery in single-player. The identity-only correction
+  did not fix SP because local play does not deliver confirmed kills through
+  the same received-client boundary as remote MP. BFVR now also observes the
+  native local-server score handler, accepts only ordinary kill type 3 by
+  PlayerManager's current player, rejects teamkill type 6, and suppresses an
+  identical cross-source duplicate in listen-server play. Owner testing confirms
+  correct SP and MP playback, teamkill silence, and multikill grouping.
 - Fixed hidden first-person parts incorrectly hiding other soldiers' skinned bodies through a
   scope. Arm suppression now fails closed during scope activation and scoped
   world rendering; helmets, attachments, weapons, and full soldier bodies

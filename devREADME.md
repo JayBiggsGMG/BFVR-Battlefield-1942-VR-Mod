@@ -257,9 +257,13 @@ BF1942's projectile origin, weapon/barrel offsets, spread, cadence, projectile
 creation, and stock-server authority. Because the stock normalized look route
 still converges in the background, an immediate shot after an unusually large
 hand jump may briefly differ from the displayed ray.
+Off-hand acquisition uses an 18 cm radius around a long gun's unchanged
+animation-authored support point. Close sidearms retain their 12 cm captured-cup
+radius. Both gates remain acquisition-only: neither changes a hand target or
+weapon anchor, and an established grab has no distance-based auto-release.
 The default-on `Sniper Aim Smoothing` checkbox on the Controls page affects
 only scoped micro-motion. It applies a frame-time-aware spherical orientation
-interpolation while total stabilized-to-raw error remains below `0.25` degrees;
+interpolation while total stabilized-to-raw error remains below `0.40` degrees;
 as error grows, raw input receives more weight, and at the boundary the aim
 catches up to raw immediately. Current weapon translation is always preserved.
 The same aim ray drives scoped presentation and native authority convergence,
@@ -588,6 +592,40 @@ Battlefield's actual `BfMenu::playMenuHighLight`, `playLoadMenuHighLight`, and
 One-handed fire affects the right controller only. When BFVR's
 actual off-hand weapon-support binding is acquired, firing affects both
 controllers; raw grip-button state alone does not select both hands.
+
+The potential 1.0.2 audio path keeps Battlefield menu audio inside the game
+process. Quick Menu and Settings hover/activation events advance pointer-free
+protocol-v22 counters; the x86 BfMenu input thread consumes them and calls the
+prefix-verified `playLoadMenuHighLight`, `playLoadMenuOk`, or
+`playLoadMenuCancel` wrapper on its live menu object. The BFVR Back-to-Game
+button calls the same original wrappers directly. This preserves the active
+`MenuSound.ssc`, mod replacements, native audio device, and native menu-volume
+grouping without extracting stock sound files.
+
+The separate default-on `Kill Sound` option uses two verified retail score
+boundaries. Remote MP retains the confirmed forwarding hook at
+`GameClient::handleGameEventManagerEvent` (`0x004933D0`): it accepts only
+`GEScoreMsg` type `0x2A`, ordinary subtype 3, resolves killer/victim IDs through
+native `GameClient::findPlayer` (`0x00491980`), and requires the killer to match
+PlayerManager's current BFPlayer (with GameClient `+0x170` as fallback). SP and
+listen-server play additionally observe `GameServer::handleScore` at
+`0x004AD2D0`, whose arguments directly distinguish ordinary kill type 3 from
+teamkill type 6 and identify both scoring player and victim. That path requires
+the scoring player to equal PlayerManager's current player and the victim to be
+a different non-null player. Both native handlers are forwarded unchanged; an
+identical killer/victim pair seen at both boundaries within two seconds is
+published once. Separately, the first confirmed kill opens a 300 ms multi-kill
+burst; further confirmations in that window remain silent so a grenade does not
+stack several voices.
+The x64
+presenter loads `assets/Sounds/killsound.wav` once and creates one independent
+XAudio2 source voice per audible kill, retaining the PCM buffer until all
+voices finish. Kills outside the burst window can overlap without restarting.
+The authored WAV
+follows Windows/headset output volume; no unverified Battlefield master-volume
+address or profile file is consulted. Static cross-build evidence and both
+architecture builds support these boundaries. Owner testing confirms correct
+SP and MP playback, teamkill silence, and 300 ms multikill grouping.
 
 The per-eye water surface-reflection pass is controlled by the default-on
 `Water SSR` checkbox on VR Settings > Graphics. Saving a changed enable state

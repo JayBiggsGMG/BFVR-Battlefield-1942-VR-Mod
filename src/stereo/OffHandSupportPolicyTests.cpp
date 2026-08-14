@@ -700,6 +700,79 @@ bool AcquireByProximityAndRetainUntilExplicitRelease() noexcept
         "support did not release on explicit squeeze-up");
 }
 
+bool BindingUsesModeSpecificAcquireRadii() noexcept
+{
+    bfvr::BFSoldierOffHandSupportBinding authoredBinding;
+    bfvr::BFSoldierOffHandSupportInput authored = {};
+    authored.bindingId = 101;
+    authored.timeSeconds = 1.0;
+    authored.squeezeValue = 1.0F;
+    authored.sessionFocused = true;
+    authored.leftGripTracked = true;
+    authored.leftSqueezeActive = true;
+    authored.mode =
+        bfvr::BFSoldierOffHandSupportMode::AuthoredHandSpan;
+    authored.leftHandFromRightHand =
+        Translation(0.0F, 0.0F, 0.40F);
+    authored.controllerRightHandWorld =
+        Translation(2.0F, 1.0F, -3.0F);
+    authored.inverseSoldierWorld =
+        Translation(-2.0F, -1.0F, 3.0F);
+    authored.controllerLeftHandLocal =
+        Translation(0.0F, 0.0F, 0.23F);
+    if (!Expect(
+            authoredBinding.Update(authored).state ==
+                OffHandSupportState::Candidate,
+            "17 cm authored support did not enter the 18 cm gate"))
+    {
+        return false;
+    }
+    authored.timeSeconds = 1.05;
+    if (!Expect(
+            authoredBinding.Update(authored).supported,
+            "17 cm authored support did not acquire"))
+    {
+        return false;
+    }
+
+    bfvr::BFSoldierOffHandSupportBinding closeBinding;
+    bfvr::BFSoldierOffHandSupportInput close = {};
+    close.bindingId = 102;
+    close.timeSeconds = 2.0;
+    close.squeezeValue = 1.0F;
+    close.sessionFocused = true;
+    close.leftGripTracked = true;
+    close.leftSqueezeActive = true;
+    close.mode =
+        bfvr::BFSoldierOffHandSupportMode::CapturedClose;
+    close.controllerRightHandWorld =
+        Translation(2.0F, 1.0F, -3.0F);
+    close.inverseSoldierWorld =
+        Translation(-2.0F, -1.0F, 3.0F);
+    close.controllerLeftHandLocal =
+        Translation(0.13F, 0.0F, 0.0F);
+    if (!Expect(
+            closeBinding.Update(close).state ==
+                OffHandSupportState::Free,
+            "13 cm close support entered the retained 12 cm gate"))
+    {
+        return false;
+    }
+    close.controllerLeftHandLocal =
+        Translation(0.11F, 0.0F, 0.0F);
+    if (!Expect(
+            closeBinding.Update(close).state ==
+                OffHandSupportState::Candidate,
+            "11 cm close support did not enter the retained 12 cm gate"))
+    {
+        return false;
+    }
+    close.timeSeconds = 2.05;
+    return Expect(
+        closeBinding.Update(close).supported,
+        "11 cm close support did not acquire");
+}
+
 bool RejectsUnsafeInputs() noexcept
 {
     OffHandSupportPolicy policy;
@@ -810,6 +883,7 @@ int main()
         SteeringUsesFixedPivotAndFullDirectionalSwing() &&
         SteeringIgnoresRadialMismatchAndHandlesOppositeDirection() &&
         AcquireByProximityAndRetainUntilExplicitRelease() &&
+        BindingUsesModeSpecificAcquireRadii() &&
         RejectsUnsafeInputs() &&
         ReleasesOnTrackingOrBindingChange() &&
         RequiresContinuousAcquisition();

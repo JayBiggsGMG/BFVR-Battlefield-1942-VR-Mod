@@ -5,6 +5,7 @@
 
 #include <windows.h>
 
+#include <algorithm>
 #include <cstddef>
 
 namespace
@@ -18,6 +19,9 @@ PVOID volatile g_controlBlock = nullptr;
 void* g_observedLocalPlayer = nullptr;
 bool g_previousAlive = false;
 bool g_aliveStateKnown = false;
+LONG g_consumedMenuHighlightSequence = 0;
+LONG g_consumedMenuOkSequence = 0;
+LONG g_consumedMenuCancelSequence = 0;
 
 bfvr::shared::ControlBlock* CurrentControlBlock() noexcept
 {
@@ -37,6 +41,18 @@ void RegisterControllerHapticTransport(
         InterlockedExchange(
             &controlBlock->localPlayerLifeState,
             static_cast<LONG>(shared::LocalPlayerLifeState::Unknown));
+        g_consumedMenuHighlightSequence = InterlockedCompareExchange(
+            &controlBlock->nativeMenuSoundHighlightSequence, 0, 0);
+        g_consumedMenuOkSequence = InterlockedCompareExchange(
+            &controlBlock->nativeMenuSoundOkSequence, 0, 0);
+        g_consumedMenuCancelSequence = InterlockedCompareExchange(
+            &controlBlock->nativeMenuSoundCancelSequence, 0, 0);
+    }
+    else
+    {
+        g_consumedMenuHighlightSequence = 0;
+        g_consumedMenuOkSequence = 0;
+        g_consumedMenuCancelSequence = 0;
     }
     InterlockedExchangePointer(&g_controlBlock, controlBlock);
     g_observedLocalPlayer = nullptr;
@@ -65,6 +81,43 @@ void NotifyControllerNativeMenuHover() noexcept
     {
         InterlockedIncrement(&block->hapticNativeMenuHoverSequence);
     }
+}
+
+void NotifyLocalPlayerKillSound() noexcept
+{
+    if (shared::ControlBlock* const block = CurrentControlBlock())
+    {
+        InterlockedIncrement(&block->killSoundSequence);
+    }
+}
+
+NativeMenuSoundRequests ConsumeNativeMenuSoundRequests() noexcept
+{
+    NativeMenuSoundRequests result = {};
+    shared::ControlBlock* const block = CurrentControlBlock();
+    if (block == nullptr)
+    {
+        return result;
+    }
+    const auto consume = [](volatile LONG* source, LONG& consumed) {
+        const LONG available = InterlockedCompareExchange(source, 0, 0);
+        const ULONG pending = (std::min)(
+            static_cast<ULONG>(available) -
+                static_cast<ULONG>(consumed),
+            64UL);
+        consumed = available;
+        return static_cast<std::uint32_t>(pending);
+    };
+    result.highlight = consume(
+        &block->nativeMenuSoundHighlightSequence,
+        g_consumedMenuHighlightSequence);
+    result.ok = consume(
+        &block->nativeMenuSoundOkSequence,
+        g_consumedMenuOkSequence);
+    result.cancel = consume(
+        &block->nativeMenuSoundCancelSequence,
+        g_consumedMenuCancelSequence);
+    return result;
 }
 
 void PollControllerHapticDeath(void* gameImage) noexcept

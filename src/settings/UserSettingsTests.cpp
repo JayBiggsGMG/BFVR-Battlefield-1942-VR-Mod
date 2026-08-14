@@ -233,7 +233,7 @@ bool TestProductionSeedAndTypedValues(const std::wstring& directory)
     }
     const auto defaults = store.Defaults();
     const auto decodedDefaults = bfvr::settings::DecodeUserSettings(defaults);
-    if (defaults.values.size() != 35 ||
+    if (defaults.values.size() != 36 ||
         decodedDefaults.playMode != bfvr::settings::PlayMode::Seated ||
         decodedDefaults.artificialTurnMode !=
             bfvr::settings::ArtificialTurnMode::Smooth ||
@@ -253,6 +253,7 @@ bool TestProductionSeedAndTypedValues(const std::wstring& directory)
         !decodedDefaults.invertTurretPitch ||
         decodedDefaults.invertTurretYaw ||
         !decodedDefaults.controllerHapticsEnabled ||
+        !decodedDefaults.killSoundEnabled ||
         !decodedDefaults.sniperScopeSmoothingEnabled ||
         decodedDefaults.offHandGripStyle !=
             bfvr::settings::OffHandGripStyle::Hold ||
@@ -318,6 +319,7 @@ bool TestProductionSeedAndTypedValues(const std::wstring& directory)
     changed.invertTurretPitch = true;
     changed.invertTurretYaw = true;
     changed.controllerHapticsEnabled = false;
+    changed.killSoundEnabled = false;
     changed.sniperScopeSmoothingEnabled = false;
     changed.offHandGripStyle = bfvr::settings::OffHandGripStyle::Toggle;
     changed.handWeaponCrosshair =
@@ -413,6 +415,9 @@ bool TestProductionSeedAndTypedValues(const std::wstring& directory)
             std::string::npos &&
         contents.find("controller_haptics_enabled = false") !=
             std::string::npos &&
+        contents.find("kill_sound_enabled = false") !=
+            std::string::npos &&
+        contents.find("independent voice") != std::string::npos &&
         contents.find("one firing impulse per accepted local weapon shot") !=
             std::string::npos &&
         contents.find("sniper_scope_smoothing_enabled = false") !=

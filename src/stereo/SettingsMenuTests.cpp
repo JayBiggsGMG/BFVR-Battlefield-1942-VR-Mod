@@ -208,6 +208,10 @@ bool TestBounds()
             0.60F, 0.776F, false, false,
             SettingsMenuTab::GraphicsAudio, false, 1) ==
             SettingsMenuSelection::ResetColorSettings &&
+        SettingsMenuSelectionAt(
+            0.57F, 0.303F, false, false,
+            SettingsMenuTab::GraphicsAudio, false, 2) ==
+            SettingsMenuSelection::KillSoundEnabled &&
         SettingsMenuSelectionAt(-0.1F, 0.5F, false, false) ==
             SettingsMenuSelection::None;
 }
@@ -504,7 +508,8 @@ bool TestInteractionAndPlacement()
     AimAt(input, state.panelPose, state.widthMeters, 0.66F, 0.87F);
     Click(interaction, input);
     state = interaction.Snapshot();
-    if (state.page != 1 || !state.arrowLeftVisible || state.arrowRightVisible)
+    if (state.page != 1 || !state.arrowLeftVisible ||
+        state.arrowRightVisible)
     {
         return false;
     }
@@ -644,7 +649,8 @@ bool TestInteractionAndPlacement()
     AimAt(input, state.panelPose, state.widthMeters, 0.66F, 0.87F);
     Click(interaction, input);
     state = interaction.Snapshot();
-    if (state.page != 1 || !state.arrowLeftVisible || state.arrowRightVisible)
+    if (state.page != 1 || !state.arrowLeftVisible ||
+        !state.arrowRightVisible)
     {
         return false;
     }
@@ -684,6 +690,24 @@ bool TestInteractionAndPlacement()
         !interaction.TakeValuesChanged() ||
         interaction.Snapshot().status !=
             bfvr::stereo::SettingsMenuStatus::ColorSettingsReset)
+    {
+        return false;
+    }
+    state = interaction.Snapshot();
+    AimAt(input, state.panelPose, state.widthMeters, 0.66F, 0.87F);
+    Click(interaction, input);
+    state = interaction.Snapshot();
+    if (state.page != 2 || !state.arrowLeftVisible ||
+        state.arrowRightVisible)
+    {
+        return false;
+    }
+    AimAt(input, state.panelPose, state.widthMeters, 0.57F, 0.303F);
+    Click(interaction, input);
+    if (interaction.Snapshot().values.killSoundEnabled ||
+        !interaction.TakeValuesChanged() ||
+        interaction.TakeMenuSoundActivation() !=
+            SettingsMenuSelection::KillSoundEnabled)
     {
         return false;
     }
@@ -1029,6 +1053,12 @@ bool CaptureArt(const wchar_t* assetDirectory, const wchar_t* outputDirectory)
             false,
             false,
             1) &&
+        capture(
+            SettingsMenuTab::GraphicsAudio,
+            L"Settings-Graphics-Audio-Sounds.bmp",
+            false,
+            false,
+            2) &&
         capture(
             SettingsMenuTab::Controls,
             L"Settings-Controls-Overlay.bmp",

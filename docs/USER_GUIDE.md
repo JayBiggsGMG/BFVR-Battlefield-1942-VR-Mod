@@ -87,6 +87,18 @@ VR Settings includes:
   at the center of each manual slider. These settings affect the stereo world
   and its 3D crosshair, but not the native HUD, menus, scopes, Quick Menu, or
   VR Settings panel.
+- A third Graphics / Audio page with a default-on **Kill Sound** toggle. It
+  plays only after Battlefield confirms that the local player killed another
+  player, in either single-player or multiplayer. Grenade-style kills confirmed
+  within 300 ms play once as one multi-kill burst; later kill sounds can still
+  overlap rather than cutting off the previous sound. Windows/headset output volume applies;
+  Battlefield's private master-volume slider does not currently scale this
+  custom WAV.
+
+The Quick Menu, VR Settings controls, and BFVR's Back-to-Game button use
+Battlefield's normal menu highlight, confirm, and cancel sounds. These sounds
+follow the active game or mod's native menu-audio setup and are always enabled
+in the same way as Battlefield's own menu feedback.
 
 Choose **Save** to apply changes. Settings involving startup graphics resources
 say that a BFVR restart is required. **Cancel** discards unsaved changes, and

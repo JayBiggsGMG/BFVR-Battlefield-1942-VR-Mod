@@ -11,7 +11,7 @@ namespace bfvr::shared
 using SharedTextureLogCallback = void (*)(void* context, const wchar_t* message);
 
 constexpr DWORD kProtocolMagic = 0x52564642; // "BFVR"
-constexpr DWORD kProtocolVersion = 21;
+constexpr DWORD kProtocolVersion = 22;
 constexpr std::size_t kTextureCount = 3;
 constexpr std::size_t kDepthTextureCount = 2;
 constexpr std::size_t kSharedNameCapacity = 128;
@@ -250,6 +250,15 @@ struct ControlBlock
     volatile LONG hapticShotBothSequence = 0;
     volatile LONG hapticDeathSequence = 0;
     volatile LONG hapticNativeMenuHoverSequence = 0;
+    // Producer-to-presenter authoritative local-kill event. The x64 audio
+    // owner consumes deltas and creates one independent voice per event.
+    volatile LONG killSoundSequence = 0;
+    // Presenter-to-producer BFVR-menu feedback requests. The x86 game thread
+    // consumes these counters and invokes Battlefield's own BfMenu wrappers;
+    // no game pointer or audio object crosses the process boundary.
+    volatile LONG nativeMenuSoundHighlightSequence = 0;
+    volatile LONG nativeMenuSoundOkSequence = 0;
+    volatile LONG nativeMenuSoundCancelSequence = 0;
     // Continuously published by the same verified local-player poll that
     // emits hapticDeathSequence. The presenter uses Alive to end the bounded
     // death-comfort interval immediately on respawn.

@@ -83,8 +83,9 @@ suspension/restoration, and launch-local renderer isolation.
 - `src/client/BF1942FrameLimiterOverride.*`
 
 The client owns game-side hooks, stereo world/UI production, recovered
-Battlefield input submission, native arm/weapon integration, frame-limiter
-override, and shared producer state.
+Battlefield input submission, native arm/weapon integration, native BfMenu
+feedback dispatch, confirmed local-kill observation, frame-limiter override,
+and shared producer state.
 
 ### D3D8 translator
 
@@ -103,7 +104,8 @@ post-Reset presentation dimensions, and BFVR runtime diagnostics.
 - `src/openxr/OpenXRQuickMenu.*`
 
 The presenter owns OpenXR lifecycle, swapchains, D3D11 consumption/effects,
-desktop mirror, controller actions, haptics, and composition-layer submission.
+desktop mirror, controller actions, haptics, overlapping kill-sound voices,
+and composition-layer submission.
 
 ### Settings and menu
 
@@ -131,7 +133,7 @@ The potential 1.0.2 settings group adds these runtime invariants:
   shared base tint inside the existing D3D8 per-eye renderer; do not move this
   path into an OpenXR overlay merely to isolate it from grading.
 - `hapticDeathSequence` and `localPlayerLifeState` share the verified
-  local-player observer. Shared protocol version 21 lets the presenter start
+  local-player observer. Shared protocol version 22 lets the presenter start
   a bounded death effect and cancel it on a verified respawn.
 - Movement and death comfort are two targets of one `OpenXRComfortVignette`.
   Death styling takes priority inside that compositor, which remains above
@@ -140,6 +142,28 @@ The potential 1.0.2 settings group adds these runtime invariants:
   world scaler shader after AO/SSGI/reflections/bloom. Both world eyes always
   retain that pass for live changes. Ref2 is passed neutral color settings;
   separately composed UI never enters the shader.
+- Shared protocol version 22 adds a producer-to-presenter confirmed-kill
+  counter and presenter-to-producer menu highlight/OK/cancel counters. The
+  x86 client alone retains game pointers and invokes prefix-verified
+  `BfMenu::playLoadMenu*` wrappers; the x64 presenter alone owns XAudio2 and
+  creates an independent source voice for every confirmed kill.
+- Remote-MP kill eligibility comes from the unchanged
+  `GameClient::handleGameEventManagerEvent` path: event type `0x2A`, subtype
+  3, distinct killer/victim IDs, and a killer resolved by native `findPlayer`
+  to the BFPlayer returned by PlayerManager's native current-player virtual
+  service at `+0x20`; `GameClient +0x170` is fallback-only. MP playback is
+  owner-confirmed. SP did not traverse that received-client boundary, so BFVR
+  now also observes prefix-verified retail `GameServer::handleScore` at
+  `0x004AD2D0`. It accepts only score type 3 when the scoring BFPlayer is the
+  PlayerManager current player and the victim is different/non-null, rejects
+  teamkill type 6, and deduplicates only the same killer/victim pair if a
+  listen server exposes both sources. A separate 300 ms first-kill-wins burst
+  gate collapses grenade-style simultaneous kills into one sound; kills after
+  the window may still overlap. Owner testing confirms correct SP and MP
+  playback, teamkill silence, and multikill grouping. Other score variants
+  remain silent. The custom WAV
+  follows Windows output volume, not an unverified approximation of
+  Battlefield's private master-volume value.
 
 ## Critical compatibility invariants
 

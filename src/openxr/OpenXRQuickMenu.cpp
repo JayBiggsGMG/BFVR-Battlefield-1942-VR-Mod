@@ -345,6 +345,16 @@ void OpenXRQuickMenu::Update(
     if (settingsInteraction_.IsActive())
     {
         settingsInteraction_.Update(input);
+        const stereo::SettingsMenuSelection soundActivation =
+            settingsInteraction_.TakeMenuSoundActivation();
+        if (soundActivation == stereo::SettingsMenuSelection::Cancel)
+        {
+            ++pendingNativeMenuSounds_.cancel;
+        }
+        else if (soundActivation != stereo::SettingsMenuSelection::None)
+        {
+            ++pendingNativeMenuSounds_.ok;
+        }
         if (settingsInteraction_.TakeValuesChanged())
         {
             settings::EncodeUserSettings(
@@ -401,9 +411,11 @@ void OpenXRQuickMenu::Update(
         // The persistent panel owns right A until Cancel closes it. Resetting
         // here prevents a held settings click from opening Quick Menu below.
         interaction_.Reset();
+        TrackNativeMenuHover();
         return;
     }
     interaction_.Update(input);
+    TrackNativeMenuHover();
 }
 
 void OpenXRQuickMenu::SetMountedCameraDecoupled(
@@ -680,6 +692,14 @@ OpenXRQuickMenu::TakeReleasedSelection() noexcept
     return interaction_.TakeReleasedSelection();
 }
 
+OpenXRNativeMenuSoundRequests
+OpenXRQuickMenu::TakeNativeMenuSoundRequests() noexcept
+{
+    const OpenXRNativeMenuSoundRequests result = pendingNativeMenuSounds_;
+    pendingNativeMenuSounds_ = {};
+    return result;
+}
+
 OpenXRTrackingAction OpenXRQuickMenu::TakeTrackingAction() noexcept
 {
     const OpenXRTrackingAction result = trackingAction_;
@@ -705,6 +725,16 @@ std::uint64_t OpenXRQuickMenu::HapticHoverTarget() const noexcept
         quick.hovered != stereo::QuickMenuSelection::None
         ? 1ULL + static_cast<std::uint64_t>(quick.hovered)
         : 0;
+}
+
+void OpenXRQuickMenu::TrackNativeMenuHover() noexcept
+{
+    const std::uint64_t target = HapticHoverTarget();
+    if (target != 0 && target != lastNativeMenuSoundHoverTarget_)
+    {
+        ++pendingNativeMenuSounds_.highlight;
+    }
+    lastNativeMenuSoundHoverTarget_ = target;
 }
 
 bool OpenXRQuickMenu::ControllerHapticsEnabled() const noexcept
@@ -875,6 +905,8 @@ void OpenXRQuickMenu::Shutdown()
     renderedSettingsState_ = {};
     mountedCameraDecoupled_ = false;
     trackingAction_ = OpenXRTrackingAction::None;
+    pendingNativeMenuSounds_ = {};
+    lastNativeMenuSoundHoverTarget_ = 0;
     logCallback_ = nullptr;
     logContext_ = nullptr;
 }

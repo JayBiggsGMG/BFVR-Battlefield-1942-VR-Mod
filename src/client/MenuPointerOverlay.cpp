@@ -16,6 +16,7 @@
 #include <cmath>
 #include <cstdarg>
 #include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 
@@ -24,6 +25,8 @@ namespace
 
 constexpr std::ptrdiff_t kBfMenuSetGameInputRva = 0x0005DE60;
 constexpr std::ptrdiff_t kBfMenuPlayMenuHighlightRva = 0x002A52D0;
+constexpr std::ptrdiff_t kBfMenuPlayLoadMenuOkRva = 0x002A5390;
+constexpr std::ptrdiff_t kBfMenuPlayLoadMenuCancelRva = 0x002A53C0;
 constexpr std::ptrdiff_t kBfMenuPlayLoadMenuHighlightRva = 0x002A53F0;
 constexpr std::ptrdiff_t kBfMenuPlayHudMouseOverRva = 0x002A5480;
 constexpr std::size_t kBfMenuActiveIndexOffset = 0xFC;
@@ -61,6 +64,18 @@ constexpr BYTE kBfMenuPlayLoadMenuHighlightPrefix[] = {
     0x84, 0xD2, 0x75, 0x16, 0x8B, 0x10, 0x6A, 0x00,
     0x8B, 0xC8, 0xFF, 0x52, 0x0C, 0x85, 0xC0, 0x74,
     0x09, 0x8B, 0x10, 0x6A, 0x08};
+constexpr BYTE kBfMenuPlayLoadMenuOkPrefix[] = {
+    0x8B, 0x81, 0xEC, 0x06, 0x00, 0x00, 0x85, 0xC0,
+    0x74, 0x20, 0x8A, 0x91, 0xCE, 0x07, 0x00, 0x00,
+    0x84, 0xD2, 0x75, 0x16, 0x8B, 0x10, 0x6A, 0x00,
+    0x8B, 0xC8, 0xFF, 0x52, 0x0C, 0x85, 0xC0, 0x74,
+    0x09, 0x8B, 0x10, 0x6A, 0x05};
+constexpr BYTE kBfMenuPlayLoadMenuCancelPrefix[] = {
+    0x8B, 0x81, 0xEC, 0x06, 0x00, 0x00, 0x85, 0xC0,
+    0x74, 0x20, 0x8A, 0x91, 0xCE, 0x07, 0x00, 0x00,
+    0x84, 0xD2, 0x75, 0x16, 0x8B, 0x10, 0x6A, 0x00,
+    0x8B, 0xC8, 0xFF, 0x52, 0x0C, 0x85, 0xC0, 0x74,
+    0x09, 0x8B, 0x10, 0x6A, 0x06};
 constexpr BYTE kBfMenuPlayHudMouseOverPrefix[] = {
     0x8B, 0x81, 0xEC, 0x06, 0x00, 0x00, 0x85, 0xC0,
     0x74, 0x20, 0x8A, 0x91, 0xCE, 0x07, 0x00, 0x00,
@@ -183,6 +198,7 @@ public:
     using SetGameInputFn =
         void(__thiscall*)(void* menu, float deltaTime, void* gameInput);
     using MenuHoverFn = unsigned int(__thiscall*)(void* menu);
+    using MenuSoundFn = unsigned int(__thiscall*)(void* menu);
 
     void Start(
         void* image,
@@ -200,6 +216,7 @@ public:
         triggerPressed = false;
         okPressedLastFrame = false;
         overlayVisibleLastFrame = false;
+        overlayHoveredLastFrame = false;
         scrollRepeat = {};
         if (runtimeWidth == 0 || runtimeHeight == 0 ||
             sourceWidth == 0 || sourceHeight == 0)
@@ -225,6 +242,12 @@ public:
         playMenuHighlightTarget = gameImage == nullptr
             ? nullptr
             : gameImage + kBfMenuPlayMenuHighlightRva;
+        playLoadMenuOkTarget = gameImage == nullptr
+            ? nullptr
+            : gameImage + kBfMenuPlayLoadMenuOkRva;
+        playLoadMenuCancelTarget = gameImage == nullptr
+            ? nullptr
+            : gameImage + kBfMenuPlayLoadMenuCancelRva;
         playLoadMenuHighlightTarget = gameImage == nullptr
             ? nullptr
             : gameImage + kBfMenuPlayLoadMenuHighlightRva;
@@ -240,6 +263,14 @@ public:
                 kBfMenuPlayMenuHighlightPrefix,
                 sizeof(kBfMenuPlayMenuHighlightPrefix)) ||
             !HasExpectedPrefix(
+                playLoadMenuOkTarget,
+                kBfMenuPlayLoadMenuOkPrefix,
+                sizeof(kBfMenuPlayLoadMenuOkPrefix)) ||
+            !HasExpectedPrefix(
+                playLoadMenuCancelTarget,
+                kBfMenuPlayLoadMenuCancelPrefix,
+                sizeof(kBfMenuPlayLoadMenuCancelPrefix)) ||
+            !HasExpectedPrefix(
                 playLoadMenuHighlightTarget,
                 kBfMenuPlayLoadMenuHighlightPrefix,
                 sizeof(kBfMenuPlayLoadMenuHighlightPrefix)) ||
@@ -249,9 +280,11 @@ public:
                 sizeof(kBfMenuPlayHudMouseOverPrefix)))
         {
             WriteLog(
-                L"Controller menu integration rejected the profiled WinPC BfMenu targets: setGameInput=%p playMenuHighLight=%p playLoadMenuHighLight=%p playHudMouseOver=%p.",
+                L"Controller menu integration rejected the profiled WinPC BfMenu targets: setGameInput=%p playMenuHighLight=%p playLoadMenuOk=%p playLoadMenuCancel=%p playLoadMenuHighLight=%p playHudMouseOver=%p.",
                 setGameInputTarget,
                 playMenuHighlightTarget,
+                playLoadMenuOkTarget,
+                playLoadMenuCancelTarget,
                 playLoadMenuHighlightTarget,
                 playHudMouseOverTarget);
             InterlockedExchange(&started, 0);
@@ -339,8 +372,11 @@ public:
             return;
         }
         hookEnabled = true;
+        playLoadMenuOk = reinterpret_cast<MenuSoundFn>(playLoadMenuOkTarget);
+        playLoadMenuCancel =
+            reinterpret_cast<MenuSoundFn>(playLoadMenuCancelTarget);
         WriteLog(
-            L"Controller menu pointer armed at 0x0045DE60, with direct native hover haptics on BfMenu::playMenuHighLight 0x006A52D0, playLoadMenuHighLight 0x006A53F0, and playHudMouseOver 0x006A5480: runtime=%ux%u source=%ux%u logical=800x600. The presentation path supplies the yaw-only LOCAL anchor shared by this mapper; a fresh tracked right aim ray supplies native c_GIMouseLookX/Y, and right trigger supplies native c_GIOk with hysteresis. In BfMenu Battlefield frontend state 0, right-stick up/down emits focus-checked mouse-wheel detents with bounded repeat while the Quick Menu is not held. The BFVR back-to-game button emits one focus-checked Escape scan-code down/up pair on a new click edge.",
+            L"Controller menu pointer armed at 0x0045DE60, with direct native hover haptics on BfMenu::playMenuHighLight 0x006A52D0, playLoadMenuHighLight 0x006A53F0, and playHudMouseOver 0x006A5480. BFVR-owned menus reuse the verified load-menu highlight/OK/cancel wrappers at 0x006A53F0/0x006A5390/0x006A53C0: runtime=%ux%u source=%ux%u logical=800x600. The presentation path supplies the yaw-only LOCAL anchor shared by this mapper; a fresh tracked right aim ray supplies native c_GIMouseLookX/Y, and right trigger supplies native c_GIOk with hysteresis. In BfMenu Battlefield frontend state 0, right-stick up/down emits focus-checked mouse-wheel detents with bounded repeat while the Quick Menu is not held. The BFVR back-to-game button emits one focus-checked Escape scan-code down/up pair on a new click edge.",
             runtimeUiWidth,
             runtimeUiHeight,
             sourceUiWidth,
@@ -397,6 +433,33 @@ public:
     }
 
 private:
+    void PlayMenuSound(
+        MenuSoundFn sound,
+        void* menu,
+        std::uint32_t count) noexcept
+    {
+        if (sound == nullptr || menu == nullptr)
+        {
+            return;
+        }
+        for (std::uint32_t index = 0; index < count; ++index)
+        {
+            sound(menu);
+        }
+    }
+
+    void DispatchBfvrMenuSounds(void* menu) noexcept
+    {
+        const bfvr::NativeMenuSoundRequests requests =
+            bfvr::ConsumeNativeMenuSoundRequests();
+        PlayMenuSound(
+            originalPlayLoadMenuHighlight,
+            menu,
+            requests.highlight);
+        PlayMenuSound(playLoadMenuOk, menu, requests.ok);
+        PlayMenuSound(playLoadMenuCancel, menu, requests.cancel);
+    }
+
     enum class NativeHoverKind
     {
         menu,
@@ -832,6 +895,14 @@ private:
 
         originalSetGameInput(menu, deltaTime, gameInput);
 
+        DispatchBfvrMenuSounds(menu);
+        const bool enteredBackToGame = hovered && !overlayHoveredLastFrame;
+        overlayHoveredLastFrame = hovered;
+        if (enteredBackToGame)
+        {
+            PlayMenuSound(originalPlayLoadMenuHighlight, menu, 1);
+        }
+
         if (modified)
         {
             __try
@@ -852,6 +923,7 @@ private:
         }
         if (requestEscape)
         {
+            PlayMenuSound(playLoadMenuOk, menu, 1);
             if (SendEscapeKeyPress())
             {
                 InterlockedIncrement(&escapePresses);
@@ -908,6 +980,8 @@ private:
         originalPlayMenuHighlight = nullptr;
         originalPlayLoadMenuHighlight = nullptr;
         originalPlayHudMouseOver = nullptr;
+        playLoadMenuOk = nullptr;
+        playLoadMenuCancel = nullptr;
         if (ownsMinHook)
         {
             MH_Uninitialize();
@@ -956,12 +1030,16 @@ private:
     std::byte* gameImage = nullptr;
     void* setGameInputTarget = nullptr;
     void* playMenuHighlightTarget = nullptr;
+    void* playLoadMenuOkTarget = nullptr;
+    void* playLoadMenuCancelTarget = nullptr;
     void* playLoadMenuHighlightTarget = nullptr;
     void* playHudMouseOverTarget = nullptr;
     SetGameInputFn originalSetGameInput = nullptr;
     MenuHoverFn originalPlayMenuHighlight = nullptr;
     MenuHoverFn originalPlayLoadMenuHighlight = nullptr;
     MenuHoverFn originalPlayHudMouseOver = nullptr;
+    MenuSoundFn playLoadMenuOk = nullptr;
+    MenuSoundFn playLoadMenuCancel = nullptr;
     UINT runtimeUiWidth = 0;
     UINT runtimeUiHeight = 0;
     UINT sourceUiWidth = 0;
@@ -970,6 +1048,7 @@ private:
     bool triggerPressed = false;
     bool okPressedLastFrame = false;
     bool overlayVisibleLastFrame = false;
+    bool overlayHoveredLastFrame = false;
     bool menuAnchorValid = false;
     bfvr::stereo::MainMenuScrollRepeatState scrollRepeat = {};
     bfvr::stereo::Pose menuAnchorHead = {};

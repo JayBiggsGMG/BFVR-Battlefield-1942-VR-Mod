@@ -280,12 +280,21 @@ OffHandSupportPolicy::OffHandSupportPolicy(
 OffHandSupportResult OffHandSupportPolicy::Update(
     const OffHandSupportSample& sample) noexcept
 {
+    return Update(sample, configuration_.acquireDistanceMetres);
+}
+
+OffHandSupportResult OffHandSupportPolicy::Update(
+    const OffHandSupportSample& sample,
+    const float acquireDistanceMetres) noexcept
+{
     const OffHandSupportState previousState = state_;
     const bool validSample =
         sample.bindingId != 0 &&
         std::isfinite(sample.timeSeconds) &&
         std::isfinite(sample.supportDistanceMetres) &&
         sample.supportDistanceMetres >= 0.0F &&
+        std::isfinite(acquireDistanceMetres) &&
+        acquireDistanceMetres >= 0.0F &&
         sample.sessionFocused &&
         sample.leftGripTracked &&
         sample.leftGripHeld &&
@@ -310,7 +319,7 @@ OffHandSupportResult OffHandSupportPolicy::Update(
     {
     case OffHandSupportState::Free:
         if (sample.supportDistanceMetres <=
-            configuration_.acquireDistanceMetres)
+            acquireDistanceMetres)
         {
             state_ = OffHandSupportState::Candidate;
             candidateStartSeconds_ = sample.timeSeconds;
@@ -319,7 +328,7 @@ OffHandSupportResult OffHandSupportPolicy::Update(
 
     case OffHandSupportState::Candidate:
         if (sample.supportDistanceMetres >
-            configuration_.acquireDistanceMetres)
+            acquireDistanceMetres)
         {
             SetFree();
             bindingId_ = sample.bindingId;

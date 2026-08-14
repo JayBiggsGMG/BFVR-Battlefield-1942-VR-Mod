@@ -937,12 +937,10 @@ bool SettingsMenuArt::ComposeSettingsBody(
     }
     if (state.tab == stereo::SettingsMenuTab::GraphicsAudio)
     {
-        const auto drawToggle = [&](std::size_t row,
-                                    const wchar_t* label,
-                                    bool checked,
-                                    bool requiresRestart) {
-            const int centerY = static_cast<int>(
-                stereo::kSettingsMenuGraphicsRowCentersPixels[row]);
+        const auto drawToggleAt = [&](int centerY,
+                                      const wchar_t* label,
+                                      bool checked,
+                                      bool requiresRestart) {
             bool drawn = DrawWhiteText(
                     destination,
                     label,
@@ -973,6 +971,17 @@ bool SettingsMenuArt::ComposeSettingsBody(
                 centerY - 24,
                 48,
                 48));
+        };
+        const auto drawToggle = [&](std::size_t row,
+                                    const wchar_t* label,
+                                    bool checked,
+                                    bool requiresRestart) {
+            return drawToggleAt(
+                static_cast<int>(
+                    stereo::kSettingsMenuGraphicsRowCentersPixels[row]),
+                label,
+                checked,
+                requiresRestart);
         };
         const auto drawSlider = [&](std::size_t row,
                                     const wchar_t* label,
@@ -1142,6 +1151,14 @@ bool SettingsMenuArt::ComposeSettingsBody(
                         ? 27
                         : 24,
                     DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+        }
+        if (state.page == 2)
+        {
+            return drawToggleAt(
+                static_cast<int>(stereo::kSettingsMenuAudioRowCenterPixels),
+                L"Kill Sound",
+                state.values.killSoundEnabled,
+                false);
         }
         wchar_t aoRadius[32] = {};
         _snwprintf_s(

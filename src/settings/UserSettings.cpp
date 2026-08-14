@@ -37,6 +37,7 @@ constexpr std::string_view kInvertTurretPitchKey = "invert_turret_pitch";
 constexpr std::string_view kInvertTurretYawKey = "invert_turret_yaw";
 constexpr std::string_view kControllerHapticsEnabledKey =
     "controller_haptics_enabled";
+constexpr std::string_view kKillSoundEnabledKey = "kill_sound_enabled";
 constexpr std::string_view kSniperScopeSmoothingEnabledKey =
     "sniper_scope_smoothing_enabled";
 constexpr std::string_view kOffHandGripStyleKey = "off_hand_grip_style";
@@ -679,10 +680,19 @@ UserSettingsSchema SeededUserSettingsSchema()
             IsBoolean
         },
         {
+            std::string(kKillSoundEnabledKey),
+            "true",
+            {
+                "Plays the supplied BFVR kill sound when Battlefield's authoritative score handling confirms that the current local player killed another player. Shots, hit markers, deaths, suicides, and team-kill score variants do not trigger it.",
+                "Kills confirmed within 300 ms count as one multi-kill sound. A later kill starts an independent voice without restarting a sound already playing. Accepted values: true or false. Applied after Graphics / Audio > Save without a restart."
+            },
+            IsBoolean
+        },
+        {
             std::string(kSniperScopeSmoothingEnabledKey),
             "true",
             {
-                "Softens scoped micro-motion with a frame-time-aware bounded angular stabilizer. Filtering applies only while total stabilized-to-raw error is below 0.25 degrees; deliberate movement catches up to raw immediately at that boundary. The same result drives aim and scope presentation, while current weapon translation stays raw. Controls > Save applies the toggle live. After a scoped shot, the weapon's native zoom state decides whether the scope exits or remains active.",
+                "Softens scoped micro-motion with a frame-time-aware bounded angular stabilizer. Filtering applies only while total stabilized-to-raw error is below 0.40 degrees; deliberate movement catches up to raw immediately at that boundary. The same result drives aim and scope presentation, while current weapon translation stays raw. Controls > Save applies the toggle live. After a scoped shot, the weapon's native zoom state decides whether the scope exits or remains active.",
                 "Accepted values: true or false. Applied after Controls > Save without a restart."
             },
             IsBoolean
@@ -912,6 +922,7 @@ UserSettingsValues DecodeUserSettings(const UserSettings& settings) noexcept
     result.controllerHapticsEnabled = readBoolean(
         kControllerHapticsEnabledKey,
         true);
+    result.killSoundEnabled = readBoolean(kKillSoundEnabledKey, true);
     result.sniperScopeSmoothingEnabled = readBoolean(
         kSniperScopeSmoothingEnabledKey,
         true);
@@ -1144,6 +1155,8 @@ void EncodeUserSettings(
         values.invertTurretYaw ? "true" : "false";
     settings.values[std::string(kControllerHapticsEnabledKey)] =
         values.controllerHapticsEnabled ? "true" : "false";
+    settings.values[std::string(kKillSoundEnabledKey)] =
+        values.killSoundEnabled ? "true" : "false";
     settings.values[std::string(kSniperScopeSmoothingEnabledKey)] =
         values.sniperScopeSmoothingEnabled ? "true" : "false";
     settings.values[std::string(kComfortVignetteEnabledKey)] =

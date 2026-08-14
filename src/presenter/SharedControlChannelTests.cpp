@@ -110,6 +110,7 @@ int main()
         &producerBlock->localPlayerLifeState,
         static_cast<LONG>(bfvr::shared::LocalPlayerLifeState::Dead));
     InterlockedIncrement(&producerBlock->hapticNativeMenuHoverSequence);
+    InterlockedIncrement(&producerBlock->killSoundSequence);
     passed = Check(
         producer.SignalProducerUpdate() &&
             presenter.WaitForProducerUpdate(1000) == WAIT_OBJECT_0 &&
@@ -126,8 +127,10 @@ int main()
             InterlockedCompareExchange(
                 &presenterBlock->hapticNativeMenuHoverSequence,
                 0,
-                0) == 1,
-        L"producer-to-presenter haptic event counters failed") && passed;
+                0) == 1 &&
+            InterlockedCompareExchange(
+                &presenterBlock->killSoundSequence, 0, 0) == 1,
+        L"producer-to-presenter haptic and kill-sound event counters failed") && passed;
 
     bfvr::RegisterControllerHapticTransport(producerBlock);
     const LONG initialHoverSequence = InterlockedCompareExchange(
@@ -135,14 +138,29 @@ int main()
         0,
         0);
     bfvr::NotifyControllerNativeMenuHover();
+    const LONG initialKillSequence = InterlockedCompareExchange(
+        &producerBlock->killSoundSequence, 0, 0);
+    bfvr::NotifyLocalPlayerKillSound();
+    InterlockedIncrement(&presenterBlock->nativeMenuSoundHighlightSequence);
+    InterlockedIncrement(&presenterBlock->nativeMenuSoundOkSequence);
+    InterlockedIncrement(&presenterBlock->nativeMenuSoundCancelSequence);
+    const bfvr::NativeMenuSoundRequests menuSounds =
+        bfvr::ConsumeNativeMenuSoundRequests();
     bfvr::RegisterControllerHapticTransport(nullptr);
     bfvr::NotifyControllerNativeMenuHover();
+    bfvr::NotifyLocalPlayerKillSound();
     passed = Check(
         InterlockedCompareExchange(
             &producerBlock->hapticNativeMenuHoverSequence,
             0,
-            0) == initialHoverSequence + 1,
-        L"direct native-menu hover event did not publish exactly once through the registered transport") && passed;
+            0) == initialHoverSequence + 1 &&
+        InterlockedCompareExchange(
+            &producerBlock->killSoundSequence,
+            0,
+            0) == initialKillSequence + 1 &&
+        menuSounds.highlight == 1 && menuSounds.ok == 1 &&
+        menuSounds.cancel == 1,
+        L"registered kill and bidirectional native-menu audio events did not publish exactly once") && passed;
 
     if (passed)
     {

@@ -76,6 +76,8 @@ public:
         std::size_t capacity);
     [[nodiscard]] stereo::QuickMenuSelection
     TakeReleasedSelection() noexcept;
+    [[nodiscard]] OpenXRNativeMenuSoundRequests
+    TakeNativeMenuSoundRequests() noexcept;
     [[nodiscard]] OpenXRTrackingAction TakeTrackingAction() noexcept;
     [[nodiscard]] bool GetMirrorState(
         OpenXRQuickMenuMirrorState& state) const noexcept;
@@ -113,6 +115,7 @@ private:
         ID3D11Texture2D* source,
         const wchar_t* label);
     void DestroySwapchain(Swapchain& swapchain) noexcept;
+    void TrackNativeMenuHover() noexcept;
     void WriteLog(const wchar_t* format, ...) const;
 
     OpenXRQuickMenuApi api_ = {};
@@ -149,6 +152,8 @@ private:
     bool settingsVisualValid_ = false;
     bool mountedCameraDecoupled_ = false;
     OpenXRTrackingAction trackingAction_ = OpenXRTrackingAction::None;
+    OpenXRNativeMenuSoundRequests pendingNativeMenuSounds_ = {};
+    std::uint64_t lastNativeMenuSoundHoverTarget_ = 0;
 };
 
 } // namespace bfvr

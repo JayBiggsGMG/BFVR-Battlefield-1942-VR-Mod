@@ -40,10 +40,10 @@ enum class ScopeAimSource
 };
 
 // Unity-style bounded angular stabilization. History can influence the result
-// only while its total orientation error is below 0.25 degrees. At or beyond
+// only while its total orientation error is below 0.40 degrees. At or beyond
 // that boundary, deliberate motion catches up to raw immediately.
 inline constexpr float kScopeAimSmoothingMaximumErrorRadians =
-    0.004363323F;
+    0.006981317F;
 inline constexpr std::int64_t
     kScopeAimSmoothingMaximumSampleIntervalNanoseconds = 50'000'000;
 

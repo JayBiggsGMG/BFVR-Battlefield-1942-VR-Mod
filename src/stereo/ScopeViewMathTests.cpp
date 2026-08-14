@@ -314,7 +314,7 @@ bool TestScopeAimSmoothingAttenuatesMicroMotionAndTranslation() noexcept
         stabilized->values[2][0],
         stabilized->values[2][2]);
     return NearlyEqual(first->values[2][2], 1.0F) &&
-        stabilizedYaw > 0.00020F && stabilizedYaw < 0.00026F &&
+        stabilizedYaw > 0.00013F && stabilizedYaw < 0.00016F &&
         NearlyEqual(stabilized->values[3][0], 4.0F) &&
         NearlyEqual(stabilized->values[3][1], 5.0F) &&
         NearlyEqual(stabilized->values[3][2], 6.0F) &&

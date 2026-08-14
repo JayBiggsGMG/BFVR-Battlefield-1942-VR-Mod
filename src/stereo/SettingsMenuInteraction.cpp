@@ -379,6 +379,14 @@ SettingsMenuSelection SettingsMenuSelectionAt(
             return SettingsMenuSelection::ResetColorSettings;
         }
     }
+    if (tab == SettingsMenuTab::GraphicsAudio && page == 2 &&
+        pixelX >= kSettingsMenuControlColumnPixels &&
+        pixelX <= kSettingsMenuControlColumnPixels + 72.0F &&
+        pixelY >= kSettingsMenuAudioRowCenterPixels - 38.0F &&
+        pixelY <= kSettingsMenuAudioRowCenterPixels + 38.0F)
+    {
+        return SettingsMenuSelection::KillSoundEnabled;
+    }
     return SettingsMenuSelection::None;
 }
 
@@ -488,6 +496,8 @@ const wchar_t* SettingsMenuSelectionName(
         return L"Saturation slider";
     case SettingsMenuSelection::ResetColorSettings:
         return L"Reset Color Settings";
+    case SettingsMenuSelection::KillSoundEnabled:
+        return L"Kill Sound";
     default: return L"none";
     }
 }
@@ -672,6 +682,7 @@ void SettingsMenuInteraction::Update(
         sliderDragging_ = IsSliderSelection(hovered_);
         if (sliderDragging_)
         {
+            menuSoundActivation_ = pressed_;
             if (pressed_ == SettingsMenuSelection::InfantryTurnSpeed)
             {
                 SetTurnSpeedFromPointer(pointerU_);
@@ -721,6 +732,7 @@ void SettingsMenuInteraction::Reset() noexcept
     tab_ = SettingsMenuTab::VrSettings;
     hovered_ = SettingsMenuSelection::None;
     pressed_ = SettingsMenuSelection::None;
+    menuSoundActivation_ = SettingsMenuSelection::None;
     command_ = SettingsMenuCommand::None;
     values_ = {};
     status_ = SettingsMenuStatus::SettingsLoaded;
@@ -746,6 +758,7 @@ void SettingsMenuInteraction::ResetTrackingAnchor() noexcept
     pointerVisible_ = false;
     hovered_ = SettingsMenuSelection::None;
     pressed_ = SettingsMenuSelection::None;
+    menuSoundActivation_ = SettingsMenuSelection::None;
     primaryWasHeld_ = false;
     sliderDragging_ = false;
 }
@@ -793,9 +806,18 @@ bool SettingsMenuInteraction::TakeValuesChanged() noexcept
     return result;
 }
 
+SettingsMenuSelection
+SettingsMenuInteraction::TakeMenuSoundActivation() noexcept
+{
+    const SettingsMenuSelection result = menuSoundActivation_;
+    menuSoundActivation_ = SettingsMenuSelection::None;
+    return result;
+}
+
 void SettingsMenuInteraction::Activate(
     SettingsMenuSelection selection) noexcept
 {
+    menuSoundActivation_ = selection;
     switch (selection)
     {
     case SettingsMenuSelection::TabVrSettings:
@@ -1049,6 +1071,11 @@ void SettingsMenuInteraction::Activate(
         break;
     case SettingsMenuSelection::WaterReflectionsEnabled:
         values_.waterReflectionsEnabled = !values_.waterReflectionsEnabled;
+        valuesChanged_ = true;
+        status_ = SettingsMenuStatus::SettingsNotSaved;
+        break;
+    case SettingsMenuSelection::KillSoundEnabled:
+        values_.killSoundEnabled = !values_.killSoundEnabled;
         valuesChanged_ = true;
         status_ = SettingsMenuStatus::SettingsNotSaved;
         break;

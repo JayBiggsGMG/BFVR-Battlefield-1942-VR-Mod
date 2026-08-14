@@ -152,6 +152,13 @@ struct OpenXRQuickMenuMirrorState
     ID3D11Texture2D* cursorTexture = nullptr;
 };
 
+struct OpenXRNativeMenuSoundRequests
+{
+    std::uint32_t highlight = 0;
+    std::uint32_t ok = 0;
+    std::uint32_t cancel = 0;
+};
+
 struct OpenXRPresentationTextureRequirements
 {
     UINT leftWorldWidth = 0;
@@ -237,6 +244,12 @@ public:
     // right-controller A hold. Rendering never dispatches keyboard input.
     [[nodiscard]] stereo::QuickMenuSelection
     TakeQuickMenuSelection() noexcept;
+
+    // Returns BFVR-owned menu feedback events accumulated during the latest
+    // controller update. The presenter transports them to the x86 owner of
+    // Battlefield's verified BfMenu sound wrappers.
+    [[nodiscard]] OpenXRNativeMenuSoundRequests
+    TakeNativeMenuSoundRequests() noexcept;
 
     // Opens the persistent owner-authored VR Settings panel after the
     // presenter's Quick Menu command dispatcher accepts its release.

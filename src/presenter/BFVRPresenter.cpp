@@ -1,6 +1,7 @@
 #include "openxr/OpenXRPresentation.h"
 #include "presenter/DesktopMirror.h"
 #include "presenter/SharedControlChannel.h"
+#include "presenter/KillSoundPlayer.h"
 #include "presenter/SharedTextureConsumer.h"
 #include "settings/UserSettings.h"
 #include "stereo/ComfortVignette.h"
@@ -473,6 +474,12 @@ int RunPresenter(
         Sleep(kOpenXRStartupRetryDelayMs);
     }
 
+    bfvr::KillSoundPlayer killSoundPlayer;
+    (void)killSoundPlayer.Initialize(
+        payloadDirectory,
+        WriteLog,
+        nullptr);
+
     const bfvr::OpenXRPresentationTextureRequirements requirements =
         presentation.GetTextureRequirements();
     PublishRequirements(*block, requirements);
@@ -604,6 +611,8 @@ int RunPresenter(
     LONG consumedShotBothSequence = 0;
     LONG consumedDeathSequence = 0;
     LONG consumedNativeMenuHoverSequence = 0;
+    LONG consumedKillSoundSequence = InterlockedCompareExchange(
+        &block->killSoundSequence, 0, 0);
     bool nativeMenuHoverActive = false;
     bool desktopMirrorSourceDirty = false;
     bool quickMenuWasVisibleInMirror = false;
@@ -614,6 +623,7 @@ int RunPresenter(
     ULONGLONG nextComfortSettingsPollAt = 0;
     bool comfortVignetteEnabled = true;
     bool deathCameraComfortEnabled = true;
+    bool killSoundEnabled = true;
     auto consumeSequence = [&]()
     {
         // The producer publishes these pixels/metadata before frameSequence
@@ -788,6 +798,7 @@ int RunPresenter(
         {
             return;
         }
+        InterlockedIncrement(&block->nativeMenuSoundOkSequence);
         if (selection ==
             bfvr::stereo::QuickMenuSelection::MountedCameraDecouple)
         {
@@ -869,8 +880,24 @@ int RunPresenter(
             comfortVignetteEnabled = settings.comfortVignetteEnabled;
             deathCameraComfortEnabled =
                 settings.deathCameraComfortEnabled;
+            killSoundEnabled = settings.killSoundEnabled;
             nextComfortSettingsPollAt = now + 250;
         }
+        killSoundPlayer.Poll();
+        const LONG availableKillSoundSequence =
+            InterlockedCompareExchange(&block->killSoundSequence, 0, 0);
+        const ULONG pendingKillSounds = (std::min)(
+            static_cast<ULONG>(availableKillSoundSequence) -
+                static_cast<ULONG>(consumedKillSoundSequence),
+            64UL);
+        if (killSoundEnabled)
+        {
+            for (ULONG index = 0; index < pendingKillSounds; ++index)
+            {
+                (void)killSoundPlayer.Play();
+            }
+        }
+        consumedKillSoundSequence = availableKillSoundSequence;
         const bool motionFresh = lastComfortMotionSampleAt != 0 &&
             now - lastComfortMotionSampleAt <=
                 kComfortVignetteMotionFreshMs;
@@ -907,6 +934,21 @@ int RunPresenter(
                 0,
                 0) != 0);
         const bool began = presentation.BeginFrame(frame);
+        const bfvr::OpenXRNativeMenuSoundRequests menuSounds =
+            presentation.TakeNativeMenuSoundRequests();
+        for (std::uint32_t index = 0; index < menuSounds.highlight; ++index)
+        {
+            InterlockedIncrement(
+                &block->nativeMenuSoundHighlightSequence);
+        }
+        for (std::uint32_t index = 0; index < menuSounds.ok; ++index)
+        {
+            InterlockedIncrement(&block->nativeMenuSoundOkSequence);
+        }
+        for (std::uint32_t index = 0; index < menuSounds.cancel; ++index)
+        {
+            InterlockedIncrement(&block->nativeMenuSoundCancelSequence);
+        }
         const auto consumeHapticCounter = [&presentation](
             volatile LONG* source,
             LONG& consumed,
