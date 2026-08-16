@@ -36,6 +36,7 @@
 #include "stereo/D3D8DrawPolicy.h"
 #include "stereo/D3D8FirstPersonArmPolicy.h"
 #include "stereo/D3D8FrameCompositionPolicy.h"
+#include "stereo/D3D8ProjectedShadowTextureTransform.h"
 #include "stereo/D3D8SemanticDrawPolicy.h"
 #include "stereo/D3D8WaterReflectionTextureBasis.h"
 #include "stereo/InfantryPresentationTurn.h"
@@ -339,6 +340,10 @@ struct DrawStateSnapshot
     bool waterTextureBasisPrepared = false;
     bool waterTexture0Overridden = false;
     float waterTextureBasisMaxDelta = 0.0F;
+    D3DMatrix projectedShadowTexture0 = {};
+    D3DMatrix projectedShadowEyeTexture0[2] = {};
+    bool projectedShadowTexturePrepared = false;
+    bool projectedShadowTexture0Overridden = false;
     bfvr::stereo::D3D8DrawPolicy drawPolicy =
         bfvr::stereo::D3D8DrawPolicy::MonoNonPerspective;
     bfvr::stereo::D3D8SemanticDrawClass semanticClass =
@@ -416,6 +421,12 @@ bool g_loggedImmutableLocalTrackingOrigin = false;
 bool g_loggedRequestCadenceSmoothTurn = false;
 bool g_loggedRequestCadenceSnapTurn = false;
 volatile LONG g_loggedWaterPassStateMask = 0;
+volatile LONG g_projectedShadowAuditMask = 0;
+volatile LONG g_projectedShadowAuditDraws = 0;
+volatile LONG g_projectedShadowAuditEyeApplications = 0;
+volatile LONG g_projectedShadowAuditFailures = 0;
+volatile LONG g_projectedShadowDiscoveryBudget = 65536;
+volatile LONG g_projectedShadowDynamicProducerReturn = 0;
 volatile LONG g_processLifetimeShaderDrawSkips = 0;
 bfvr::D3D8RuntimeUiPlacement g_frameUiPlacement = {};
 bfvr::stereo::UiMenuAnchorTracker g_menuAnchorTracker = {};
@@ -664,6 +675,7 @@ void TraceWeaponFireStereoReplay(const DrawStateSnapshot& snapshot) noexcept
 }
 
 #include "client/internal/D3D8StereoPairWaterDiagnostics.inl"
+#include "client/internal/D3D8StereoPairProjectedShadow.inl"
 
 void AppendPresentationLog(const wchar_t* message)
 {
@@ -1182,8 +1194,9 @@ FrameMirrorResult MirrorDrawIntoFrame(
         ReleaseFrameSourceReferences(snapshot);
         return FrameMirrorResult::NotMirrored;
     }
-    ApplyFrameSemanticPolicy(invocation, snapshot);
+    ApplyFrameSemanticPolicy(device, invocation, snapshot);
     PrepareStereoStableWaterReflection(snapshot);
+    PrepareProjectedShadowTextureTransform(device, snapshot);
     if (bfvr::IsD3D8RuntimeDiagnosticsEnabled(g_runtimeDiagnostics) &&
         snapshot.semanticClass ==
         bfvr::stereo::D3D8SemanticDrawClass::WaterSurface)
@@ -1341,8 +1354,11 @@ FrameMirrorResult MirrorDrawIntoFrame(
                     kD3DTransformProjection,
                     replayProjection)
                 : E_FAIL;
-            const HRESULT waterTextureResult = projectionResult;
-            HRESULT weaponWorldResult = waterTextureResult;
+            const HRESULT projectedShadowTextureResult =
+                SUCCEEDED(projectionResult)
+                ? ApplyProjectedShadowTextureTransform(device, snapshot, eye)
+                : projectionResult;
+            HRESULT weaponWorldResult = projectedShadowTextureResult;
             if (SUCCEEDED(weaponWorldResult) && invocation.replayWeaponMotion)
             {
                 bfvr::D3D8WeaponMotionMatrix replayWorld = {};
@@ -1504,7 +1520,7 @@ bool CompletePresentationFrame(void* device)
             (layerTransition && transitionLog <= 80))
         {
             AppendLog(
-                L"D3D8 frame-composition audit sequence=%ld completed=%d layers=%ld previousLayers=%ld draws=(all=%ld world=%ld UI=%ld excluded=%ld bounded=%ld) policies=(stereo=%ld pretransformed=%ld mono=%ld) semantics=(sky=%ld billboard=%ld treeAlpha=%ld treeSprite=%ld skinning=%ld water=%ld translucent=%ld font=%ld menu=%ld) shaderSafety=(vertexRead=%ld skinPrepare=%ld skinMismatch=%ld skinApply=%ld spritePrepare=%ld spriteMismatch=%ld spriteApply=%ld treePrepare=%ld treeMismatch=%ld treeApply=%ld) restoration=(checks=%ld failures=%ld accepted=%d releases=%ld/%ld).",
+                L"D3D8 frame-composition audit sequence=%ld completed=%d layers=%ld previousLayers=%ld draws=(all=%ld world=%ld UI=%ld excluded=%ld bounded=%ld) policies=(stereo=%ld pretransformed=%ld mono=%ld) semantics=(sky=%ld billboard=%ld treeAlpha=%ld treeSprite=%ld skinning=%ld shadow=%ld water=%ld translucent=%ld font=%ld menu=%ld) shaderSafety=(vertexRead=%ld skinPrepare=%ld skinMismatch=%ld skinApply=%ld spritePrepare=%ld spriteMismatch=%ld spriteApply=%ld treePrepare=%ld treeMismatch=%ld treeApply=%ld) restoration=(checks=%ld failures=%ld accepted=%d releases=%ld/%ld).",
                 sequence,
                 completed ? 1 : 0,
                 layerMask,
@@ -1522,6 +1538,7 @@ bool CompletePresentationFrame(void* device)
                 InterlockedCompareExchange(&g_frame.treeMeshAlphaBlockDraws, 0, 0),
                 InterlockedCompareExchange(&g_frame.treeMeshProgrammableSpriteDraws, 0, 0),
                 InterlockedCompareExchange(&g_frame.animatedMeshSkinningDraws, 0, 0),
+                InterlockedCompareExchange(&g_frame.projectedTerrainShadowDraws, 0, 0),
                 InterlockedCompareExchange(&g_frame.waterSurfaceDraws, 0, 0),
                 InterlockedCompareExchange(&g_frame.translucentSpriteDraws, 0, 0),
                 InterlockedCompareExchange(&g_frame.ref2FontGlyphBatchDraws, 0, 0),
@@ -2991,6 +3008,28 @@ DWORD WINAPI RunProbe(void*)
         bfvr::StopControllerInputOverlay();
     }
     bfvr::SetMainMenuOverlayAvailable(false);
+    if (IsPresentationMode() &&
+        bfvr::IsD3D8RuntimeDiagnosticsEnabled(g_runtimeDiagnostics))
+    {
+        AppendLog(
+            L"PROJECTED_SHADOW_AUDIT summary draws=%ld eyeApplications=%ld failures=%ld presentedFrames=%ld.",
+            InterlockedCompareExchange(
+                &g_projectedShadowAuditDraws,
+                0,
+                0),
+            InterlockedCompareExchange(
+                &g_projectedShadowAuditEyeApplications,
+                0,
+                0),
+            InterlockedCompareExchange(
+                &g_projectedShadowAuditFailures,
+                0,
+                0),
+            InterlockedCompareExchange(
+                &g_presentationRun.presentedFrames,
+                0,
+                0));
+    }
     RemoveHooks();
     if (mountedWeaponResolverStarted)
     {
@@ -3031,8 +3070,12 @@ void StartStereoProbe(
 
     g_callbacks = callbacks;
     g_mode = mode;
-    if (mode == ProbeMode::FullFramePresentation)
+    if (mode == ProbeMode::FullFramePresentation &&
+        bfvr::IsD3D8RuntimeDiagnosticsEnabled(g_runtimeDiagnostics))
     {
+        AppendLog(
+            L"PROJECTED_SHADOW_AUDIT armed buildPath=PatchCellBlock-0069922E diagnostics=%s.",
+            bfvr::DescribeD3D8RuntimeDiagnosticLevel(g_runtimeDiagnostics));
         AppendLog(
             L"BFVR runtime diagnostics=%s: off disables runtime logging and performance measurement, normal keeps summaries while skipping expensive proof readbacks, and deep enables all proof checks.",
             bfvr::DescribeD3D8RuntimeDiagnosticLevel(g_runtimeDiagnostics));

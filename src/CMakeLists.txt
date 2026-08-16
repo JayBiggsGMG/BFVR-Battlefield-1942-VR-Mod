@@ -16,6 +16,22 @@ set(BFVR_OPENXR_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/openxr-1.1.61")
 set(BFVR_OPENXR_INCLUDE_DIRECTORY "${BFVR_OPENXR_ROOT}/include")
 set(BFVR_MINHOOK_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/minhook-1.3.4")
 set(BFVR_D3D8TO9_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/d3d8to9-1.15.1")
+set(BFVR_ASSET_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../assets")
+
+if(NOT IS_DIRECTORY "${BFVR_ASSET_ROOT}")
+  message(FATAL_ERROR "The canonical BFVR asset directory is missing.")
+endif()
+
+function(bfvr_add_runtime_asset_target asset_target runtime_target)
+  add_custom_target(${asset_target}
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+      "$<TARGET_FILE_DIR:${runtime_target}>/assets"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+      "${BFVR_ASSET_ROOT}"
+      "$<TARGET_FILE_DIR:${runtime_target}>/assets"
+    COMMENT "Synchronizing canonical BFVR runtime assets"
+    VERBATIM)
+endfunction()
 
 if(NOT EXISTS "${BFVR_OPENXR_INCLUDE_DIRECTORY}/openxr/openxr.h")
   message(FATAL_ERROR "The pinned OpenXR 1.1.61 headers are missing from BFVR/third_party.")
@@ -139,49 +155,9 @@ if(BFVR_PRESENTER_ONLY)
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
       "${BFVR_OPENXR_LOADER}"
       "$<TARGET_FILE_DIR:BFVROpenXRProbe>/runtime/openxr/win64/openxr_loader.dll")
-  foreach(target BFVRPresenter BFVRSharedTextureConsumerProbe)
-    add_custom_command(TARGET ${target} POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E make_directory
-        "$<TARGET_FILE_DIR:${target}>/assets"
-    COMMAND ${CMAKE_COMMAND} -E make_directory
-        "$<TARGET_FILE_DIR:${target}>/assets/SettingsMenu"
-    COMMAND ${CMAKE_COMMAND} -E make_directory
-        "$<TARGET_FILE_DIR:${target}>/assets/Sounds"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-      "${CMAKE_CURRENT_SOURCE_DIR}/../assets/BackToGame_bg.png"
-      "${CMAKE_CURRENT_SOURCE_DIR}/../assets/BackToGame_hover.png"
-      "${CMAKE_CURRENT_SOURCE_DIR}/../assets/BackToGame_text.png"
-      "${CMAKE_CURRENT_SOURCE_DIR}/../assets/BackToGame_BorderFrame.png"
-      "${CMAKE_CURRENT_SOURCE_DIR}/../assets/BackToGame_BorderFrameHover.png"
-      "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_bg.png"
-      "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_menuhover.png"
-      "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_deployhover.png"
-      "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_1hover.png"
-      "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_2hover.png"
-      "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_3hover.png"
-      "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_4hover.png"
-      "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_5hover.png"
-      "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_6hover.png"
-      "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_F9hover.png"
-      "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_F10hover.png"
-      "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_F11hover.png"
-      "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_F12hover.png"
-      "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_frame.png"
-      "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_text.png"
-      "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_Cursor.png"
-      "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_stripBG.png"
-      "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_stripDecoupleHover.png"
-      "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_stripMapHover.png"
-      "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_stripSettingsHover.png"
-      "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_stripText.png"
-        "$<TARGET_FILE_DIR:${target}>/assets"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-      "${CMAKE_CURRENT_SOURCE_DIR}/../assets/SettingsMenu"
-      "$<TARGET_FILE_DIR:${target}>/assets/SettingsMenu"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-      "${CMAKE_CURRENT_SOURCE_DIR}/../assets/Sounds"
-      "$<TARGET_FILE_DIR:${target}>/assets/Sounds")
-  endforeach()
+  bfvr_add_runtime_asset_target(BFVRPresenterRuntimeAssets BFVRPresenter)
+  add_dependencies(BFVRPresenter BFVRPresenterRuntimeAssets)
+  add_dependencies(BFVRSharedTextureConsumerProbe BFVRPresenterRuntimeAssets)
   return()
 endif()
 
@@ -247,6 +223,8 @@ add_library(BFVRClient SHARED
   client/BFSoldierPrimarySupportPoseCache.cpp
   client/BFSoldierRightGripRotationBinding.cpp
   client/BFSoldierNativeArmPole.cpp
+  client/BFSoldierOffHandCalibration.cpp
+  client/BFSoldierOffHandOverrides.cpp
   client/BFSoldierOffHandSupportBinding.cpp
   client/BFSoldierOffHandWeaponSteering.cpp
   client/BFSoldierTrackedHandPose.cpp
@@ -301,6 +279,7 @@ add_library(BFVRStereoMath STATIC
   stereo/D3D8DrawPolicy.cpp
   stereo/D3D8FirstPersonArmPolicy.cpp
   stereo/D3D8FrameCompositionPolicy.cpp
+  stereo/D3D8ProjectedShadowTextureTransform.cpp
   stereo/D3D8SemanticDrawPolicy.cpp
   stereo/D3D8ShaderTransform.cpp
   stereo/D3D8WaterReflectionTextureBasis.cpp
@@ -395,6 +374,10 @@ add_executable(BFVRWaterReflectionTextureBasisTests
   stereo/D3D8WaterReflectionTextureBasisTests.cpp
 )
 
+add_executable(BFVRProjectedShadowTextureTransformTests
+  stereo/D3D8ProjectedShadowTextureTransformTests.cpp
+)
+
 add_executable(BFVRWeaponFireAimMathTests
   stereo/WeaponFireAimMathTests.cpp
 )
@@ -405,6 +388,8 @@ add_executable(BFVRHandWeaponRecoilMathTests
 
 add_executable(BFVROffHandSupportPolicyTests
   client/BFSoldierLeftGripRotationBinding.cpp
+  client/BFSoldierOffHandCalibration.cpp
+  client/BFSoldierOffHandOverrides.cpp
   client/BFSoldierOffHandSupportBinding.cpp
   client/BFSoldierOffHandWeaponSteering.cpp
   client/BFSoldierPrimarySupportPoseCache.cpp
@@ -537,7 +522,7 @@ add_executable(BFVRRfaInspect
   tools/RfaInspect.cpp
 )
 
-foreach(target BFVRClient BFVRD3D8To9FlatClient BFVRLoader BFVRBf42PlusPlusCompatibilityTests BFVRFrameLimiterOverrideTests BFVROpenXRProbe BFVRSharedTextureProducerProbe BFVRD3D8To9SharedSurfaceProbe BFVRAmbientOcclusionDepthProbe BFVRStereoMath BFVRStereoMathTests BFVRWaterReflectionTextureBasisTests BFVRWeaponFireAimMathTests BFVRHandWeaponRecoilMathTests BFVROffHandSupportPolicyTests BFVRArmPoleVectorMathTests BFVRMainMenuOverlayTests BFVRQuickMenuTests BFVRSettingsMenuTests BFVRUserSettingsTests BFVRUserSettingsSeedWriter BFVROpenXRHapticsTests BFVROpenXRControllerShortcutTests BFVROpenXRControllerBindingTests BFVRVehicleMotionAimMathTests BFVRDirectionalLocomotionTests BFVRComfortVignetteTests BFVRSurfaceVehicleDriveMathTests BFVRAircraftControlMathTests BFVRTrackingAnchorTests BFVRInfantryAuthoritativeAimTests BFVRInfantryPresentationTurnTests BFVRControllerInputCacheTests BFVRMountedCameraMathTests BFVRInfantryCameraMathTests BFVRScopeViewMathTests BFVROpenXRScopeOverlayLayerTests BFVRWorldCrosshairMathTests BFVRRuntimeDiagnosticsTests BFVRSharedControlChannelTests BFVRKillSoundEventPolicyTests BFVRRfaInspect)
+foreach(target BFVRClient BFVRD3D8To9FlatClient BFVRLoader BFVRBf42PlusPlusCompatibilityTests BFVRFrameLimiterOverrideTests BFVROpenXRProbe BFVRSharedTextureProducerProbe BFVRD3D8To9SharedSurfaceProbe BFVRAmbientOcclusionDepthProbe BFVRStereoMath BFVRStereoMathTests BFVRWaterReflectionTextureBasisTests BFVRProjectedShadowTextureTransformTests BFVRWeaponFireAimMathTests BFVRHandWeaponRecoilMathTests BFVROffHandSupportPolicyTests BFVRArmPoleVectorMathTests BFVRMainMenuOverlayTests BFVRQuickMenuTests BFVRSettingsMenuTests BFVRUserSettingsTests BFVRUserSettingsSeedWriter BFVROpenXRHapticsTests BFVROpenXRControllerShortcutTests BFVROpenXRControllerBindingTests BFVRVehicleMotionAimMathTests BFVRDirectionalLocomotionTests BFVRComfortVignetteTests BFVRSurfaceVehicleDriveMathTests BFVRAircraftControlMathTests BFVRTrackingAnchorTests BFVRInfantryAuthoritativeAimTests BFVRInfantryPresentationTurnTests BFVRControllerInputCacheTests BFVRMountedCameraMathTests BFVRInfantryCameraMathTests BFVRScopeViewMathTests BFVROpenXRScopeOverlayLayerTests BFVRWorldCrosshairMathTests BFVRRuntimeDiagnosticsTests BFVRSharedControlChannelTests BFVRKillSoundEventPolicyTests BFVRRfaInspect)
   target_compile_definitions(${target} PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
   set_property(TARGET ${target} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
   if(MSVC)
@@ -569,6 +554,7 @@ target_include_directories(BFVRD3D8To9FlatClient PRIVATE
 target_include_directories(BFVRStereoMath PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(BFVRStereoMathTests PRIVATE BFVRStereoMath)
 target_link_libraries(BFVRWaterReflectionTextureBasisTests PRIVATE BFVRStereoMath)
+target_link_libraries(BFVRProjectedShadowTextureTransformTests PRIVATE BFVRStereoMath)
 target_link_libraries(BFVRWeaponFireAimMathTests PRIVATE BFVRStereoMath)
 target_link_libraries(BFVRHandWeaponRecoilMathTests PRIVATE BFVRStereoMath)
 target_link_libraries(BFVROffHandSupportPolicyTests PRIVATE BFVRStereoMath)
@@ -636,6 +622,9 @@ if(BUILD_TESTING)
   add_test(
     NAME BFVRWaterReflectionTextureBasisTests
     COMMAND BFVRWaterReflectionTextureBasisTests)
+  add_test(
+    NAME BFVRProjectedShadowTextureTransformTests
+    COMMAND BFVRProjectedShadowTextureTransformTests)
   add_test(
     NAME BFVRWeaponFireAimMathTests
     COMMAND BFVRWeaponFireAimMathTests)
@@ -738,49 +727,8 @@ foreach(target BFVRClient BFVROpenXRProbe)
   )
 endforeach()
 
-add_custom_command(TARGET BFVRClient POST_BUILD
-  COMMAND ${CMAKE_COMMAND} -E make_directory
-    "$<TARGET_FILE_DIR:BFVRClient>/assets"
-  COMMAND ${CMAKE_COMMAND} -E make_directory
-    "$<TARGET_FILE_DIR:BFVRClient>/assets/SettingsMenu"
-  COMMAND ${CMAKE_COMMAND} -E make_directory
-    "$<TARGET_FILE_DIR:BFVRClient>/assets/Sounds"
-  COMMAND ${CMAKE_COMMAND} -E copy_if_different
-    "${CMAKE_CURRENT_SOURCE_DIR}/../assets/BackToGame_bg.png"
-    "${CMAKE_CURRENT_SOURCE_DIR}/../assets/BackToGame_hover.png"
-    "${CMAKE_CURRENT_SOURCE_DIR}/../assets/BackToGame_text.png"
-    "${CMAKE_CURRENT_SOURCE_DIR}/../assets/BackToGame_BorderFrame.png"
-    "${CMAKE_CURRENT_SOURCE_DIR}/../assets/BackToGame_BorderFrameHover.png"
-    "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_bg.png"
-    "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_menuhover.png"
-    "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_deployhover.png"
-    "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_1hover.png"
-    "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_2hover.png"
-    "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_3hover.png"
-    "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_4hover.png"
-    "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_5hover.png"
-    "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_6hover.png"
-    "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_F9hover.png"
-    "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_F10hover.png"
-    "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_F11hover.png"
-    "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_F12hover.png"
-    "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_frame.png"
-    "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_text.png"
-    "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_Cursor.png"
-    "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_stripBG.png"
-    "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_stripDecoupleHover.png"
-    "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_stripMapHover.png"
-    "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_stripSettingsHover.png"
-    "${CMAKE_CURRENT_SOURCE_DIR}/../assets/QM_stripText.png"
-    "${CMAKE_CURRENT_SOURCE_DIR}/../assets/Crosshair.png"
-    "${CMAKE_CURRENT_SOURCE_DIR}/../assets/HitMarker.png"
-    "$<TARGET_FILE_DIR:BFVRClient>/assets"
-  COMMAND ${CMAKE_COMMAND} -E copy_directory
-    "${CMAKE_CURRENT_SOURCE_DIR}/../assets/SettingsMenu"
-    "$<TARGET_FILE_DIR:BFVRClient>/assets/SettingsMenu"
-  COMMAND ${CMAKE_COMMAND} -E copy_directory
-    "${CMAKE_CURRENT_SOURCE_DIR}/../assets/Sounds"
-    "$<TARGET_FILE_DIR:BFVRClient>/assets/Sounds")
+bfvr_add_runtime_asset_target(BFVRClientRuntimeAssets BFVRClient)
+add_dependencies(BFVRClient BFVRClientRuntimeAssets)
 
 target_include_directories(BFVRClient PRIVATE
   "${BFVR_D3D8TO9_ROOT}/source")

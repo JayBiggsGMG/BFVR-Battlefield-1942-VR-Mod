@@ -261,6 +261,51 @@ Off-hand acquisition uses an 18 cm radius around a long gun's unchanged
 animation-authored support point. Close sidearms retain their 12 cm captured-cup
 radius. Both gates remain acquisition-only: neither changes a hand target or
 weapon anchor, and an established grab has no distance-based auto-release.
+The WorkInProgress launcher keeps both the temporary recorder and its audit
+sink disabled with `BFVR_OFFHAND_CALIBRATION=0` and an empty
+`BFVR_OFFHAND_CALIBRATION_LOG`. Set the recorder to `1` and restore a dedicated
+audit path only for deliberate calibration.
+With a primary slot-3 weapon equipped,
+release left squeeze, place and rotate the free visual left hand at the desired
+socket, and click the left stick. BFVR records and immediately flushes the
+complete native and calibrated left-wrist-from-right-wrist relations directly
+to the configured dedicated
+`build/bfvr-release-win32/RelWithDebInfo/logs/offhand-calibrations.log` and
+hot-applies the
+calibrated relation only to that exact live soldier/Skeleton/item identity. A
+held stick cannot recapture every frame; release and click again to replace the
+session value. Capture/rejection records use the narrow
+`OFFHAND_CALIBRATION_` audit prefix. The dedicated capture file does not depend
+on the ordinary observer callback or diagnostics level; an observer copy is
+also permitted when available, without enabling any other diagnostic family.
+Sidearms, gadgets, untracked hands, and an already-held
+support are rejected. The experiment writes no persistent calibration data
+and is disabled by setting the environment value to `0`.
+The accepted 2026-08-15 corrections are separate from that recorder and remain
+active with it off. They identify DP, MP18, Type5, AK47, and Saiga12k through
+the exact native `HandFireArmsTemplate` zoom-FOV and soldier-camera-position
+properties already read from the active item, then require primary slot 3 and
+a close match to the captured native wrist relation. The duplicate MP18
+captures select the nearest recorded native relation. Unknown template
+properties, another item slot, or a materially different native pose remain
+unchanged. This secondary pose fingerprint prevents a mod that reuses a stock
+weapon template but authors a different left-hand placement from inheriting
+the correction.
+The runtime `soldierCameraPosition` vector begins at template `+0x3F0`; a
+2026-08-15 live DP probe rejected the earlier `+0x3EC` assumption by exposing
+the preceding zero float followed by only the first two configured components.
+The subsequent owner headset pass accepted all six stored corrections: Russian
+assault and medic, Japanese medic and engineer, and Chinese medic and engineer.
+The later No4Sniper Oculus/SteamVR A/B exposed a separate native-capture
+boundary: the current generic arm path waits only two untouched attachment
+callbacks and freezes the next left-from-right relation. The two runtimes
+captured No4 relations 6.37 cm and 1.26 degrees apart even though neither
+matched an override. This is a general first-sample timing risk; it must be
+corrected with automatic native-relation convergence, not manual per-weapon
+measurement or a broad vanilla weapon table. The six saved overrides also keep
+their secondary relation gate because it is what prevents a mod with different
+authored hand placement from inheriting a correction.
+
 The default-on `Sniper Aim Smoothing` checkbox on the Controls page affects
 only scoped micro-motion. It applies a frame-time-aware spherical orientation
 interpolation while total stabilized-to-raw error remains below `0.40` degrees;
@@ -280,6 +325,13 @@ weapons without `useScope` receive no BFVR camera, FOV, or overlay policy.
 Scope exit clears smoothing history and returns camera direction to normal;
 unscoped aim, firing, grips, arms, elbows, IK, recoil, artificial turning,
 vehicles, and mounted weapons are not filtered by this feature.
+The temporary SteamVR smoothing audit remains available for a deliberate
+future investigation, but the WorkInProgress launcher now clears
+`BFVR_SCOPE_SMOOTHING_AUDIT_LOG`. With no explicit audit path the client does
+not collect its outcome counters or write a scope-exit summary. If deliberately
+enabled, it classifies filtered samples, duplicate generations, invalid/zero
+timestamps, intervals above 50 ms, and 0.40-degree raw bypasses without
+altering the filter result.
 
 The VR replay applies only a rigid controller attachment to the classified
 weapon family: no viewmodel scale or perspective morph and no artificial
@@ -627,6 +679,23 @@ address or profile file is consulted. Static cross-build evidence and both
 architecture builds support these boundaries. Owner testing confirms correct
 SP and MP playback, teamkill silence, and 300 ms multikill grouping.
 
+The 2026-08-15 development asset audit found that the repository WAV and the
+active launch-payload WAV could diverge. `BFVR/assets` remains canonical, but
+the former CMake `POST_BUILD` copy ran only when a native target actually
+rebuilt, and the outer development launcher mirrored only Settings-menu PNGs.
+The runtime asset copy is now an always-run dependency of both `BFVRClient`
+and `BFVRPresenter`, player staging copies directly from canonical `assets/`,
+and the local launcher mirrors that complete tree before launch. The launcher
+also rejects any BFVR checkout other than `WorkInProgress`; none of these local
+staging operations commits, merges, tags, publishes, or modifies `main`.
+Both the active Win32 RelWithDebInfo `BFVRClient` target and x64 Release
+`BFVRPresenter` target ran the new synchronization dependency successfully.
+The canonical, Win32-runtime, and x64-runtime WAVs then shared SHA-256
+`B47B72E209A61B480F28AC3F929FCB4FCADAAEDE9F1B2CC89AB732D71F09371A`.
+All 32 Win32 deterministic suites passed. A temporary player-payload staging
+run produced 68 manifest files and matched all 55 canonical asset files with
+zero missing or differing hashes; the temporary payload was then removed.
+
 The per-eye water surface-reflection pass is controlled by the default-on
 `Water SSR` checkbox on VR Settings > Graphics. Saving a changed enable state
 shows `Settings saved - restart required`; the next BFVR launch uses the
@@ -775,6 +844,60 @@ load order changes it. A fresh no-HMD Aberdeen run classified 776 of these
 draws with no tree-sprite preparation, source-match, or application failure
 and 78,686/78,686 exact restorations. The owner has since confirmed that this
 corrected close foliage renders properly in-headset.
+
+Dynamic soldier and vehicle shadows use BF1942's separate projected-terrain
+receiver path. The shared WinPC `PatchCellBlock::draw` submission returns at
+`0x0069922E`. Retail contains a vector-based `PatchTerrain::drawShadowCells`
+at `0x00682D70` (direct-call return `0x00682E95`) and an alternate linked-list
+traversal whose direct call returns at `0x00683ADD`; the tested live path uses
+`0x00682E95`. Generation into the auxiliary shadow texture remains outside the
+full-backbuffer replay. At the hooked D3D submission, the renderer wrapper
+return is stack slot 10, its three caller-owned arguments are slots 11-13,
+`PatchCellBlock::draw`'s saved `ESI` is slot 14, and the outer return is slot
+15. For only that three-address indexed conjunction, BFVR verifies
+stage 0 uses `D3DTSS_TCI_CAMERASPACEPOSITION` and `D3DTTFF_COUNT2`, then
+replaces the native texture transform with
+`inverse(eyeView) * sourceView * nativeTexture` for each eye. This preserves
+the game's world-space projection while terrain geometry keeps its normal
+stereo View/Projection. The original texture transform is restored after the
+draw, and any signature, state, matrix, or D3D-write failure falls back to the
+native path. Runtime summaries expose `projectedTerrainShadows`,
+`projectedShadowTextureEyes`, and `projectedShadowTextureFailures`. Deterministic
+coordinate-equivalence and semantic-classification tests pass. Headset PID
+`15796` proved exact native state, two successful eye writes, exact restoration,
+and owner visual acceptance. Normal diagnostics-off headset runs retain only a
+sparse `PROJECTED_SHADOW_AUDIT`: one startup/armed record, one first exact
+`PatchCellBlock` stack-layout record, one first exact receiver-candidate
+signature, one first classified draw/state record, one prepared-matrix delta
+record, one result per eye, one restoration record, and one shutdown summary
+when teardown runs.
+The diagnostics-off filter evaluates the final formatted callback text so the
+observer adapter cannot hide these records behind its outer `%s` format. This
+does not enable continuous tracing or change render policy.
+
+Because a live terrain session proved that the first shared cell submission
+used outer return `0x0068379E` and did not execute the statically matched
+`0x00683ADD` path, BFVR also has a bounded runtime discovery window. It reads
+the two stage-0 values only on alpha-blended perspective triangle draws until
+it finds the exact native `CAMERASPACEPOSITION + COUNT2` pair. This matches the
+blend state installed by `ShadowManager::apply` and avoids spending the window
+on opaque terrain during the first second of world rendering. A draw is promoted
+for correction only when that state coincides with the already-profiled
+`PatchCellBlock::draw` wrapper/submission; every other match is audit-only.
+After promotion, the actual outer producer is cached and unrelated draws no
+longer participate in discovery. No launcher, configuration, injection, or
+OpenXR lifecycle behavior depends on this fallback.
+
+The accepted 1.0.2 candidate is the exact normally launched `BFVRClient.dll`
+tested in PID `15796`: 2,159,616 bytes, SHA-256
+`B94A64951FCC1E8D523825E8292F5A17CC8E2895D761BC7CE862F88B1EB8DBE3`.
+That local run retained the launch sequence used by the externally validated
+Oasis/WMR build: inject bf42++ before BFVRClient while BF1942 is suspended,
+initialize the observer, translator, and OpenXR path before resume, then enter
+run-until-stopped presentation. It does not itself validate Oasis because the
+local machine does not have Oasis. The launcher, loader, translator, and
+presenter were not rebuilt for the shadow fix, and this accepted client was not
+rebuilt after the visual test.
 
 The x64 conversion stage follows OpenXR's linear-composition contract. It
 prefers a BGRA8 sRGB swapchain and converts BF1942's legacy encoded R10/R16 RGB

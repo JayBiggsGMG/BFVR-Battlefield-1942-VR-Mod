@@ -314,7 +314,30 @@ void AppendLog(const wchar_t* format, ...)
     static const bool diagnosticsEnabled =
         bfvr::IsD3D8RuntimeDiagnosticsEnabled(
             bfvr::ReadD3D8RuntimeDiagnosticLevel());
-    if (g_module == nullptr || !diagnosticsEnabled)
+
+    wchar_t message[1024] = {};
+    va_list arguments;
+    va_start(arguments, format);
+    _vsnwprintf_s(
+        message,
+        std::size(message),
+        _TRUNCATE,
+        format == nullptr ? L"" : format,
+        arguments);
+    va_end(arguments);
+
+    // Observer callbacks pass their already-formatted text through
+    // AppendLog(L"%s", message).  Apply sparse-audit allowlists to the final
+    // text, not the outer format string, so they remain available when the
+    // ordinary high-volume diagnostics stream is disabled.
+    const bool calibrationAudit =
+        bfvr::IsOffHandCalibrationAuditMessage(message);
+    const bool projectedShadowAudit =
+        bfvr::IsProjectedShadowAuditMessage(message);
+    if (g_module == nullptr ||
+        (!diagnosticsEnabled &&
+         !calibrationAudit &&
+         !projectedShadowAudit))
     {
         return;
     }
@@ -344,12 +367,6 @@ void AppendLog(const wchar_t* format, ...)
     {
         return;
     }
-
-    wchar_t message[1024] = {};
-    va_list arguments;
-    va_start(arguments, format);
-    _vsnwprintf_s(message, std::size(message), _TRUNCATE, format, arguments);
-    va_end(arguments);
 
     SYSTEMTIME now = {};
     GetLocalTime(&now);

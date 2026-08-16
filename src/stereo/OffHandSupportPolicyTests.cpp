@@ -2,12 +2,18 @@
 #include "stereo/OffHandWeaponSteeringMath.h"
 #include "client/BFSoldierOffHandWeaponSteering.h"
 #include "client/BFSoldierOffHandSupportBinding.h"
+#include "client/BFSoldierOffHandCalibration.h"
+#include "client/BFSoldierOffHandOverrides.h"
 #include "client/BFSoldierLeftGripRotationBinding.h"
+#include "client/BFSoldierNativeArmMath.h"
 #include "client/BFSoldierPrimarySupportPoseCache.h"
 
 #include <cmath>
+#include <cstring>
 #include <cstdio>
 #include <limits>
+#include <string>
+#include <vector>
 
 namespace
 {
@@ -166,6 +172,402 @@ bool PrimarySupportRelationRejectsRedeployDrift() noexcept
     return Expect(
         std::fabs(nextLifetime.values[3][0] - 0.61F) < 0.0001F,
         "primary cache reset retained the prior lifetime relation");
+}
+
+Matrix4 Relation(const std::array<float, 12>& values) noexcept
+{
+    Matrix4 result = {};
+    for (std::size_t row = 0; row < 4; ++row)
+    {
+        for (std::size_t column = 0; column < 3; ++column)
+        {
+            result.values[row][column] = values[row * 3 + column];
+        }
+    }
+    result.values[3][3] = 1.0F;
+    return result;
+}
+
+bfvr::BFSoldierOffHandWeaponFingerprint WeaponFingerprint(
+    const float zoomFov,
+    const float x,
+    const float y,
+    const float z) noexcept
+{
+    return {zoomFov, {x, y, z}};
+}
+
+bool CalibrationCapturesOnlyOneFreePrimaryPressEdge() noexcept
+{
+    bfvr::BFSoldierOffHandCalibration calibration;
+    calibration.ConfigureForTesting(true);
+    auto* const soldier = reinterpret_cast<void*>(0x1000);
+    auto* const skeleton = reinterpret_cast<void*>(0x2000);
+    auto* const rifle = reinterpret_cast<void*>(0x3000);
+    bfvr::BFSoldierOffHandCalibrationInput input = {};
+    input.soldier = soldier;
+    input.skeleton = skeleton;
+    input.activeItem = rifle;
+    input.activeItemIndex = 3;
+    input.leftGripTracked = true;
+    input.controllerRightHandWorld = Translation(1.0F, 2.0F, 3.0F);
+    input.inverseSoldierWorld = Translation(0.0F, 0.0F, 0.0F);
+    input.nativeLeftHandFromRightHand = Translation(0.20F, 0.0F, 0.0F);
+    input.freeLeftHandLocal = Translation(1.45F, 2.10F, 3.25F);
+    calibration.UpdateCapture(input);
+    input.leftStickDown = true;
+    calibration.UpdateCapture(input);
+    auto resolved = calibration.Resolve(
+        soldier, skeleton, rifle, 3,
+        input.nativeLeftHandFromRightHand);
+    if (!Expect(
+            std::fabs(resolved.values[3][0] - 0.45F) < 0.0001F &&
+                std::fabs(resolved.values[3][1] - 0.10F) < 0.0001F &&
+                std::fabs(resolved.values[3][2] - 0.25F) < 0.0001F,
+            "calibration did not recover the placed left-from-right relation"))
+    {
+        return false;
+    }
+    input.freeLeftHandLocal = Translation(1.80F, 2.0F, 3.0F);
+    calibration.UpdateCapture(input);
+    resolved = calibration.Resolve(
+        soldier, skeleton, rifle, 3,
+        input.nativeLeftHandFromRightHand);
+    if (!Expect(
+            std::fabs(resolved.values[3][0] - 0.45F) < 0.0001F,
+            "held left-stick button recaptured every frame"))
+    {
+        return false;
+    }
+    input.leftStickDown = false;
+    calibration.UpdateCapture(input);
+    auto desired = YawRightAngle();
+    desired.values[3][0] = 0.80F;
+    desired.values[3][1] = 0.20F;
+    desired.values[3][2] = 0.30F;
+    auto rotatedRight = PitchUpRightAngle();
+    rotatedRight.values[3][0] = 1.0F;
+    rotatedRight.values[3][1] = 2.0F;
+    rotatedRight.values[3][2] = 3.0F;
+    input.controllerRightHandWorld = rotatedRight;
+    input.freeLeftHandLocal =
+        bfvr::native_arm_math::Multiply(desired, rotatedRight);
+    input.leftStickDown = true;
+    calibration.UpdateCapture(input);
+    resolved = calibration.Resolve(
+        soldier, skeleton, rifle, 3,
+        input.nativeLeftHandFromRightHand);
+    return Expect(
+        std::fabs(resolved.values[3][0] - 0.80F) < 0.0001F &&
+            std::fabs(resolved.values[0][2] - 1.0F) < 0.0001F,
+        "second left-stick press did not preserve the full calibrated pose");
+}
+
+bool CalibrationRejectsHeldSupportAndOtherItems() noexcept
+{
+    bfvr::BFSoldierOffHandCalibration calibration;
+    calibration.ConfigureForTesting(true);
+    auto* const soldier = reinterpret_cast<void*>(0x1000);
+    auto* const skeleton = reinterpret_cast<void*>(0x2000);
+    auto* const rifle = reinterpret_cast<void*>(0x3000);
+    auto* const sidearm = reinterpret_cast<void*>(0x4000);
+    const auto native = Translation(0.20F, 0.0F, 0.0F);
+    bfvr::BFSoldierOffHandCalibrationInput input = {};
+    input.soldier = soldier;
+    input.skeleton = skeleton;
+    input.activeItem = rifle;
+    input.activeItemIndex = 3;
+    input.leftStickDown = true;
+    input.leftGripTracked = true;
+    input.supportHeld = true;
+    input.freeLeftHandLocal = Translation(1.50F, 2.0F, 3.0F);
+    input.controllerRightHandWorld = Translation(1.0F, 2.0F, 3.0F);
+    input.inverseSoldierWorld = Translation(0.0F, 0.0F, 0.0F);
+    input.nativeLeftHandFromRightHand = native;
+    calibration.UpdateCapture(input);
+    auto resolved = calibration.Resolve(soldier, skeleton, rifle, 3, native);
+    if (!Expect(
+            std::fabs(resolved.values[3][0] - 0.20F) < 0.0001F,
+            "held support was accepted as a free-hand calibration"))
+    {
+        return false;
+    }
+    const auto sidearmResolved = calibration.Resolve(
+        soldier, skeleton, sidearm, 2, native);
+    if (!Expect(
+            std::fabs(sidearmResolved.values[3][0] - 0.20F) < 0.0001F,
+            "calibration leaked into a different item or slot"))
+    {
+        return false;
+    }
+    calibration.Reset();
+    resolved = calibration.Resolve(soldier, skeleton, rifle, 3, native);
+    return Expect(
+        std::fabs(resolved.values[3][0] - 0.20F) < 0.0001F,
+        "calibration survived a full experiment reset");
+}
+
+bool CalibrationDirectlyFlushesItsDedicatedAudit() noexcept
+{
+    std::array<wchar_t, MAX_PATH> temporaryDirectory = {};
+    const DWORD directoryLength = GetTempPathW(
+        static_cast<DWORD>(temporaryDirectory.size()),
+        temporaryDirectory.data());
+    if (directoryLength == 0 ||
+        directoryLength >= temporaryDirectory.size())
+    {
+        return Expect(false, "could not resolve calibration test directory");
+    }
+    std::array<wchar_t, MAX_PATH> auditPath = {};
+    if (_snwprintf_s(
+            auditPath.data(), auditPath.size(), _TRUNCATE,
+            L"%lsBFVROffHandCalibrationTests-%lu.log",
+            temporaryDirectory.data(), GetCurrentProcessId()) < 0)
+    {
+        return Expect(false, "could not format calibration test path");
+    }
+    DeleteFileW(auditPath.data());
+
+    bfvr::BFSoldierOffHandCalibration calibration;
+    calibration.ConfigureForTesting(true, auditPath.data());
+    bfvr::BFSoldierOffHandCalibrationInput input = {};
+    input.soldier = reinterpret_cast<void*>(0x1000);
+    input.skeleton = reinterpret_cast<void*>(0x2000);
+    input.activeItem = reinterpret_cast<void*>(0x3000);
+    input.activeItemIndex = 3;
+    input.leftStickDown = true;
+    input.leftGripTracked = true;
+    input.freeLeftHandLocal = Translation(0.45F, 0.10F, 0.25F);
+    input.controllerRightHandWorld = Translation(0.0F, 0.0F, 0.0F);
+    input.inverseSoldierWorld = Translation(0.0F, 0.0F, 0.0F);
+    input.nativeLeftHandFromRightHand = Translation(0.20F, 0.0F, 0.0F);
+    calibration.UpdateCapture(input);
+
+    HANDLE file = CreateFileW(
+        auditPath.data(), GENERIC_READ,
+        FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL, nullptr);
+    bool containsCapture = false;
+    if (file != INVALID_HANDLE_VALUE)
+    {
+        const DWORD bytes = GetFileSize(file, nullptr);
+        if (bytes != INVALID_FILE_SIZE && bytes >= sizeof(wchar_t))
+        {
+            std::vector<wchar_t> contents(
+                bytes / sizeof(wchar_t) + 1U, L'\0');
+            DWORD bytesRead = 0;
+            if (ReadFile(file, contents.data(), bytes, &bytesRead, nullptr) &&
+                bytesRead == bytes)
+            {
+                containsCapture = std::wstring_view(contents.data()).find(
+                    L"OFFHAND_CALIBRATION_CAPTURE sequence=1") !=
+                    std::wstring_view::npos;
+            }
+        }
+        CloseHandle(file);
+    }
+    DeleteFileW(auditPath.data());
+    return Expect(
+        containsCapture,
+        "dedicated calibration audit was not synchronously written");
+}
+
+bool AcceptedOverridesRequireExactTemplatesAndNativeFingerprint() noexcept
+{
+    auto dpNative = Relation({
+        0.2986422F, -0.8820737F, 0.3643606F,
+        -0.7125188F, -0.4600687F, -0.5297675F,
+        0.6349251F, -0.1014027F, -0.7658902F,
+        0.2204590F, -0.0816650F, 0.0508423F});
+    const auto dp = bfvr::ResolveBFSoldierOffHandOverride(
+        WeaponFingerprint(0.6F, -0.03F, -0.02F, -0.07F), 3, dpNative);
+    if (!Expect(
+            dp.has_value() &&
+                std::fabs(dp->values[3][0] - 0.2825449F) < 0.000001F &&
+                std::fabs(dp->values[3][2] + 0.0982085F) < 0.000001F,
+            "accepted Russian DP calibration was not recovered"))
+    {
+        return false;
+    }
+
+    auto mp18Native = Relation({
+        0.3693111F, -0.3846701F, -0.8459539F,
+        0.6523928F, -0.5409626F, 0.5307947F,
+        -0.6618103F, -0.7479226F, 0.0511724F,
+        0.2846680F, 0.1800537F, -0.0527344F});
+    const auto russianMp18 = bfvr::ResolveBFSoldierOffHandOverride(
+        WeaponFingerprint(0.6F, -0.01F, -0.04F, 0.09F), 3, mp18Native);
+    mp18Native = Relation({
+        0.3690058F, -0.3842715F, -0.8462682F,
+        0.6524482F, -0.5413660F, 0.5303151F,
+        -0.6619259F, -0.7478356F, 0.0509501F,
+        0.2846756F, 0.1801758F, -0.0525818F});
+    const auto japaneseMp18 = bfvr::ResolveBFSoldierOffHandOverride(
+        WeaponFingerprint(0.6F, -0.01F, -0.04F, 0.09F), 3, mp18Native);
+    if (!Expect(
+            russianMp18.has_value() && japaneseMp18.has_value() &&
+                std::fabs(
+                    russianMp18->values[3][0] - 0.3174495F) < 0.000001F &&
+                std::fabs(
+                    japaneseMp18->values[3][0] - 0.3151374F) < 0.000001F,
+            "shared MP18 template did not retain faction-specific captures"))
+    {
+        return false;
+    }
+
+    const auto type5Native = Relation({
+        0.7896664F, -0.5337967F, -0.3024703F,
+        -0.5998216F, -0.7753332F, -0.1976677F,
+        -0.1290008F, 0.3375196F, -0.9324376F,
+        0.2968140F, -0.1567383F, 0.0127144F});
+    const auto type5 = bfvr::ResolveBFSoldierOffHandOverride(
+        WeaponFingerprint(0.6F, -0.02F, -0.03F, 0.01F), 3, type5Native);
+    const auto saiga = bfvr::ResolveBFSoldierOffHandOverride(
+        WeaponFingerprint(0.9F, 0.025F, 0.0F, 0.06F), 3, type5Native);
+    if (!Expect(
+            type5.has_value() && saiga.has_value() &&
+                std::fabs(type5->values[3][2] + 0.1433075F) < 0.000001F &&
+                std::fabs(saiga->values[3][2] + 0.1009266F) < 0.000001F,
+            "engineer weapon calibrations were not independently recovered"))
+    {
+        return false;
+    }
+
+    const auto chinaAk = bfvr::ResolveBFSoldierOffHandOverride(
+        WeaponFingerprint(0.5F, 0.025F, 0.0F, 0.06F), 3,
+        Relation({
+            0.3668162F, -0.3814111F, -0.8485113F,
+            0.6528491F, -0.5442396F, 0.5268694F,
+            -0.6627473F, -0.7472142F, 0.0493681F,
+            0.2843170F, 0.1806641F, -0.0510788F}));
+    if (!Expect(
+            chinaAk.has_value() &&
+                std::fabs(chinaAk->values[3][2] + 0.1808556F) < 0.000001F,
+            "accepted Chinese AK47 calibration was not recovered"))
+    {
+        return false;
+    }
+
+    dpNative.values[0][0] += 0.010F;
+    if (!Expect(
+            bfvr::ResolveBFSoldierOffHandOverride(
+                WeaponFingerprint(0.6F, -0.03F, -0.02F, -0.07F),
+                3, dpNative).has_value(),
+            "bounded native-pose noise rejected an exact template"))
+    {
+        return false;
+    }
+    dpNative.values[0][0] += 0.020F;
+    return Expect(
+               !bfvr::ResolveBFSoldierOffHandOverride(
+                    WeaponFingerprint(0.6F, -0.03F, -0.02F, -0.07F),
+                    3, dpNative).has_value(),
+               "materially changed mod pose matched the stock fingerprint") &&
+        Expect(
+            !bfvr::ResolveBFSoldierOffHandOverride(
+                 WeaponFingerprint(0.6F, 0.25F, -0.02F, -0.07F),
+                 3, Relation({
+                     0.2986422F, -0.8820737F, 0.3643606F,
+                     -0.7125188F, -0.4600687F, -0.5297675F,
+                     0.6349251F, -0.1014027F, -0.7658902F,
+                     0.2204590F, -0.0816650F, 0.0508423F})).has_value(),
+            "changed mod weapon properties inherited an accepted override") &&
+        Expect(
+            !bfvr::ResolveBFSoldierOffHandOverride(
+                 WeaponFingerprint(0.6F, -0.03F, -0.02F, -0.07F),
+                 2, Relation({
+                     0.2986422F, -0.8820737F, 0.3643606F,
+                     -0.7125188F, -0.4600687F, -0.5297675F,
+                     0.6349251F, -0.1014027F, -0.7658902F,
+                     0.2204590F, -0.0816650F, 0.0508423F})).has_value(),
+            "accepted primary override leaked into another item slot");
+}
+
+bool RuntimeOverrideReadsNativeWeaponTemplateProperties() noexcept
+{
+    std::array<wchar_t, MAX_PATH> temporaryDirectory = {};
+    const DWORD directoryLength = GetTempPathW(
+        static_cast<DWORD>(temporaryDirectory.size()),
+        temporaryDirectory.data());
+    if (directoryLength == 0 ||
+        directoryLength >= temporaryDirectory.size())
+    {
+        return Expect(false, "could not resolve override test directory");
+    }
+    std::array<wchar_t, MAX_PATH> auditPath = {};
+    if (_snwprintf_s(
+            auditPath.data(), auditPath.size(), _TRUNCATE,
+            L"%lsBFVROffHandOverrideTests-%lu.log",
+            temporaryDirectory.data(), GetCurrentProcessId()) < 0)
+    {
+        return Expect(false, "could not format override test path");
+    }
+    DeleteFileW(auditPath.data());
+
+    alignas(void*) std::array<std::byte, 0x60> item = {};
+    alignas(float) std::array<std::byte, 0x400> weaponTemplate = {};
+    const std::byte* weaponTemplatePointer = weaponTemplate.data();
+    std::memcpy(
+        item.data() + 0x4C,
+        &weaponTemplatePointer,
+        sizeof(weaponTemplatePointer));
+    const float zoomFov = 0.6F;
+    const std::array<float, 3> soldierCameraPosition = {
+        -0.03F, -0.02F, -0.07F};
+    std::memcpy(
+        weaponTemplate.data() + 0x3DC, &zoomFov, sizeof(zoomFov));
+    std::memcpy(
+        weaponTemplate.data() + 0x3F0,
+        soldierCameraPosition.data(),
+        sizeof(soldierCameraPosition));
+
+    const auto native = Relation({
+        0.2986422F, -0.8820737F, 0.3643606F,
+        -0.7125188F, -0.4600687F, -0.5297675F,
+        0.6349251F, -0.1014027F, -0.7658902F,
+        0.2204590F, -0.0816650F, 0.0508423F});
+    bfvr::BFSoldierOffHandCalibration calibration;
+    calibration.ConfigureForTesting(false, auditPath.data());
+    const auto resolved = calibration.Resolve(
+        nullptr, nullptr, item.data(), 3, native);
+
+    HANDLE file = CreateFileW(
+        auditPath.data(), GENERIC_READ,
+        FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL, nullptr);
+    bool loggedApplication = false;
+    bool loggedProbe = false;
+    if (file != INVALID_HANDLE_VALUE)
+    {
+        const DWORD bytes = GetFileSize(file, nullptr);
+        if (bytes != INVALID_FILE_SIZE && bytes >= sizeof(wchar_t))
+        {
+            std::vector<wchar_t> contents(
+                bytes / sizeof(wchar_t) + 1U, L'\0');
+            DWORD bytesRead = 0;
+            if (ReadFile(file, contents.data(), bytes, &bytesRead, nullptr) &&
+                bytesRead == bytes)
+            {
+                loggedApplication = std::wstring_view(contents.data()).find(
+                    L"OFFHAND_CALIBRATION_OVERRIDE_APPLIED") !=
+                    std::wstring_view::npos;
+                loggedProbe = std::wstring_view(contents.data()).find(
+                    L"OFFHAND_CALIBRATION_OVERRIDE_PROBE") !=
+                    std::wstring_view::npos;
+            }
+        }
+        CloseHandle(file);
+    }
+    DeleteFileW(auditPath.data());
+    return Expect(
+               std::fabs(resolved.values[3][0] - 0.2825449F) < 0.000001F,
+               "runtime weapon-template properties did not select DP") &&
+        Expect(
+            loggedApplication,
+            "runtime override application was not synchronously audited") &&
+        Expect(
+            loggedProbe,
+            "runtime override probe was not synchronously audited");
 }
 
 bool ReconstructsAuthoredVisualSocket() noexcept
@@ -875,6 +1277,11 @@ int main()
         ReconstructsAuthoredVisualSocket() &&
         LearnedLeftWristReferenceSurvivesItemAndTrackingChanges() &&
         PrimarySupportRelationRejectsRedeployDrift() &&
+        CalibrationCapturesOnlyOneFreePrimaryPressEdge() &&
+        CalibrationRejectsHeldSupportAndOtherItems() &&
+        CalibrationDirectlyFlushesItsDedicatedAudit() &&
+        AcceptedOverridesRequireExactTemplatesAndNativeFingerprint() &&
+        RuntimeOverrideReadsNativeWeaponTemplateProperties() &&
         CapturedClosePoseIsNoJumpAndFollowsRightHand() &&
         CloseBindingCapturesAndIgnoresLeftNoise() &&
         AuthoredBindingAllowsOnlyCurrentSupportedSteering() &&

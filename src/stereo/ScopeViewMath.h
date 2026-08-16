@@ -57,6 +57,33 @@ struct ScopeAimSmoothingState
     bool valid = false;
 };
 
+enum class ScopeAimSmoothingOutcome
+{
+    InvalidMatrix,
+    Disabled,
+    InvalidLifetime,
+    InvalidControllerGeneration,
+    InvalidPredictedDisplayTime,
+    FirstSample,
+    DuplicateGeneration,
+    NonContinuousTime,
+    Smoothed,
+    AngularBoundaryBypass,
+    RotationFailure
+};
+
+// Optional read-only classification of the exact boundary taken by one
+// smoothing update. It exists so runtime diagnostics can distinguish a real
+// filtered sample from the intentionally raw fail-closed paths without
+// duplicating the filter's math or changing its output.
+struct ScopeAimSmoothingDiagnostics
+{
+    ScopeAimSmoothingOutcome outcome =
+        ScopeAimSmoothingOutcome::InvalidMatrix;
+    std::int64_t elapsedNanoseconds = 0;
+    float angularErrorRadians = 0.0F;
+};
+
 // Filters rotation only and always keeps the newest sample's translation.
 // Repeated reads of one controller generation return the identical result.
 // Disabling, changing weapon/soldier lifetime, or receiving an invalid sample
@@ -68,7 +95,8 @@ struct ScopeAimSmoothingState
     const void* soldier,
     std::int32_t controllerGeneration,
     std::int64_t predictedDisplayTime,
-    bool enabled) noexcept;
+    bool enabled,
+    ScopeAimSmoothingDiagnostics* diagnostics = nullptr) noexcept;
 
 void ResetD3D8ScopeAimSmoothing(
     ScopeAimSmoothingState& state) noexcept;

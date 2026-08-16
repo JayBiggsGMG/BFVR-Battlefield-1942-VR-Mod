@@ -60,6 +60,9 @@ bool IsKnownTreeMeshOuterReturn(std::uintptr_t address)
     }
 }
 
+constexpr std::uintptr_t kPatchCellBlockDrawReturn = 0x0069922E;
+constexpr std::uintptr_t kPatchTerrainShadowCellDrawReturn = 0x00683ADD;
+
 bool CaptureKnownWrapperCaller(
     FrameDrawInvocation& invocation,
     void** returnAddressSlot,
@@ -69,6 +72,11 @@ bool CaptureKnownWrapperCaller(
     void* wrapper = nullptr;
     void* caller = nullptr;
     void* treeMeshOuterReturn = nullptr;
+    void* patchCellOuterReturn = nullptr;
+    void* patchCellPrimitiveType = nullptr;
+    void* patchCellStartIndex = nullptr;
+    void* patchCellPrimitiveCount = nullptr;
+    void* patchCellSavedEsi = nullptr;
     __try
     {
         wrapper = returnAddressSlot == nullptr
@@ -86,6 +94,23 @@ bool CaptureKnownWrapperCaller(
         {
             treeMeshOuterReturn = returnAddressSlot[25];
         }
+        if (callerStackIndex == 10 &&
+            reinterpret_cast<std::uintptr_t>(caller) ==
+                kPatchCellBlockDrawReturn)
+        {
+            // The Renderer::drawIndexedPrimitive wrapper returns with `ret
+            // 0x0c`, so its three caller-owned arguments occupy slots 11-13
+            // after the wrapper return at slot 10. PatchCellBlock::draw then
+            // contributes its saved ESI at slot 14 and its outer return at
+            // slot 15. 0x00683ADD is the proven return from
+            // PatchTerrain::drawShadowCells; ordinary users of the shared
+            // PatchCellBlock submission fail this exact check.
+            patchCellPrimitiveType = returnAddressSlot[11];
+            patchCellStartIndex = returnAddressSlot[12];
+            patchCellPrimitiveCount = returnAddressSlot[13];
+            patchCellSavedEsi = returnAddressSlot[14];
+            patchCellOuterReturn = returnAddressSlot[15];
+        }
     }
     __except (EXCEPTION_EXECUTE_HANDLER)
     {
@@ -101,6 +126,30 @@ bool CaptureKnownWrapperCaller(
             reinterpret_cast<std::uintptr_t>(treeMeshOuterReturn)))
     {
         AppendGameStackAddress(invocation, treeMeshOuterReturn);
+    }
+    if (patchCellOuterReturn != nullptr &&
+        bfvr::IsD3D8RuntimeDiagnosticsEnabled(g_runtimeDiagnostics) &&
+        (InterlockedOr(&g_projectedShadowAuditMask, 0x40) & 0x40) == 0)
+    {
+        AppendLog(
+            L"PROJECTED_SHADOW_AUDIT patchCellStack slot11PrimitiveType=0x%08lX slot12StartIndex=0x%08lX slot13PrimitiveCount=0x%08lX slot14SavedEsi=0x%08lX slot15OuterReturn=0x%08lX.",
+            static_cast<unsigned long>(
+                reinterpret_cast<std::uintptr_t>(patchCellPrimitiveType)),
+            static_cast<unsigned long>(
+                reinterpret_cast<std::uintptr_t>(patchCellStartIndex)),
+            static_cast<unsigned long>(
+                reinterpret_cast<std::uintptr_t>(patchCellPrimitiveCount)),
+            static_cast<unsigned long>(
+                reinterpret_cast<std::uintptr_t>(patchCellSavedEsi)),
+            static_cast<unsigned long>(
+                reinterpret_cast<std::uintptr_t>(patchCellOuterReturn)));
+    }
+    if (patchCellOuterReturn != nullptr)
+    {
+        // Retain the actual outer caller for state-gated runtime discovery as
+        // well as the statically proven 0x00683ADD fast path. The append
+        // helper accepts only addresses inside the profiled game image.
+        AppendGameStackAddress(invocation, patchCellOuterReturn);
     }
     return true;
 }

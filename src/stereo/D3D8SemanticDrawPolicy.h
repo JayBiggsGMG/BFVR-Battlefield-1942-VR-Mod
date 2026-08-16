@@ -13,6 +13,7 @@ enum class D3D8SemanticDrawClass
     TreeMeshAlphaBlock,
     TreeMeshProgrammableSprite,
     AnimatedMeshSkinning,
+    ProjectedTerrainShadow,
     WaterSurface,
     TranslucentSprite,
     Ref2FontGlyphBatch,

@@ -466,6 +466,91 @@ bool TestScopeAimSmoothingResetsAtEveryDiscontinuity() noexcept
         NearlyEqual(gapReset->values[2][0], gapMove.values[2][0]);
 }
 
+bool TestScopeAimSmoothingDiagnosticsClassifyRawBoundaries() noexcept
+{
+    using bfvr::stereo::ScopeAimSmoothingDiagnostics;
+    using bfvr::stereo::ScopeAimSmoothingOutcome;
+    bfvr::stereo::ScopeAimSmoothingState state = {};
+    ScopeAimSmoothingDiagnostics diagnostics = {};
+    const void* const weapon = reinterpret_cast<const void*>(0x1000);
+    const void* const soldier = reinterpret_cast<const void*>(0x2000);
+    constexpr std::int64_t firstTime = 1'000'000'000;
+    constexpr std::int64_t frameTime = 11'111'111;
+    const auto first = bfvr::stereo::UpdateD3D8ScopeAimSmoothing(
+        state,
+        Yaw(0.0F),
+        weapon,
+        soldier,
+        1,
+        firstTime,
+        true,
+        &diagnostics);
+    if (!first.has_value() ||
+        diagnostics.outcome != ScopeAimSmoothingOutcome::FirstSample)
+    {
+        return false;
+    }
+    const auto smoothed = bfvr::stereo::UpdateD3D8ScopeAimSmoothing(
+        state,
+        Yaw(0.001F),
+        weapon,
+        soldier,
+        2,
+        firstTime + frameTime,
+        true,
+        &diagnostics);
+    if (!smoothed.has_value() ||
+        diagnostics.outcome != ScopeAimSmoothingOutcome::Smoothed ||
+        diagnostics.elapsedNanoseconds != frameTime ||
+        diagnostics.angularErrorRadians <= 0.0F)
+    {
+        return false;
+    }
+    const auto duplicate = bfvr::stereo::UpdateD3D8ScopeAimSmoothing(
+        state,
+        Yaw(0.002F),
+        weapon,
+        soldier,
+        2,
+        firstTime + frameTime,
+        true,
+        &diagnostics);
+    if (!duplicate.has_value() ||
+        diagnostics.outcome !=
+            ScopeAimSmoothingOutcome::DuplicateGeneration)
+    {
+        return false;
+    }
+    const auto gap = bfvr::stereo::UpdateD3D8ScopeAimSmoothing(
+        state,
+        Yaw(0.003F),
+        weapon,
+        soldier,
+        3,
+        firstTime + 100'000'000,
+        true,
+        &diagnostics);
+    if (!gap.has_value() ||
+        diagnostics.outcome != ScopeAimSmoothingOutcome::NonContinuousTime ||
+        diagnostics.elapsedNanoseconds <=
+            bfvr::stereo::kScopeAimSmoothingMaximumSampleIntervalNanoseconds)
+    {
+        return false;
+    }
+    const auto invalidTime = bfvr::stereo::UpdateD3D8ScopeAimSmoothing(
+        state,
+        Yaw(0.004F),
+        weapon,
+        soldier,
+        4,
+        0,
+        true,
+        &diagnostics);
+    return invalidTime.has_value() &&
+        diagnostics.outcome ==
+            ScopeAimSmoothingOutcome::InvalidPredictedDisplayTime;
+}
+
 bool TestScopeAimSmoothingIsFrameRateAware() noexcept
 {
     bfvr::stereo::ScopeAimSmoothingState ninetyHertz = {};
@@ -636,6 +721,7 @@ int main()
         !TestScopeAimSmoothingAttenuatesMicroMotionAndTranslation() ||
         !TestScopeAimSmoothingHandlesSustainedMotionAndBypassesAtBound() ||
         !TestScopeAimSmoothingResetsAtEveryDiscontinuity() ||
+        !TestScopeAimSmoothingDiagnosticsClassifyRawBoundaries() ||
         !TestScopeAimSmoothingIsFrameRateAware() ||
         !TestAcceptedShotAwaitsOnlyExactOwnedScopeDecision() ||
         !TestPostShotScopeDecisionPreservesOrReleasesNativePolicy() ||

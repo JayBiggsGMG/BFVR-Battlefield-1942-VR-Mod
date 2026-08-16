@@ -279,7 +279,7 @@ The existing weapon-presentation research makes this requirement concrete:
 `soldierCameraPosition`, `.ske`, main-part, and child-pivot data. A firing
 `FireArms` instance exposes its template at `+0x4C`, and the profiled
 `HandFireArms` serializer reads its `soldierCameraPosition` at template
-`+0x3EC..+0x3F4`; however, BFVR has not yet safely associated every classified
+`+0x3F0..+0x3F8`; however, BFVR has not yet safely associated every classified
 draw with that live template. Thus a controller-to-wrist or controller-to-weapon
 offset must eventually come from the active native template/attachment chain,
 not a BFVR weapon/faction lookup table.

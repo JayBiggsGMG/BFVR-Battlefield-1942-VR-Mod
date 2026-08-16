@@ -36,6 +36,18 @@ cmake -S .\src -B ..\build\bfvr-x64 -G "NMake Makefiles" `
 cmake --build ..\build\bfvr-x64 --target BFVRPresenter
 ```
 
+## Runtime assets
+
+`assets/` in the BFVR source checkout is the canonical runtime asset tree.
+Building `BFVRClient` or `BFVRPresenter` always synchronizes that complete tree
+into the selected target directory, even when only an asset changed and the
+native target itself is already up to date.
+
+The outer checkout's `Launch-BFVR-VR.bat` is restricted to the
+`WorkInProgress` branch and mirrors the canonical tree into its local launch
+payload before starting the game. That developer convenience does not commit,
+merge, tag, publish, or modify either remote branch.
+
 ## Diagnostics
 
 `BFVR_DIAGNOSTICS` has three values:
@@ -66,5 +78,6 @@ Build both architectures and the settings seed writer, then run:
   -Destination ..\build\bfvr-player-v1.0.1\BFVR
 ```
 
-The staging script refuses to overwrite an existing destination and copies
-only the explicit player manifest.
+The staging script refuses to overwrite an existing destination, copies the
+runtime asset tree directly from canonical `assets/`, and emits only the
+explicit player manifest.

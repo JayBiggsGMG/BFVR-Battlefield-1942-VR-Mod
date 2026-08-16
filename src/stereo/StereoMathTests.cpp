@@ -1904,6 +1904,46 @@ void TestBF1942SemanticDrawPolicy()
 
     signature = {
         0x0066800A,
+        0x0069922E,
+        true,
+        true,
+        4,
+        648,
+        0x152,
+        1,
+        0,
+        1,
+        1,
+        0,
+        0x00683ADD};
+    if (bfvr::stereo::ClassifyBF1942Win32SemanticDraw(signature) !=
+        D3D8SemanticDrawClass::ProjectedTerrainShadow)
+    {
+        Fail(test, "exact projected terrain-shadow draw boundary was rejected");
+    }
+    signature.producerReturnAddress = 0x00683ADE;
+    if (bfvr::stereo::ClassifyBF1942Win32SemanticDraw(signature) !=
+        D3D8SemanticDrawClass::Unclassified)
+    {
+        Fail(test, "ordinary PatchCellBlock caller did not fail closed");
+    }
+    signature.producerReturnAddress = 0x00683ADD;
+    signature.rendererReturnAddress = 0x0069922F;
+    if (bfvr::stereo::ClassifyBF1942Win32SemanticDraw(signature) !=
+        D3D8SemanticDrawClass::Unclassified)
+    {
+        Fail(test, "different terrain-shadow return anchor did not fail closed");
+    }
+    signature.rendererReturnAddress = 0x0069922E;
+    signature.primitiveType = 5;
+    if (bfvr::stereo::ClassifyBF1942Win32SemanticDraw(signature) !=
+        D3D8SemanticDrawClass::Unclassified)
+    {
+        Fail(test, "non-triangle-list terrain draw did not fail closed");
+    }
+
+    signature = {
+        0x0066800A,
         0x00654571,
         true,
         true,
@@ -2228,6 +2268,10 @@ void TestD3D8FrameCompositionPolicy()
             D3D8FrameCompositionLayer::WorldEyes ||
         bfvr::stereo::SelectD3D8FrameCompositionLayer(
             D3D8SemanticDrawClass::AnimatedMeshSkinning,
+            D3D8DrawPolicy::StereoPerspective) !=
+            D3D8FrameCompositionLayer::WorldEyes ||
+        bfvr::stereo::SelectD3D8FrameCompositionLayer(
+            D3D8SemanticDrawClass::ProjectedTerrainShadow,
             D3D8DrawPolicy::StereoPerspective) !=
             D3D8FrameCompositionLayer::WorldEyes ||
         bfvr::stereo::SelectD3D8FrameCompositionLayer(

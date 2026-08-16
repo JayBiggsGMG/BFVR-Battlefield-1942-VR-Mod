@@ -5,6 +5,7 @@
 #include "client/BFSoldierOffHandSupportBinding.h"
 #include "client/BFSoldierOffHandWeaponSteering.h"
 #include "client/BFSoldierNativeArmPole.h"
+#include "client/BFSoldierOffHandCalibration.h"
 #include "client/BFSoldierPrimarySupportPoseCache.h"
 #include "client/ScopedOffHandSupportPoseCache.h"
 #include "client/BFSoldierRightGripRotationBinding.h"
@@ -237,6 +238,7 @@ public:
             InterlockedExchange(&started_, 0);
             return true;
         }
+        offHandCalibration_.ConfigureFromEnvironment(appendLog_);
 
         gameImage_ = static_cast<std::byte*>(image);
         skeletonTransformTarget_ = gameImage_ == nullptr
@@ -1305,8 +1307,10 @@ private:
                 input.controllerGunWorld = controllerGunWorld;
                 input.controllerRightHandWorld =
                     *correctedHandWorld;
-                input.leftHandFromRightHand =
-                    alignment.leftHandFromRightHand;
+                input.leftHandFromRightHand = offHandCalibration_.Resolve(
+                    soldier, skeleton, alignment.activeItem,
+                    alignment.activeItemIndex,
+                    alignment.leftHandFromRightHand);
                 input.trackingOriginOffset =
                     kTrackingToSkeletonPositionOffset;
                 input.stanceTranslation = stanceTranslation;
@@ -1723,8 +1727,9 @@ private:
                           AuthoredHandSpan
                     : bfvr::BFSoldierOffHandSupportMode::
                           Disabled;
-                supportInput.leftHandFromRightHand =
-                    leftHandFromRightHand;
+                supportInput.leftHandFromRightHand = offHandCalibration_.Resolve(
+                    soldier, skeleton, activeItem, activeItemIndex,
+                    leftHandFromRightHand);
                 supportInput.controllerRightHandWorld =
                     rightFrame.controllerRightHandWorld;
                 supportInput.inverseSoldierWorld =
@@ -1737,6 +1742,16 @@ private:
                 bfvr::PublishCurrentOffHandSupportState(
                     supportInput.bindingId,
                     support.supported);
+                offHandCalibration_.UpdateCapture({
+                    soldier, skeleton, activeItem, activeItemIndex,
+                    (sample.hands[kLeftControllerHand].buttons &
+                     bfvr::shared::kControllerHandButtonThumbstick) != 0,
+                    IsTrackedGrip(sample.hands[kLeftControllerHand]),
+                    sample.hands[kLeftControllerHand].squeezeValue >= 0.45F,
+                    support.supported, target,
+                    rightFrame.controllerRightHandWorld,
+                    rightFrame.inverseSoldierWorld,
+                    leftHandFromRightHand});
                 if (support.enteredSupport)
                 {
                     leftGripRotationBinding_.CaptureAnatomicalReference(soldier, skeleton, activeItem, leftHandBone, leftGrip->local, support.targetLocal, appendLog_);
@@ -2350,7 +2365,7 @@ private:
         ResetObservedNativePose();
         ResetOwnedHandle();
         ResetOwnedLeftHandle();
-        leftGripRotationBinding_.Reset(); rightGripRotationBinding_.Reset(); primarySupportPoseCache_.Reset();
+        leftGripRotationBinding_.Reset(); rightGripRotationBinding_.Reset(); primarySupportPoseCache_.Reset(); offHandCalibration_.Reset();
         ResetOffHandSupportBinding();
         ResetActiveItemAlignment();
         loggedFreeLeftSoldier_ = nullptr;
@@ -2466,6 +2481,7 @@ private:
     bfvr::BFSoldierLeftGripRotationBinding leftGripRotationBinding_ = {};
     bfvr::BFSoldierRightGripRotationBinding rightGripRotationBinding_ = {};
     bfvr::BFSoldierPrimarySupportPoseCache primarySupportPoseCache_ = {};
+    bfvr::BFSoldierOffHandCalibration offHandCalibration_ = {};
     bfvr::BFSoldierOffHandSupportBinding offHandSupportBinding_ = {};
     std::uint64_t loggedPrimarySteeringBindingId_ = 0;
     void* loggedFreeLeftSoldier_ = nullptr;

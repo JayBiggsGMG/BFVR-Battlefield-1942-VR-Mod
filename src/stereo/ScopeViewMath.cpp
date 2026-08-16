@@ -409,16 +409,48 @@ std::optional<Matrix4> UpdateD3D8ScopeAimSmoothing(
     const void* const soldier,
     const std::int32_t controllerGeneration,
     const std::int64_t predictedDisplayTime,
-    const bool enabled) noexcept
+    const bool enabled,
+    ScopeAimSmoothingDiagnostics* const diagnostics) noexcept
 {
+    if (diagnostics != nullptr)
+    {
+        *diagnostics = {};
+    }
+    const auto setOutcome = [diagnostics](
+        const ScopeAimSmoothingOutcome outcome) noexcept
+    {
+        if (diagnostics != nullptr)
+        {
+            diagnostics->outcome = outcome;
+        }
+    };
     if (!IsRigidAffine(currentGunWorld))
     {
+        setOutcome(ScopeAimSmoothingOutcome::InvalidMatrix);
         ResetD3D8ScopeAimSmoothing(state);
         return std::nullopt;
     }
-    if (!enabled || weapon == nullptr || soldier == nullptr ||
-        controllerGeneration <= 0 || predictedDisplayTime <= 0)
+    if (!enabled)
     {
+        setOutcome(ScopeAimSmoothingOutcome::Disabled);
+        ResetD3D8ScopeAimSmoothing(state);
+        return currentGunWorld;
+    }
+    if (weapon == nullptr || soldier == nullptr)
+    {
+        setOutcome(ScopeAimSmoothingOutcome::InvalidLifetime);
+        ResetD3D8ScopeAimSmoothing(state);
+        return currentGunWorld;
+    }
+    if (controllerGeneration <= 0)
+    {
+        setOutcome(ScopeAimSmoothingOutcome::InvalidControllerGeneration);
+        ResetD3D8ScopeAimSmoothing(state);
+        return currentGunWorld;
+    }
+    if (predictedDisplayTime <= 0)
+    {
+        setOutcome(ScopeAimSmoothingOutcome::InvalidPredictedDisplayTime);
         ResetD3D8ScopeAimSmoothing(state);
         return currentGunWorld;
     }
@@ -428,6 +460,7 @@ std::optional<Matrix4> UpdateD3D8ScopeAimSmoothing(
     if (sameLifetime &&
         state.controllerGeneration == controllerGeneration)
     {
+        setOutcome(ScopeAimSmoothingOutcome::DuplicateGeneration);
         return state.filteredGunWorld;
     }
 
@@ -439,6 +472,18 @@ std::optional<Matrix4> UpdateD3D8ScopeAimSmoothing(
         elapsedNanoseconds > 0 &&
         elapsedNanoseconds <=
             kScopeAimSmoothingMaximumSampleIntervalNanoseconds;
+    if (diagnostics != nullptr)
+    {
+        diagnostics->elapsedNanoseconds = elapsedNanoseconds;
+    }
+    if (!sameLifetime)
+    {
+        setOutcome(ScopeAimSmoothingOutcome::FirstSample);
+    }
+    else if (!continuousSample)
+    {
+        setOutcome(ScopeAimSmoothingOutcome::NonContinuousTime);
+    }
     if (continuousSample)
     {
         const auto angularError = RotationAngle(
@@ -446,8 +491,13 @@ std::optional<Matrix4> UpdateD3D8ScopeAimSmoothing(
             currentGunWorld);
         if (!angularError.has_value())
         {
+            setOutcome(ScopeAimSmoothingOutcome::RotationFailure);
             ResetD3D8ScopeAimSmoothing(state);
             return std::nullopt;
+        }
+        if (diagnostics != nullptr)
+        {
+            diagnostics->angularErrorRadians = *angularError;
         }
         if (*angularError < kScopeAimSmoothingMaximumErrorRadians)
         {
@@ -462,10 +512,16 @@ std::optional<Matrix4> UpdateD3D8ScopeAimSmoothing(
                 currentWeight);
             if (!stabilized.has_value())
             {
+                setOutcome(ScopeAimSmoothingOutcome::RotationFailure);
                 ResetD3D8ScopeAimSmoothing(state);
                 return std::nullopt;
             }
             filtered = *stabilized;
+            setOutcome(ScopeAimSmoothingOutcome::Smoothed);
+        }
+        else
+        {
+            setOutcome(ScopeAimSmoothingOutcome::AngularBoundaryBypass);
         }
     }
     state.filteredGunWorld = filtered;

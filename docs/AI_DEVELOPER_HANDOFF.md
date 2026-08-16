@@ -118,6 +118,15 @@ and composition-layer submission.
 updates preserve an existing user file. New keys require a safe default,
 decode/encode coverage, menu wiring where applicable, and persistence tests.
 
+The repository `assets/` directory is the canonical source for every runtime
+asset. The CMake runtime-asset targets execute whenever `BFVRClient` or
+`BFVRPresenter` is requested, so an asset-only edit is copied even when native
+compilation is already up to date. Player staging copies directly from that
+canonical directory rather than trusting a potentially stale build-tree copy.
+The outer checkout's development BAT may mirror those files into its local
+payload, but release publication still requires the complete release procedure
+below.
+
 The potential 1.0.2 settings group adds these runtime invariants:
 
 - `show_arms` is a migration-compatible three-state visibility setting:
