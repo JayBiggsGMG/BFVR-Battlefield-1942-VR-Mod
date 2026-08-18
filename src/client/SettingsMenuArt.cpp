@@ -1301,6 +1301,51 @@ bool SettingsMenuArt::ComposeSettingsBody(
                 state.hovered == next ? 38 : 30,
                 DT_CENTER | DT_SINGLELINE | DT_VCENTER);
     };
+    const auto drawSlider = [&](int centerY,
+                                const wchar_t* label,
+                                float normalized,
+                                const std::wstring& display) {
+        const int markerCenter = controlLeft + 12 +
+            static_cast<int>(std::lround(
+                std::clamp(normalized, 0.0F, 1.0F) * 232.0F));
+        return DrawWhiteText(destination, label, 82, centerY - 32, 445, 64,
+                   27, DT_LEFT | DT_SINGLELINE | DT_VCENTER) &&
+            CompositeLayerAt(sliderBar_, destination, controlLeft,
+                centerY - 32, 256, 64) &&
+            CompositeLayerAt(numberBox_, destination,
+                static_cast<int>(stereo::kSettingsMenuNumberBoxLeftPixels),
+                centerY - 32, 128, 64) &&
+            CompositeLayerAt(whiteButton_, destination, markerCenter - 24,
+                centerY - 24, 48, 48) &&
+            DrawWhiteText(destination, display.c_str(),
+                static_cast<int>(stereo::kSettingsMenuNumberBoxLeftPixels),
+                centerY - 32, 128, 64, 25,
+                DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+    };
+    if (state.page == 2)
+    {
+        const float normalized = static_cast<float>(
+            state.values.vehicleMotionAimSensitivityPercent -
+            settings::kMinimumVehicleMotionAimSensitivityPercent) /
+            static_cast<float>(
+                settings::kMaximumVehicleMotionAimSensitivityPercent -
+                settings::kMinimumVehicleMotionAimSensitivityPercent);
+        const int centerY = static_cast<int>(
+            stereo::kSettingsMenuControlsVehicleAimSliderCenterPixels);
+        return DrawWhiteText(destination, L"Vehicle / Mounted Aim:", 82, 145,
+                   620, 58, 29, DT_LEFT | DT_SINGLELINE | DT_VCENTER) &&
+            DrawWhiteText(destination,
+                L"Tank cannons, vehicle and naval turrets, AA, and mounted guns.",
+                82, 208, 860, 44, 19,
+                DT_LEFT | DT_SINGLELINE | DT_VCENTER) &&
+            drawSlider(centerY, L"Turret Motion Sensitivity", normalized,
+                std::to_wstring(
+                    state.values.vehicleMotionAimSensitivityPercent) + L"%") &&
+            DrawWhiteText(destination,
+                L"Changes right-controller motion only; the right stick and each weapon's native traverse limits are unchanged.",
+                82, 485, 860, 68, 18,
+                DT_LEFT | DT_WORDBREAK | DT_VCENTER);
+    }
     if (state.page == 1)
     {
         return DrawWhiteText(destination, L"3D HUD Crosshairs:", 82, 120,

@@ -7,6 +7,15 @@ a shorter version of the same information.
 
 ### Added
 
+- Added a saved **Turret Motion Sensitivity** slider to Controls for tank
+  cannons, other land/sea vehicle turrets, AA, and mounted weapons. It ranges
+  from 50% to 300%, defaults to the accepted 200% response, applies after Save
+  without restarting, and does not alter right-stick sensitivity.
+- Added an opt-in, aggregate-only `BFVR_PERFORMANCE_SUMMARY=1` diagnostic for
+  isolating runtime slowdown without re-enabling the broad trace stream. It
+  reports x86 replay/skinning/pacing, x64 source/effect enqueue stages,
+  swapchain API calls, and actual `xrEndFrame` at 30-second intervals and
+  shutdown; it does not change launch or frame scheduling.
 - Added a live **Show** selector with Arms & Hands, Hands Only, and No
   Hands/Arms choices, plus a default-on **Death Camera Comfort** option to VR
   Settings. The visibility selector leaves native animation and pose solving
@@ -29,6 +38,13 @@ a shorter version of the same information.
 
 ### Changed
 
+- Increased the sniper aim-smoothing boundary from 0.40 to 1.5 degrees so
+  runtime pose variation is less likely to bypass stabilization during fine
+  aiming.
+- Doubled land/sea/mounted controller-motion aim sensitivity and its matching
+  per-sample allowance, reducing required hand
+  travel without changing BF1942's native turret controls or tracking-jump
+  safeguards.
 - World color treatment is fused into BFVR's existing final D3D11 composite.
   It affects both stereo world eyes and the world-drawn 3D crosshair, while
   native HUD/menu pixels, scopes, Quick Menu, VR Settings, and other separate
@@ -50,6 +66,10 @@ a shorter version of the same information.
 
 ### Fixed
 
+- Reduced animated-soldier CPU overhead from the Hands Only classifier. Mesh
+  template names are now inspected lazily only for proven first-person
+  arm/hand candidates, and repeated classifications are cached. Ordinary world
+  soldiers no longer trigger template-name classification in any Show mode.
 - Corrected Kill Sound delivery in single-player. The identity-only correction
   did not fix SP because local play does not deliver confirmed kills through
   the same received-client boundary as remote MP. BFVR now also observes the

@@ -66,6 +66,7 @@ struct D3D8RuntimeControllerSample
     bool sessionFocused = false;
     std::int64_t predictedDisplayTime = 0;
     LONG mountedCameraToggleSequence = 0;
+    LONG hudToggleSequence = 0;
     std::array<D3D8RuntimeControllerHand, 2> hands = {};
 };
 

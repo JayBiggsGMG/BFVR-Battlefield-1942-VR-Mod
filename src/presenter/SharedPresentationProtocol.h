@@ -11,7 +11,7 @@ namespace bfvr::shared
 using SharedTextureLogCallback = void (*)(void* context, const wchar_t* message);
 
 constexpr DWORD kProtocolMagic = 0x52564642; // "BFVR"
-constexpr DWORD kProtocolVersion = 22;
+constexpr DWORD kProtocolVersion = 23;
 constexpr std::size_t kTextureCount = 3;
 constexpr std::size_t kDepthTextureCount = 2;
 constexpr std::size_t kSharedNameCapacity = 128;
@@ -216,6 +216,9 @@ struct SharedControllerSample
     // Presenter-owned monotonic action edge. The x86 camera hook consumes a
     // new value only for the currently verified occupied weapon station.
     LONG mountedCameraToggleSequence = 0;
+    // Presenter-owned monotonic edge for the BFVR-owned native HUD toggle.
+    // The x86 client consumes it without opening or typing into the console.
+    LONG hudToggleSequence = 0;
     SharedControllerHandSample hands[2] = {};
 };
 

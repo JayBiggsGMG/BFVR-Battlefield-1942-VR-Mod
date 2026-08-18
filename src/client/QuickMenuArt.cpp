@@ -15,6 +15,8 @@ constexpr UINT kExpectedMenuWidth = 512;
 constexpr UINT kExpectedMenuHeight = 512;
 constexpr UINT kExpectedUtilityWidth = 512;
 constexpr UINT kExpectedUtilityHeight = 64;
+constexpr UINT kExpectedCommandWidth = 86;
+constexpr UINT kExpectedCommandHeight = 425;
 constexpr wchar_t kBackgroundName[] = L"QM_bg.png";
 constexpr wchar_t kFrameName[] = L"QM_frame.png";
 constexpr wchar_t kTextName[] = L"QM_text.png";
@@ -25,6 +27,13 @@ constexpr std::array<const wchar_t*, 3> kUtilityHoverNames = {
     L"QM_stripDecoupleHover.png",
     L"QM_stripMapHover.png",
     L"QM_stripSettingsHover.png"};
+constexpr wchar_t kCommandBackgroundName[] = L"QM_ColumnBG.png";
+constexpr wchar_t kCommandTextName[] = L"QM_ColumnText.png";
+constexpr std::array<const wchar_t*, 4> kCommandHoverNames = {
+    L"QM_Column1Hover.png",
+    L"QM_Column2Hover.png",
+    L"QM_Column3Hover.png",
+    L"QM_Column4Hover.png"};
 constexpr std::array<const wchar_t*, 12> kHoverNames = {
     L"QM_menuhover.png",
     L"QM_deployhover.png",
@@ -163,6 +172,9 @@ bool QuickMenuArt::InitializeFromDirectory(
     Image utilityBackground = {};
     Image utilityText = {};
     std::array<Image, kUtilityHoverNames.size()> utilityHovers = {};
+    Image commandBackground = {};
+    Image commandText = {};
+    std::array<Image, kCommandHoverNames.size()> commandHovers = {};
     bool loaded =
         LoadPng(factory, JoinPath(assetsDirectory, kBackgroundName), background) &&
         LoadPng(factory, JoinPath(assetsDirectory, kFrameName), frame) &&
@@ -175,7 +187,15 @@ bool QuickMenuArt::InitializeFromDirectory(
         LoadPng(
             factory,
             JoinPath(assetsDirectory, kUtilityTextName),
-            utilityText);
+            utilityText) &&
+        LoadPng(
+            factory,
+            JoinPath(assetsDirectory, kCommandBackgroundName),
+            commandBackground) &&
+        LoadPng(
+            factory,
+            JoinPath(assetsDirectory, kCommandTextName),
+            commandText);
     for (std::size_t index = 0; loaded && index < hovers.size(); ++index)
     {
         loaded = LoadPng(
@@ -191,6 +211,15 @@ bool QuickMenuArt::InitializeFromDirectory(
             factory,
             JoinPath(assetsDirectory, kUtilityHoverNames[index]),
             utilityHovers[index]);
+    }
+    for (std::size_t index = 0;
+         loaded && index < commandHovers.size();
+         ++index)
+    {
+        loaded = LoadPng(
+            factory,
+            JoinPath(assetsDirectory, kCommandHoverNames[index]),
+            commandHovers[index]);
     }
     ReleaseInterface(factory);
     if (uninitializeCom)
@@ -212,6 +241,13 @@ bool QuickMenuArt::InitializeFromDirectory(
                 static_cast<std::size_t>(kExpectedUtilityWidth) *
                     kExpectedUtilityHeight;
     };
+    const auto isCommandSize = [](const Image& image) {
+        return image.width == kExpectedCommandWidth &&
+            image.height == kExpectedCommandHeight &&
+            image.pixels.size() ==
+                static_cast<std::size_t>(kExpectedCommandWidth) *
+                    kExpectedCommandHeight;
+    };
     if (!loaded || !isMenuSize(background) || !isMenuSize(frame) ||
         !isMenuSize(text) || cursor_.width == 0 || cursor_.height == 0 ||
         cursor_.pixels.empty() ||
@@ -221,10 +257,16 @@ bool QuickMenuArt::InitializeFromDirectory(
         !std::all_of(
             utilityHovers.begin(),
             utilityHovers.end(),
-            isUtilitySize))
+            isUtilitySize) ||
+        !isCommandSize(commandBackground) ||
+        !isCommandSize(commandText) ||
+        !std::all_of(
+            commandHovers.begin(),
+            commandHovers.end(),
+            isCommandSize))
     {
         WriteLog(
-            L"Quick Menu is unavailable: every menu layer must decode as 512x512, every strip layer as 512x64, and the cursor must be a nonempty PNG in %s.",
+            L"Quick Menu is unavailable: every menu layer must decode as 512x512, every strip layer as 512x64, every command-column layer as 86x425, and the cursor must be a nonempty PNG in %s.",
             assetsDirectory.c_str());
         Reset();
         logCallback_ = logCallback;
@@ -268,13 +310,38 @@ bool QuickMenuArt::InitializeFromDirectory(
         menus_[index + 1] = std::move(variant);
     }
     for (std::size_t index = static_cast<std::size_t>(
-             stereo::QuickMenuSelection::MountedCameraDecouple);
+             stereo::QuickMenuSelection::RadioRoger);
          index < menus_.size();
          ++index)
     {
         // Utility hover is rendered in the separate strip, so the authored
         // square menu remains on its neutral variant.
         menus_[index] = base;
+    }
+    for (std::size_t hover = 0;
+         hover < commandColumns_.size();
+         ++hover)
+    {
+        Image variant = {};
+        variant.width = kExpectedCommandWidth;
+        variant.height = kExpectedCommandHeight;
+        variant.pixels.assign(
+            static_cast<std::size_t>(variant.width) * variant.height,
+            0U);
+        bool composed = CompositeLayer(commandBackground, variant);
+        if (composed && hover != 0)
+        {
+            composed = CompositeLayer(commandHovers[hover - 1], variant);
+        }
+        composed = composed && CompositeLayer(commandText, variant);
+        if (!composed)
+        {
+            Reset();
+            logCallback_ = logCallback;
+            logContext_ = logContext;
+            return false;
+        }
+        commandColumns_[hover] = std::move(variant);
     }
     for (std::size_t active = 0; active < 2; ++active)
     {
@@ -310,7 +377,7 @@ bool QuickMenuArt::InitializeFromDirectory(
         }
     }
     WriteLog(
-        L"Quick Menu loaded its authored square and three-button strip stacks (background -> hover/state -> text -> final frame where present), plus a %ux%u top-left-hotspot cursor from %s.",
+        L"Quick Menu loaded its authored square, three-button strip, and four-button command-column stacks (background -> hover/state -> text -> final frame where present), plus a %ux%u top-left-hotspot cursor from %s.",
         cursor_.width,
         cursor_.height,
         assetsDirectory.c_str());
@@ -321,6 +388,7 @@ void QuickMenuArt::Reset() noexcept
 {
     menus_ = {};
     utilities_ = {};
+    commandColumns_ = {};
     cursor_ = {};
     logCallback_ = nullptr;
     logContext_ = nullptr;
@@ -399,6 +467,36 @@ bool QuickMenuArt::CopyUtilityStripPixels(
     return true;
 }
 
+bool QuickMenuArt::CopyCommandColumnPixels(
+    stereo::QuickMenuSelection hovered,
+    std::vector<std::uint32_t>& pixels,
+    UINT& width,
+    UINT& height) const
+{
+    pixels.clear();
+    width = 0;
+    height = 0;
+    if (!IsReady())
+    {
+        return false;
+    }
+    std::size_t hoverIndex = 0;
+    if (stereo::IsQuickMenuCommandSelection(hovered))
+    {
+        hoverIndex = 1 + static_cast<std::size_t>(hovered) -
+            static_cast<std::size_t>(stereo::QuickMenuSelection::RadioRoger);
+    }
+    if (hoverIndex >= commandColumns_.size())
+    {
+        return false;
+    }
+    const Image& source = commandColumns_[hoverIndex];
+    pixels = source.pixels;
+    width = source.width;
+    height = source.height;
+    return true;
+}
+
 bool QuickMenuArt::IsReady() const noexcept
 {
     if (cursor_.width == 0 || cursor_.height == 0 || cursor_.pixels.empty())
@@ -425,7 +523,17 @@ bool QuickMenuArt::IsReady() const noexcept
                     static_cast<std::size_t>(kExpectedUtilityWidth) *
                         kExpectedUtilityHeight;
         });
-    return menusReady && utilitiesReady;
+    const bool commandColumnsReady = std::all_of(
+        commandColumns_.begin(),
+        commandColumns_.end(),
+        [](const Image& image) {
+            return image.width == kExpectedCommandWidth &&
+                image.height == kExpectedCommandHeight &&
+                image.pixels.size() ==
+                    static_cast<std::size_t>(kExpectedCommandWidth) *
+                        kExpectedCommandHeight;
+        });
+    return menusReady && utilitiesReady && commandColumnsReady;
 }
 
 bool QuickMenuArt::LoadPng(

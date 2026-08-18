@@ -139,6 +139,10 @@ bool TestBounds()
             SettingsMenuTab::Controls, false, 1) ==
             SettingsMenuSelection::PointerItemCrosshairNext &&
         SettingsMenuSelectionAt(
+            0.70F, 0.381F, true, false,
+            SettingsMenuTab::Controls, false, 2) ==
+            SettingsMenuSelection::VehicleMotionAimSensitivity &&
+        SettingsMenuSelectionAt(
             0.889F, 0.503F, false, false,
             SettingsMenuTab::VrSettings, false, 1) ==
             SettingsMenuSelection::ShowNext &&
@@ -509,7 +513,7 @@ bool TestInteractionAndPlacement()
     Click(interaction, input);
     state = interaction.Snapshot();
     if (state.page != 1 || !state.arrowLeftVisible ||
-        state.arrowRightVisible)
+        !state.arrowRightVisible)
     {
         return false;
     }
@@ -538,6 +542,28 @@ bool TestInteractionAndPlacement()
     {
         return false;
     }
+    state = interaction.Snapshot();
+    AimAt(input, state.panelPose, state.widthMeters, 0.66F, 0.87F);
+    Click(interaction, input);
+    state = interaction.Snapshot();
+    if (state.page != 2 || !state.arrowLeftVisible ||
+        state.arrowRightVisible)
+    {
+        return false;
+    }
+    AimAt(input, state.panelPose, state.widthMeters, 0.79F, 0.381F);
+    Click(interaction, input);
+    if (interaction.Snapshot().values.vehicleMotionAimSensitivityPercent <=
+            bfvr::settings::kDefaultVehicleMotionAimSensitivityPercent ||
+        !interaction.TakeValuesChanged() ||
+        interaction.Snapshot().status !=
+            bfvr::stereo::SettingsMenuStatus::SettingsNotSaved)
+    {
+        return false;
+    }
+    state = interaction.Snapshot();
+    AimAt(input, state.panelPose, state.widthMeters, 0.59F, 0.87F);
+    Click(interaction, input);
     state = interaction.Snapshot();
     AimAt(input, state.panelPose, state.widthMeters, 0.59F, 0.87F);
     Click(interaction, input);
@@ -846,6 +872,13 @@ bool TestArt(const wchar_t* directory)
     {
         return false;
     }
+    variant.page = 2;
+    variant.values.vehicleMotionAimSensitivityPercent =
+        bfvr::settings::kMaximumVehicleMotionAimSensitivityPercent;
+    if (!differs(variant))
+    {
+        return false;
+    }
     variant = state;
     variant.tab = SettingsMenuTab::GraphicsAudio;
     if (!differs(variant))
@@ -1042,6 +1075,12 @@ bool CaptureArt(const wchar_t* assetDirectory, const wchar_t* outputDirectory)
             false,
             true,
             1) &&
+        capture(
+            SettingsMenuTab::Controls,
+            L"Settings-Controls-Vehicle-Aim.bmp",
+            false,
+            true,
+            2) &&
         capture(
             SettingsMenuTab::GraphicsAudio,
             L"Settings-Graphics-Audio.bmp",

@@ -1,4 +1,5 @@
 #include "presenter/SharedTextureConsumer.h"
+#include "diagnostics/PerformanceSummary.h"
 #include "settings/UserSettings.h"
 
 #include <dxgi1_2.h>
@@ -17,13 +18,7 @@ namespace
 {
 bool ReadPerformanceDiagnosticsEnabled()
 {
-    wchar_t value[16] = {};
-    const DWORD length = GetEnvironmentVariableW(
-        L"BFVR_DIAGNOSTICS",
-        value,
-        static_cast<DWORD>(std::size(value)));
-    return !((length == 3 && _wcsicmp(value, L"off") == 0) ||
-        (length == 1 && value[0] == L'0'));
+    return bfvr::diagnostics::ReadAggregatePerformanceEnabled();
 }
 
 bool IsSrgbFormat(DXGI_FORMAT format)
@@ -503,6 +498,7 @@ bool SharedTextureConsumer::ConsumeFrame(
 
     std::array<bool, kTextureCount> acquired = {};
     std::array<bool, kDepthTextureCount> depthAcquired = {};
+    const std::int64_t acquireStarted = performanceSummary_.BeginSample();
     const bool useDepth =
             (ambientOcclusionEnabled_ ||
              screenSpaceGlobalIlluminationEnabled_ ||
@@ -568,9 +564,13 @@ bool SharedTextureConsumer::ConsumeFrame(
             depthAcquired[index] = true;
         }
     }
+    performanceSummary_.EndSample(
+        SharedTexturePerformanceStage::SharedAcquire,
+        acquireStarted);
 
     bool ssgiFrameStarted = false;
     bool applyScreenSpaceGlobalIllumination = false;
+    const std::int64_t ssgiStarted = performanceSummary_.BeginSample();
     if (useDepth && screenSpaceGlobalIlluminationEnabled_)
     {
         ssgiFrameStarted = screenSpaceGlobalIllumination_.BeginFrame();
@@ -592,9 +592,13 @@ bool SharedTextureConsumer::ConsumeFrame(
         }
         screenSpaceGlobalIllumination_.EndFrame();
     }
+    performanceSummary_.EndSample(
+        SharedTexturePerformanceStage::ScreenSpaceGlobalIlluminationEnqueue,
+        ssgiStarted);
 
     bool applyWaterReflections =
         useDepth && waterReflectionsEnabled_ && waterMaskValid;
+    const std::int64_t waterStarted = performanceSummary_.BeginSample();
     for (std::size_t eye = 0;
          eye < depthTextures_.size() && applyWaterReflections;
          ++eye)
@@ -608,9 +612,13 @@ bool SharedTextureConsumer::ConsumeFrame(
             depthTextures_[eye].height,
             depthFrame->projections[eye]);
     }
+    performanceSummary_.EndSample(
+        SharedTexturePerformanceStage::WaterReflectionEnqueue,
+        waterStarted);
 
     bool aoFrameStarted = false;
     bool applyAmbientOcclusion = false;
+    const std::int64_t aoStarted = performanceSummary_.BeginSample();
     if (useDepth && ambientOcclusionEnabled_)
     {
         aoFrameStarted = ambientOcclusion_.BeginFrame();
@@ -627,7 +635,12 @@ bool SharedTextureConsumer::ConsumeFrame(
                 depthFrame->projections[eye]);
         }
     }
+    performanceSummary_.EndSample(
+        SharedTexturePerformanceStage::AmbientOcclusionEnqueue,
+        aoStarted);
 
+    const std::int64_t compositeStarted =
+        performanceSummary_.BeginSample();
     const bool bloomFrameStarted =
         worldBloomEnabled_ && scaler_.BeginBloomFrame();
     bool copied = true;
@@ -694,6 +707,9 @@ bool SharedTextureConsumer::ConsumeFrame(
         if (bloomFrameStarted && index + 1 == kDepthTextureCount)
             scaler_.EndBloomFrame();
     }
+    performanceSummary_.EndSample(
+        SharedTexturePerformanceStage::CompositeEnqueue,
+        compositeStarted);
     if (aoFrameStarted)
         ambientOcclusion_.EndFrame();
     if (useDepth && screenSpaceGlobalIlluminationEnabled_ &&
@@ -734,6 +750,7 @@ bool SharedTextureConsumer::ConsumeFrame(
         (frameOverlayFlags & kFrameOverlayBackToGameVisible) != 0;
     const bool overlayHovered = overlayVisible &&
         (frameOverlayFlags & kFrameOverlayBackToGameHovered) != 0;
+    const std::int64_t overlayStarted = performanceSummary_.BeginSample();
     if (mainMenuOverlay_.IsReady() && !mainMenuOverlay_.Composite(
             uiTexture.localTarget,
             uiTexture.sourceWidth,
@@ -745,11 +762,18 @@ bool SharedTextureConsumer::ConsumeFrame(
     {
         copied = false;
     }
+    performanceSummary_.EndSample(
+        SharedTexturePerformanceStage::MenuOverlayEnqueue,
+        overlayStarted);
+    const std::int64_t flushStarted = performanceSummary_.BeginSample();
     if (legacyCompletionQuery_ != nullptr)
     {
         context_->End(legacyCompletionQuery_);
     }
     context_->Flush();
+    performanceSummary_.EndSample(
+        SharedTexturePerformanceStage::Flush,
+        flushStarted);
 
     const bool hasKeyedMutexAcquisition =
         std::any_of(acquired.begin(), acquired.end(), [](const bool value)
@@ -831,6 +855,10 @@ bool SharedTextureConsumer::ConsumeFrame(
                 SUCCEEDED(texture.keyedMutex->ReleaseSync(0)) && released;
         }
     }
+    performanceSummary_.ReportIfDue(
+        GetTickCount(),
+        logCallback_,
+        logContext_);
     return copied && completed && released;
 }
 
@@ -992,6 +1020,7 @@ bool SharedTextureConsumer::ReadCenterPixels(DWORD* pixels, std::size_t count)
 void SharedTextureConsumer::Shutdown()
 {
     (void)CompleteFrameConsumption();
+    performanceSummary_.ReportFinal(logCallback_, logContext_);
     mainMenuOverlay_.Shutdown();
     ambientOcclusion_.Shutdown();
     screenSpaceGlobalIllumination_.Shutdown();
@@ -1021,6 +1050,7 @@ void SharedTextureConsumer::Shutdown()
     worldBloomThreshold_ = 0.55F;
     worldBloomIntensity_ = 0.35F;
     worldColorGrading_ = {};
+    performanceSummary_.Reset();
     for (Texture& texture : textures_)
     {
         ReleaseTexture(texture);

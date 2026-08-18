@@ -62,6 +62,7 @@ bool IsSliderSelection(
 {
     using bfvr::stereo::SettingsMenuSelection;
     return selection == SettingsMenuSelection::InfantryTurnSpeed ||
+        selection == SettingsMenuSelection::VehicleMotionAimSensitivity ||
         selection == SettingsMenuSelection::VrHeightAdjustment ||
         selection == SettingsMenuSelection::FxaaSharpening ||
         selection == SettingsMenuSelection::AmbientOcclusionRadius ||
@@ -318,6 +319,18 @@ SettingsMenuSelection SettingsMenuSelectionAt(
             }
         }
     }
+    if (tab == SettingsMenuTab::Controls && page == 2)
+    {
+        const float centerY =
+            kSettingsMenuControlsVehicleAimSliderCenterPixels;
+        if (pixelX >= kSettingsMenuControlColumnPixels &&
+            pixelX <= kSettingsMenuSliderRightPixels &&
+            pixelY >= centerY - 38.0F &&
+            pixelY <= centerY + 38.0F)
+        {
+            return SettingsMenuSelection::VehicleMotionAimSensitivity;
+        }
+    }
     if (tab == SettingsMenuTab::GraphicsAudio && page == 0)
     {
         for (std::size_t index = 0;
@@ -464,6 +477,8 @@ const wchar_t* SettingsMenuSelectionName(
         return L"Controller Haptics";
     case SettingsMenuSelection::SniperScopeSmoothingEnabled:
         return L"Sniper Aim Smoothing";
+    case SettingsMenuSelection::VehicleMotionAimSensitivity:
+        return L"Vehicle Turret Motion Sensitivity slider";
     case SettingsMenuSelection::AircraftPitchWithRoll:
         return L"Aircraft Pitch and Roll on Same Stick";
     case SettingsMenuSelection::SwapAircraftSticks:
@@ -687,6 +702,11 @@ void SettingsMenuInteraction::Update(
             {
                 SetTurnSpeedFromPointer(pointerU_);
             }
+            else if (pressed_ ==
+                     SettingsMenuSelection::VehicleMotionAimSensitivity)
+            {
+                SetVehicleMotionAimSensitivityFromPointer(pointerU_);
+            }
             else if (pressed_ == SettingsMenuSelection::VrHeightAdjustment)
             {
                 SetHeightAdjustmentFromPointer(pointerU_);
@@ -702,6 +722,11 @@ void SettingsMenuInteraction::Update(
         if (pressed_ == SettingsMenuSelection::InfantryTurnSpeed)
         {
             SetTurnSpeedFromPointer(pointerU_);
+        }
+        else if (pressed_ ==
+                 SettingsMenuSelection::VehicleMotionAimSensitivity)
+        {
+            SetVehicleMotionAimSensitivityFromPointer(pointerU_);
         }
         else if (pressed_ == SettingsMenuSelection::VrHeightAdjustment)
         {
@@ -1106,6 +1131,7 @@ void SettingsMenuInteraction::Activate(
         status_ = SettingsMenuStatus::ColorSettingsReset;
         break;
     case SettingsMenuSelection::InfantryTurnSpeed:
+    case SettingsMenuSelection::VehicleMotionAimSensitivity:
     case SettingsMenuSelection::VrHeightAdjustment:
     case SettingsMenuSelection::FxaaSharpening:
     case SettingsMenuSelection::AmbientOcclusionRadius:
@@ -1119,6 +1145,37 @@ void SettingsMenuInteraction::Activate(
     case SettingsMenuSelection::None:
     default:
         break;
+    }
+}
+
+void SettingsMenuInteraction::SetVehicleMotionAimSensitivityFromPointer(
+    float pointerU) noexcept
+{
+    const float pixelX = std::clamp(pointerU, 0.0F, 1.0F) *
+        kSettingsMenuTextureSize;
+    const float normalized = std::clamp(
+        (pixelX - kSettingsMenuControlColumnPixels) /
+            (kSettingsMenuSliderRightPixels -
+             kSettingsMenuControlColumnPixels),
+        0.0F,
+        1.0F);
+    const float unsnapped = static_cast<float>(
+        settings::kMinimumVehicleMotionAimSensitivityPercent) +
+        normalized * static_cast<float>(
+            settings::kMaximumVehicleMotionAimSensitivityPercent -
+            settings::kMinimumVehicleMotionAimSensitivityPercent);
+    const auto steps = static_cast<std::uint32_t>(std::lround(
+        unsnapped / static_cast<float>(
+            settings::kVehicleMotionAimSensitivityStepPercent)));
+    const std::uint32_t selected = std::clamp(
+        steps * settings::kVehicleMotionAimSensitivityStepPercent,
+        settings::kMinimumVehicleMotionAimSensitivityPercent,
+        settings::kMaximumVehicleMotionAimSensitivityPercent);
+    if (selected != values_.vehicleMotionAimSensitivityPercent)
+    {
+        values_.vehicleMotionAimSensitivityPercent = selected;
+        valuesChanged_ = true;
+        status_ = SettingsMenuStatus::SettingsNotSaved;
     }
 }
 

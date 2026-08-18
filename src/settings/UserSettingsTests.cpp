@@ -233,7 +233,7 @@ bool TestProductionSeedAndTypedValues(const std::wstring& directory)
     }
     const auto defaults = store.Defaults();
     const auto decodedDefaults = bfvr::settings::DecodeUserSettings(defaults);
-    if (defaults.values.size() != 36 ||
+    if (defaults.values.size() != 37 ||
         decodedDefaults.playMode != bfvr::settings::PlayMode::Seated ||
         decodedDefaults.artificialTurnMode !=
             bfvr::settings::ArtificialTurnMode::Smooth ||
@@ -252,6 +252,7 @@ bool TestProductionSeedAndTypedValues(const std::wstring& directory)
         decodedDefaults.swapAircraftSticks ||
         !decodedDefaults.invertTurretPitch ||
         decodedDefaults.invertTurretYaw ||
+        decodedDefaults.vehicleMotionAimSensitivityPercent != 200 ||
         !decodedDefaults.controllerHapticsEnabled ||
         !decodedDefaults.killSoundEnabled ||
         !decodedDefaults.sniperScopeSmoothingEnabled ||
@@ -318,6 +319,7 @@ bool TestProductionSeedAndTypedValues(const std::wstring& directory)
     changed.swapAircraftSticks = true;
     changed.invertTurretPitch = true;
     changed.invertTurretYaw = true;
+    changed.vehicleMotionAimSensitivityPercent = 270;
     changed.controllerHapticsEnabled = false;
     changed.killSoundEnabled = false;
     changed.sniperScopeSmoothingEnabled = false;
@@ -412,6 +414,8 @@ bool TestProductionSeedAndTypedValues(const std::wstring& directory)
         contents.find("pitch with roll") !=
             std::string::npos &&
         contents.find("including right-stick and right-grip motion aim") !=
+            std::string::npos &&
+        contents.find("vehicle_motion_aim_sensitivity_percent = 270") !=
             std::string::npos &&
         contents.find("controller_haptics_enabled = false") !=
             std::string::npos &&

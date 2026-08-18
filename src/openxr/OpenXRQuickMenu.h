@@ -128,14 +128,19 @@ private:
     std::array<
         ID3D11Texture2D*,
         stereo::kQuickMenuUtilityVisualCount> utilitySources_ = {};
+    std::array<
+        ID3D11Texture2D*,
+        stereo::kQuickMenuCommandVisualCount> commandSources_ = {};
     ID3D11Texture2D* cursorSource_ = nullptr;
     ID3D11Texture2D* settingsSource_ = nullptr;
     Swapchain menuSwapchain_ = {};
     Swapchain utilitySwapchain_ = {};
+    Swapchain commandSwapchain_ = {};
     Swapchain cursorSwapchain_ = {};
     Swapchain settingsSwapchain_ = {};
     XrCompositionLayerQuad menuLayer_{XR_TYPE_COMPOSITION_LAYER_QUAD};
     XrCompositionLayerQuad utilityLayer_{XR_TYPE_COMPOSITION_LAYER_QUAD};
+    XrCompositionLayerQuad commandLayer_{XR_TYPE_COMPOSITION_LAYER_QUAD};
     XrCompositionLayerQuad cursorLayer_{XR_TYPE_COMPOSITION_LAYER_QUAD};
     stereo::QuickMenuInteraction interaction_ = {};
     stereo::SettingsMenuInteraction settingsInteraction_ = {};

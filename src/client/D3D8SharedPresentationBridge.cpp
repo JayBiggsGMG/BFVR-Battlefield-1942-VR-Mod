@@ -640,6 +640,7 @@ public:
         }
         destination.mountedCameraToggleSequence =
             source.mountedCameraToggleSequence;
+        destination.hudToggleSequence = source.hudToggleSequence;
         for (std::size_t hand = 0; hand < destination.hands.size(); ++hand)
         {
             const shared::SharedControllerHandSample& sourceHand = source.hands[hand];

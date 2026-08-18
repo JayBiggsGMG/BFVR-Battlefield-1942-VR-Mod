@@ -35,6 +35,8 @@ constexpr std::string_view kSwapAircraftSticksKey =
     "swap_aircraft_sticks";
 constexpr std::string_view kInvertTurretPitchKey = "invert_turret_pitch";
 constexpr std::string_view kInvertTurretYawKey = "invert_turret_yaw";
+constexpr std::string_view kVehicleMotionAimSensitivityKey =
+    "vehicle_motion_aim_sensitivity_percent";
 constexpr std::string_view kControllerHapticsEnabledKey =
     "controller_haptics_enabled";
 constexpr std::string_view kKillSoundEnabledKey = "kill_sound_enabled";
@@ -167,6 +169,23 @@ bool IsInfantryTurnSpeed(std::string_view value) noexcept
         percent >= bfvr::settings::kMinimumInfantryTurnSpeedPercent &&
         percent <= bfvr::settings::kMaximumInfantryTurnSpeedPercent &&
         percent % bfvr::settings::kInfantryTurnSpeedStepPercent == 0;
+}
+
+bool IsVehicleMotionAimSensitivity(std::string_view value) noexcept
+{
+    std::uint32_t percent = 0;
+    const auto parsed = std::from_chars(
+        value.data(),
+        value.data() + value.size(),
+        percent);
+    return parsed.ec == std::errc{} &&
+        parsed.ptr == value.data() + value.size() &&
+        percent >=
+            bfvr::settings::kMinimumVehicleMotionAimSensitivityPercent &&
+        percent <=
+            bfvr::settings::kMaximumVehicleMotionAimSensitivityPercent &&
+        percent %
+            bfvr::settings::kVehicleMotionAimSensitivityStepPercent == 0;
 }
 
 bool IsSnapTurnAngle(std::string_view value) noexcept
@@ -671,6 +690,15 @@ UserSettingsSchema SeededUserSettingsSchema()
             IsBoolean
         },
         {
+            std::string(kVehicleMotionAimSensitivityKey),
+            std::to_string(kDefaultVehicleMotionAimSensitivityPercent),
+            {
+                "Sets how strongly right-controller movement aims tank cannons and other land/sea vehicle, turret, AA, and mounted weapons. It does not change right-stick sensitivity, infantry aim, aircraft controls, or BF1942's authored turret speed limits.",
+                "Accepted values are 50 through 300 percent in steps of 10. 100 is the original motion-aim response and the default 200 requires half the original physical hand travel. Applied after Controls > Save without a restart."
+            },
+            IsVehicleMotionAimSensitivity
+        },
+        {
             std::string(kControllerHapticsEnabledKey),
             "true",
             {
@@ -692,7 +720,7 @@ UserSettingsSchema SeededUserSettingsSchema()
             std::string(kSniperScopeSmoothingEnabledKey),
             "true",
             {
-                "Softens scoped micro-motion with a frame-time-aware bounded angular stabilizer. Filtering applies only while total stabilized-to-raw error is below 0.40 degrees; deliberate movement catches up to raw immediately at that boundary. The same result drives aim and scope presentation, while current weapon translation stays raw. Controls > Save applies the toggle live. After a scoped shot, the weapon's native zoom state decides whether the scope exits or remains active.",
+                "Softens scoped micro-motion with a frame-time-aware bounded angular stabilizer. Filtering applies only while total stabilized-to-raw error is below 1.5 degrees; deliberate movement catches up to raw immediately at that boundary. The same result drives aim and scope presentation, while current weapon translation stays raw. Controls > Save applies the toggle live. After a scoped shot, the weapon's native zoom state decides whether the scope exits or remains active.",
                 "Accepted values: true or false. Applied after Controls > Save without a restart."
             },
             IsBoolean
@@ -902,6 +930,25 @@ UserSettingsValues DecodeUserSettings(const UserSettings& settings) noexcept
             IsInfantryTurnSpeed(turnSpeed->second))
         {
             result.infantryTurnSpeedPercent = parsedPercent;
+        }
+    }
+    const auto vehicleMotionAimSensitivity = settings.values.find(
+        std::string(kVehicleMotionAimSensitivityKey));
+    if (vehicleMotionAimSensitivity != settings.values.end())
+    {
+        std::uint32_t parsedPercent = 0;
+        const auto parsed = std::from_chars(
+            vehicleMotionAimSensitivity->second.data(),
+            vehicleMotionAimSensitivity->second.data() +
+                vehicleMotionAimSensitivity->second.size(),
+            parsedPercent);
+        if (parsed.ec == std::errc{} &&
+            parsed.ptr == vehicleMotionAimSensitivity->second.data() +
+                vehicleMotionAimSensitivity->second.size() &&
+            IsVehicleMotionAimSensitivity(
+                vehicleMotionAimSensitivity->second))
+        {
+            result.vehicleMotionAimSensitivityPercent = parsedPercent;
         }
     }
     const auto readBoolean = [&](std::string_view key, bool fallback) {
@@ -1143,6 +1190,17 @@ void EncodeUserSettings(
         kInfantryTurnSpeedStepPercent;
     settings.values[std::string(kInfantryTurnSpeedKey)] =
         std::to_string(snappedTurnSpeed);
+    const std::uint32_t clampedVehicleMotionAimSensitivity = std::clamp(
+        values.vehicleMotionAimSensitivityPercent,
+        kMinimumVehicleMotionAimSensitivityPercent,
+        kMaximumVehicleMotionAimSensitivityPercent);
+    const std::uint32_t snappedVehicleMotionAimSensitivity =
+        ((clampedVehicleMotionAimSensitivity +
+          kVehicleMotionAimSensitivityStepPercent / 2U) /
+         kVehicleMotionAimSensitivityStepPercent) *
+        kVehicleMotionAimSensitivityStepPercent;
+    settings.values[std::string(kVehicleMotionAimSensitivityKey)] =
+        std::to_string(snappedVehicleMotionAimSensitivity);
     settings.values[std::string(kInvertFlightPitchKey)] =
         values.invertFlightPitch ? "true" : "false";
     settings.values[std::string(kAircraftPitchWithRollKey)] =

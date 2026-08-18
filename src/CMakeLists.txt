@@ -61,12 +61,14 @@ if(BFVR_PRESENTER_ONLY)
     presenter/KillSoundPlayer.cpp
     presenter/SharedControlChannel.cpp
     presenter/SharedTextureConsumer.cpp
+    presenter/SharedTexturePerformanceSummary.cpp
     settings/UserSettings.cpp
     openxr/OpenXRComfortVignette.cpp
     openxr/OpenXRControllerBindingPolicy.cpp
     openxr/OpenXRControllerShortcutPolicy.cpp
     openxr/OpenXRQuickMenu.cpp
     openxr/OpenXRHapticOutput.cpp
+    openxr/OpenXRPerformanceSummary.cpp
     openxr/OpenXRPresentation.cpp
     openxr/OpenXRPresentationSupport.cpp
     openxr/OpenXRScopeOverlayLayer.cpp
@@ -88,6 +90,7 @@ if(BFVR_PRESENTER_ONLY)
     openxr/OpenXRControllerShortcutPolicy.cpp
     openxr/OpenXRQuickMenu.cpp
     openxr/OpenXRHapticOutput.cpp
+    openxr/OpenXRPerformanceSummary.cpp
     openxr/OpenXRPresentation.cpp
     openxr/OpenXRPresentationSupport.cpp
     openxr/OpenXRScopeOverlayLayer.cpp
@@ -109,6 +112,7 @@ if(BFVR_PRESENTER_ONLY)
     presenter/D3D11WaterReflection.cpp
     presenter/SharedControlChannel.cpp
     presenter/SharedTextureConsumer.cpp
+    presenter/SharedTexturePerformanceSummary.cpp
     settings/UserSettings.cpp
   )
   add_executable(BFVRAmbientOcclusionGpuProbe
@@ -196,6 +200,7 @@ target_compile_definitions(d3d8to9 PRIVATE D3D8TO9NOLOG)
 add_library(BFVRClient SHARED
   client/BFVRClient.cpp
   client/BF1942FrameLimiterOverride.cpp
+  client/BF1942HudToggle.cpp
   client/D3D8CallInventory.cpp
   client/ControllerInputCache.cpp
   client/ControllerHaptics.cpp
@@ -322,6 +327,12 @@ add_executable(BFVRFrameLimiterOverrideTests
   client/BF1942FrameLimiterOverrideTests.cpp
 )
 
+add_executable(BFVRHudToggleTests
+  client/BF1942FrameLimiterOverride.cpp
+  client/BF1942HudToggle.cpp
+  client/BF1942HudToggleTests.cpp
+)
+
 add_executable(BFVROpenXRProbe
   client/QuickMenuArt.cpp
   client/SettingsMenuArt.cpp
@@ -332,6 +343,7 @@ add_executable(BFVROpenXRProbe
   openxr/OpenXRControllerShortcutPolicy.cpp
   openxr/OpenXRQuickMenu.cpp
   openxr/OpenXRHapticOutput.cpp
+  openxr/OpenXRPerformanceSummary.cpp
   openxr/OpenXRPresentation.cpp
   openxr/OpenXRPresentationSupport.cpp
   openxr/OpenXRScopeOverlayLayer.cpp
@@ -530,6 +542,14 @@ foreach(target BFVRClient BFVRD3D8To9FlatClient BFVRLoader BFVRBf42PlusPlusCompa
   endif()
 endforeach()
 
+target_compile_definitions(BFVRHudToggleTests PRIVATE
+  WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
+set_property(TARGET BFVRHudToggleTests PROPERTY
+  MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+if(MSVC)
+  target_compile_options(BFVRHudToggleTests PRIVATE /W4 /permissive-)
+endif()
+
 target_link_libraries(BFVRClient PRIVATE
   kernel32 advapi32 ole32 user32 windowscodecs)
 target_link_libraries(BFVRD3D8To9FlatClient PRIVATE kernel32)
@@ -578,6 +598,8 @@ target_include_directories(BFVRControllerInputCacheTests PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}")
 target_include_directories(BFVRFrameLimiterOverrideTests PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}")
+target_include_directories(BFVRHudToggleTests PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(BFVRMountedCameraMathTests PRIVATE BFVRStereoMath)
 target_link_libraries(BFVRInfantryCameraMathTests PRIVATE BFVRStereoMath)
 target_link_libraries(BFVRScopeViewMathTests PRIVATE BFVRStereoMath)
@@ -618,6 +640,9 @@ if(BUILD_TESTING)
   add_test(
     NAME BFVRFrameLimiterOverrideTests
     COMMAND BFVRFrameLimiterOverrideTests)
+  add_test(
+    NAME BFVRHudToggleTests
+    COMMAND BFVRHudToggleTests)
   add_test(NAME BFVRStereoMathTests COMMAND BFVRStereoMathTests)
   add_test(
     NAME BFVRWaterReflectionTextureBasisTests

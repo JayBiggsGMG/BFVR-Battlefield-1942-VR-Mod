@@ -61,6 +61,7 @@ int main()
     bfvr::shared::ControlBlock* const producerBlock = producer.Get();
     bfvr::shared::ControlBlock* const presenterBlock = presenter.Get();
     presenterBlock->controllerSample.mountedCameraToggleSequence = 7;
+    presenterBlock->controllerSample.hudToggleSequence = 9;
     MemoryBarrier();
     InterlockedExchange(&presenterBlock->controllerSampleSequence, 11);
     passed = Check(
@@ -70,8 +71,9 @@ int main()
                 &producerBlock->controllerSampleSequence,
                 0,
                 0) == 11 &&
-            producerBlock->controllerSample.mountedCameraToggleSequence == 7,
-        L"presenter-to-producer mounted-camera toggle payload failed") &&
+            producerBlock->controllerSample.mountedCameraToggleSequence == 7 &&
+            producerBlock->controllerSample.hudToggleSequence == 9,
+        L"presenter-to-producer Quick Menu toggle payload failed") &&
         passed;
 
     presenterBlock->renderRequest.recenterForwardSequence = 19;
@@ -164,7 +166,7 @@ int main()
 
     if (passed)
     {
-        wprintf(L"[PASS] Shared control events, haptic counters, context recenter/STAGE-height commands, and mounted-camera feedback are bidirectional.\n");
+        wprintf(L"[PASS] Shared control events, haptic counters, context recenter/STAGE-height commands, mounted-camera feedback, and native-HUD edges are bidirectional.\n");
     }
     return passed ? 0 : 1;
 }

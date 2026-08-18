@@ -375,6 +375,13 @@ BF1942FrameLimiterSignatureResult FindBF1942FrameLimiterOwnerPointer(
     return result;
 }
 
+BF1942FrameLimiterSignatureResult
+FindBF1942FrameLimiterOwnerPointerInExecutableImage(
+    HMODULE executableModule) noexcept
+{
+    return FindInExecutableImage(executableModule);
+}
+
 void RequestBF1942FrameLimiterOverride() noexcept
 {
     InterlockedExchange(&g_frameLimiterOverrideRequested, 1);

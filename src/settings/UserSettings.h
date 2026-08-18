@@ -14,6 +14,10 @@ constexpr std::uint32_t kMinimumInfantryTurnSpeedPercent = 50;
 constexpr std::uint32_t kMaximumInfantryTurnSpeedPercent = 300;
 constexpr std::uint32_t kInfantryTurnSpeedStepPercent = 10;
 constexpr std::uint32_t kDefaultInfantryTurnSpeedPercent = 200;
+constexpr std::uint32_t kMinimumVehicleMotionAimSensitivityPercent = 50;
+constexpr std::uint32_t kMaximumVehicleMotionAimSensitivityPercent = 300;
+constexpr std::uint32_t kVehicleMotionAimSensitivityStepPercent = 10;
+constexpr std::uint32_t kDefaultVehicleMotionAimSensitivityPercent = 200;
 constexpr std::uint32_t kMinimumSnapTurnAngleDegrees = 15;
 constexpr std::uint32_t kMaximumSnapTurnAngleDegrees = 90;
 constexpr std::uint32_t kSnapTurnAngleStepDegrees = 15;
@@ -137,6 +141,8 @@ struct UserSettingsValues
     bool swapAircraftSticks = false;
     bool invertTurretPitch = true;
     bool invertTurretYaw = false;
+    std::uint32_t vehicleMotionAimSensitivityPercent =
+        kDefaultVehicleMotionAimSensitivityPercent;
     bool controllerHapticsEnabled = true;
     bool killSoundEnabled = true;
     bool sniperScopeSmoothingEnabled = true;

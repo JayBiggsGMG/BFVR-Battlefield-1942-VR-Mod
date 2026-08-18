@@ -1,5 +1,6 @@
 #include "client/D3D8RenderViewPoseHook.h"
 
+#include "client/BF1942HudToggle.h"
 #include "client/BFSoldierVrMotionFilter.h"
 #include "client/InfantryAuthoritativeAimRuntime.h"
 #include "client/MountedWeaponAimResolver.h"
@@ -220,6 +221,9 @@ public:
     {
         gameImage = static_cast<std::byte*>(image);
         logCallback = callback;
+        (void)hudToggle.Initialize(
+            reinterpret_cast<HMODULE>(image),
+            callback);
         diagnosticsEnabled = IsD3D8RuntimeDiagnosticsEnabled(
             ReadD3D8RuntimeDiagnosticLevel());
         target = gameImage == nullptr
@@ -327,6 +331,11 @@ public:
             InterlockedExchange(
                 &requestedMountedCameraToggleSequence,
                 request.controllerInput.mountedCameraToggleSequence);
+        }
+        if (request.controllerInput.valid &&
+            request.controllerInput.hudToggleSequence >= 0)
+        {
+            hudToggle.Consume(request.controllerInput.hudToggleSequence);
         }
         InterlockedExchange(
             &requestedTrackingContextGeneration,
@@ -480,6 +489,7 @@ public:
 
     void LogSummary() const
     {
+        hudToggle.LogSummary();
         WriteLog(
             L"RenderView pose/frustum-hook summary: setterMatches=%ld setterApplied=%ld setterRejected=%ld infantryComfortApplied=%ld infantryComfortRejected=%ld trackingContextChanges=%ld scopedApplied=%ld scopedRejected=%ld scopeDeathFovRestores=%ld scopeDeathFovRestoreFailures=%ld frustumMatches=%ld frustumApplied=%ld mountedFrustumApplied=%ld frustumNoSource=%ld frustumRejected=%ld mountedAnchorCaptures=%ld mountedDecoupled=%ld mountedRejected=%ld mountedResets=%ld mountedToggles=%ld mountedToggleIgnored=%ld fireCameraTraceFrames=%ld lastRequested=%ld lastApplied=%ld lastFrustum=%ld.",
             matchingCalls,
@@ -1223,6 +1233,7 @@ private:
     void* target = nullptr;
     void* frustumTarget = nullptr;
     D3D8RenderViewPoseLogCallback logCallback = nullptr;
+    BF1942HudToggle hudToggle = {};
     D3D8RuntimeView referenceHead = {};
     D3D8RuntimeView currentHead = {};
     stereo::Matrix4 lastSource = {};

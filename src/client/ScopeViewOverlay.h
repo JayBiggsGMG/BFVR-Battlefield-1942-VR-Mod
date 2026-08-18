@@ -11,7 +11,7 @@ struct ScopeViewFrameState
 {
     // Validated item/soldier-scoped aim target. When enabled, a bounded
     // delta-time-aware angular stabilizer attenuates only micro-motion and
-    // catches up to raw at 0.40 degrees. This same ray drives scoped
+    // catches up to raw at 1.5 degrees. This same ray drives scoped
     // presentation and native-authority convergence.
     stereo::Matrix4 controllerGunWorld = {};
     const void* weapon = nullptr;

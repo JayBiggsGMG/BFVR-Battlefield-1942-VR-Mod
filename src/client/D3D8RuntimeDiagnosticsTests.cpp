@@ -6,7 +6,6 @@ int wmain()
 {
     using bfvr::D3D8RuntimeDiagnosticLevel;
     using bfvr::IsOffHandCalibrationAuditMessage;
-    using bfvr::IsProjectedShadowAuditMessage;
     using bfvr::ParseD3D8RuntimeDiagnosticLevel;
 
     const bool passed =
@@ -34,12 +33,7 @@ int wmain()
             L"OFFHAND_CALIBRATION_REJECT reason=test") &&
         !IsOffHandCalibrationAuditMessage(L"OFFHAND_CALIBRATION") &&
         !IsOffHandCalibrationAuditMessage(
-            L"Native 1P off-hand support acquired") &&
-        IsProjectedShadowAuditMessage(
-            L"PROJECTED_SHADOW_AUDIT summary draws=1") &&
-        !IsProjectedShadowAuditMessage(L"PROJECTED_SHADOW_AUDIT") &&
-        !IsProjectedShadowAuditMessage(
-            L"D3D8 projected shadow summary");
+            L"Native 1P off-hand support acquired");
     if (!passed)
     {
         std::fwprintf(stderr, L"BFVR diagnostics-level parsing failed.\n");

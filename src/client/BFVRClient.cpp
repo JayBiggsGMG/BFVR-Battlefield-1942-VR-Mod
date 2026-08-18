@@ -4,6 +4,7 @@
 #include "client/D3D8ImportRoute.h"
 #include "client/D3D8RuntimeRedirect.h"
 #include "client/D3D8RuntimeDiagnostics.h"
+#include "diagnostics/PerformanceSummary.h"
 #include "client/D3D8StateCensus.h"
 #include "client/D3D8WeaponTransformOwnershipProbe.h"
 #include "client/D3D8WeaponViewModelProbe.h"
@@ -314,6 +315,8 @@ void AppendLog(const wchar_t* format, ...)
     static const bool diagnosticsEnabled =
         bfvr::IsD3D8RuntimeDiagnosticsEnabled(
             bfvr::ReadD3D8RuntimeDiagnosticLevel());
+    static const bool performanceSummaryEnabled =
+        bfvr::diagnostics::ReadTargetedPerformanceSummaryEnabled();
 
     wchar_t message[1024] = {};
     va_list arguments;
@@ -327,17 +330,18 @@ void AppendLog(const wchar_t* format, ...)
     va_end(arguments);
 
     // Observer callbacks pass their already-formatted text through
-    // AppendLog(L"%s", message).  Apply sparse-audit allowlists to the final
-    // text, not the outer format string, so they remain available when the
-    // ordinary high-volume diagnostics stream is disabled.
+    // AppendLog(L"%s", message). Apply the explicitly requested calibration
+    // allowlist to the final text, not the outer format string. Ordinary
+    // runtime and feature-audit messages remain suppressed when diagnostics
+    // are disabled.
     const bool calibrationAudit =
         bfvr::IsOffHandCalibrationAuditMessage(message);
-    const bool projectedShadowAudit =
-        bfvr::IsProjectedShadowAuditMessage(message);
+    const bool performanceSummary = performanceSummaryEnabled &&
+        bfvr::diagnostics::IsPerformanceSummaryMessage(message);
     if (g_module == nullptr ||
         (!diagnosticsEnabled &&
          !calibrationAudit &&
-         !projectedShadowAudit))
+         !performanceSummary))
     {
         return;
     }

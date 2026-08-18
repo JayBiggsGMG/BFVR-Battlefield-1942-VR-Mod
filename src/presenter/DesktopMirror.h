@@ -80,11 +80,13 @@ private:
     ID3D11ShaderResourceView* uiView_ = nullptr;
     ID3D11ShaderResourceView* quickMenuView_ = nullptr;
     ID3D11ShaderResourceView* quickMenuUtilityView_ = nullptr;
+    ID3D11ShaderResourceView* quickMenuCommandView_ = nullptr;
     ID3D11ShaderResourceView* quickMenuCursorView_ = nullptr;
     ID3D11Texture2D* worldTexture_ = nullptr;
     ID3D11Texture2D* uiTexture_ = nullptr;
     ID3D11Texture2D* quickMenuTexture_ = nullptr;
     ID3D11Texture2D* quickMenuUtilityTexture_ = nullptr;
+    ID3D11Texture2D* quickMenuCommandTexture_ = nullptr;
     ID3D11Texture2D* quickMenuCursorTexture_ = nullptr;
     HWND parentWindow_ = nullptr;
     HWND window_ = nullptr;

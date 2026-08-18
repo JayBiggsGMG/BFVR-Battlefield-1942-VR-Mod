@@ -12,6 +12,7 @@
 #include "openxr/OpenXRControllerBindingPolicy.h"
 #include "openxr/OpenXRControllerShortcutPolicy.h"
 #include "openxr/OpenXRQuickMenu.h"
+#include "openxr/OpenXRPerformanceSummary.h"
 #include "openxr/OpenXRPresentationSupport.h"
 #include "openxr/OpenXRScopeOverlayLayer.h"
 #include "openxr/OpenXRTrackingBasis.h"
@@ -1540,7 +1541,11 @@ public:
         return true;
     }
 
-    bool CopyToSwapchain(Swapchain& target, ID3D11Texture2D* source, const wchar_t* label)
+    bool CopyToSwapchain(
+        Swapchain& target,
+        ID3D11Texture2D* source,
+        const wchar_t* label,
+        OpenXRSwapchainPerformanceSlot performanceSlot)
     {
         if (!ValidateSourceTexture(source, target, label))
         {
@@ -1549,7 +1554,12 @@ public:
 
         uint32_t imageIndex = 0;
         XrSwapchainImageAcquireInfo acquireInfo{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
+        const std::int64_t acquireStarted =
+            performanceSummary.BeginSample();
         XrResult result = api.acquireSwapchainImage(target.handle, &acquireInfo, &imageIndex);
+        performanceSummary.EndSample(
+            OpenXRPerformanceStage::SwapchainAcquire,
+            acquireStarted);
         if (XR_FAILED(result) || imageIndex >= target.images.size())
         {
             WriteLog(
@@ -1563,10 +1573,27 @@ public:
         bool released = false;
         XrSwapchainImageWaitInfo waitInfo{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
         waitInfo.timeout = XR_INFINITE_DURATION;
+        const std::int64_t waitStarted = performanceSummary.BeginSample();
         result = api.waitSwapchainImage(target.handle, &waitInfo);
+        performanceSummary.EndSample(
+            performanceSlot == OpenXRSwapchainPerformanceSlot::LeftWorld
+                ? OpenXRPerformanceStage::LeftWorldSwapchainWait
+                : performanceSlot == OpenXRSwapchainPerformanceSlot::RightWorld
+                ? OpenXRPerformanceStage::RightWorldSwapchainWait
+                : OpenXRPerformanceStage::UiSwapchainWait,
+            waitStarted);
         if (XR_SUCCEEDED(result) && target.images[imageIndex].texture != nullptr)
         {
+            const std::int64_t copyStarted = performanceSummary.BeginSample();
             context->CopyResource(target.images[imageIndex].texture, source);
+            performanceSummary.EndSample(
+                performanceSlot == OpenXRSwapchainPerformanceSlot::LeftWorld
+                    ? OpenXRPerformanceStage::LeftWorldCopyEnqueue
+                    : performanceSlot ==
+                        OpenXRSwapchainPerformanceSlot::RightWorld
+                    ? OpenXRPerformanceStage::RightWorldCopyEnqueue
+                    : OpenXRPerformanceStage::UiCopyEnqueue,
+                copyStarted);
         }
         else
         {
@@ -1578,7 +1605,11 @@ public:
         }
 
         XrSwapchainImageReleaseInfo releaseInfo{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
+        const std::int64_t releaseStarted = performanceSummary.BeginSample();
         const XrResult releaseResult = api.releaseSwapchainImage(target.handle, &releaseInfo);
+        performanceSummary.EndSample(
+            OpenXRPerformanceStage::SwapchainRelease,
+            releaseStarted);
         released = XR_SUCCEEDED(releaseResult);
         if (!released)
         {
@@ -1606,7 +1637,12 @@ public:
 
         XrFrameWaitInfo waitInfo{XR_TYPE_FRAME_WAIT_INFO};
         pendingFrameState = {XR_TYPE_FRAME_STATE};
+        const std::int64_t waitFrameStarted =
+            performanceSummary.BeginSample();
         XrResult result = api.waitFrame(session, &waitInfo, &pendingFrameState);
+        performanceSummary.EndSample(
+            OpenXRPerformanceStage::WaitFrame,
+            waitFrameStarted);
         if (XR_FAILED(result))
         {
             WriteLog(
@@ -1617,7 +1653,12 @@ public:
         }
 
         XrFrameBeginInfo beginInfo{XR_TYPE_FRAME_BEGIN_INFO};
+        const std::int64_t beginFrameStarted =
+            performanceSummary.BeginSample();
         result = api.beginFrame(session, &beginInfo);
+        performanceSummary.EndSample(
+            OpenXRPerformanceStage::BeginFrame,
+            beginFrameStarted);
         if (XR_FAILED(result))
         {
             WriteLog(
@@ -1821,9 +1862,21 @@ public:
             if (updateSwapchainImages)
             {
                 imagesReady =
-                    CopyToSwapchain(eyeSwapchains[0], textures.leftWorld, L"left-world") &&
-                    CopyToSwapchain(eyeSwapchains[1], textures.rightWorld, L"right-world") &&
-                    CopyToSwapchain(uiSwapchain, textures.ref2Ui, L"Ref2-UI");
+                    CopyToSwapchain(
+                        eyeSwapchains[0],
+                        textures.leftWorld,
+                        L"left-world",
+                        OpenXRSwapchainPerformanceSlot::LeftWorld) &&
+                    CopyToSwapchain(
+                        eyeSwapchains[1],
+                        textures.rightWorld,
+                        L"right-world",
+                        OpenXRSwapchainPerformanceSlot::RightWorld) &&
+                    CopyToSwapchain(
+                        uiSwapchain,
+                        textures.ref2Ui,
+                        L"Ref2-UI",
+                        OpenXRSwapchainPerformanceSlot::Ui);
                 swapchainImagesValid = imagesReady;
             }
             else
@@ -2023,7 +2076,16 @@ public:
         endInfo.environmentBlendMode = blendMode;
         endInfo.layerCount = haveLayers ? layerCount : 0;
         endInfo.layers = haveLayers ? layers.data() : nullptr;
+        const std::int64_t endFrameStarted =
+            performanceSummary.BeginSample();
         const XrResult result = api.endFrame(session, &endInfo);
+        performanceSummary.EndSample(
+            OpenXRPerformanceStage::EndFrame,
+            endFrameStarted);
+        performanceSummary.ReportIfDue(
+            GetTickCount(),
+            logCallback,
+            logContext);
         frameInProgress = false;
         pendingViewsValid = false;
         pendingHeadPoseValid = false;
@@ -2141,6 +2203,7 @@ public:
 
     void Shutdown()
     {
+        performanceSummary.ReportFinal(logCallback, logContext);
         if (frameInProgress && api.endFrame != nullptr)
         {
             XrFrameEndInfo endInfo{XR_TYPE_FRAME_END_INFO};
@@ -2214,6 +2277,7 @@ public:
         comfortVignetteTarget = 0.0F;
         deathComfortVignetteTarget = 0.0F;
         textureRequirements = {};
+        performanceSummary.Reset();
     }
 
     HMODULE loader = nullptr;
@@ -2247,6 +2311,7 @@ public:
     OpenXRQuickMenu quickMenu = {};
     OpenXRComfortVignette comfortVignette = {};
     OpenXRTrackingBasis trackingBasis = {};
+    OpenXRPerformanceSummary performanceSummary = {};
     OpenXRPresentationConfiguration configuration = {};
     OpenXRUiLayerMode activeUiLayerMode = OpenXRUiLayerMode::Quad;
     OpenXRPresentationTextureRequirements textureRequirements = {};

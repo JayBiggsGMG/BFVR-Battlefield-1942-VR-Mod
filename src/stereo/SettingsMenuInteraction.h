@@ -64,6 +64,7 @@ enum class SettingsMenuSelection : std::uint32_t
     InvertTurretYaw,
     ControllerHapticsEnabled,
     SniperScopeSmoothingEnabled,
+    VehicleMotionAimSensitivity,
     FxaaEnabled,
     FxaaSharpening,
     AmbientOcclusionEnabled,
@@ -135,6 +136,7 @@ constexpr float kSettingsMenuControlsGripRowCenterPixels = 150.0F;
 constexpr std::array<float, 3>
     kSettingsMenuControlsCrosshairRowCentersPixels = {
         300.0F, 470.0F, 640.0F};
+constexpr float kSettingsMenuControlsVehicleAimSliderCenterPixels = 390.0F;
 constexpr std::array<float, 7> kSettingsMenuControlsToggleRowCentersPixels = {
     335.0F, 410.0F, 485.0F, 560.0F, 635.0F, 710.0F, 785.0F};
 constexpr float kSettingsMenuSelectorLeftArrowCenterPixels = 585.0F;
@@ -147,7 +149,7 @@ constexpr std::array<float, 5> kSettingsMenuColorRowCentersPixels = {
 constexpr float kSettingsMenuAudioRowCenterPixels = 310.0F;
 constexpr std::array<std::uint32_t,
     static_cast<std::size_t>(SettingsMenuTab::Count)>
-    kSettingsMenuPageCounts = {3, 2, 3};
+    kSettingsMenuPageCounts = {3, 3, 3};
 
 struct SettingsMenuSnapshot
 {
@@ -194,6 +196,7 @@ private:
     void Activate(SettingsMenuSelection selection) noexcept;
     [[nodiscard]] std::uint32_t PageCount() const noexcept;
     void SetTurnSpeedFromPointer(float pointerU) noexcept;
+    void SetVehicleMotionAimSensitivityFromPointer(float pointerU) noexcept;
     void SetHeightAdjustmentFromPointer(float pointerU) noexcept;
     void SetGraphicsSliderFromPointer(
         SettingsMenuSelection selection,

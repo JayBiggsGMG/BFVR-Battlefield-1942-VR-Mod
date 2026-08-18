@@ -1225,10 +1225,20 @@ FrameMirrorResult MirrorDrawIntoFrame(
             snapshot.projection.values[0][0],
             snapshot.projection.values[1][1],
             magnifiedWorldViewActive);
+    bfvr::stereo::D3D8FirstPersonPartKind firstPersonPartKind =
+        bfvr::stereo::D3D8FirstPersonPartKind::UnknownOrCombined;
+    if (bfvr::stereo::ShouldClassifyBF1942FirstPersonPartDraw(
+            IsPresentationMode(),
+            firstPersonArmDraw,
+            armsAndCombinedEnabled,
+            separateHandsEnabled))
+    {
+        firstPersonPartKind = bfvr::ReadD3D8FirstPersonPartKind();
+    }
     if (bfvr::stereo::ShouldSuppressBF1942FirstPersonArmDraw(
             IsPresentationMode(),
             firstPersonArmDraw,
-            bfvr::ReadD3D8FirstPersonPartKind(),
+            firstPersonPartKind,
             armsAndCombinedEnabled,
             separateHandsEnabled))
     {

@@ -177,11 +177,12 @@ buttons above:
   adds fine relative aim on the same axes: hand-left moves the barrel right and
   hand-down moves it up, as though the gun pivot were between the controller
   and barrel. Holding the hand still holds aim still; the stick remains the
-  unrestricted control for continuous/360-degree traverse. These directions
-  and the current 48.0-native-input-units-per-metre sensitivity are fixed; the
-  latter halves physical travel relative to the initial headset build. A future
-  in-game VR settings menu is intended to expose horizontal/vertical inversion
-  and sensitivity.
+  unrestricted control for continuous/360-degree traverse. Controls now
+  exposes a saved **Turret Motion Sensitivity** slider from 50% to 300% in 10%
+  steps. The 200% default produces 96.0 native input units per metre and halves
+  the initial headset build's physical travel; 100% preserves that original
+  response. The slider scales only controller-motion aim, while the existing
+  pitch/yaw inversion options continue to affect both motion and stick aim.
 - Aircraft defaults to left Y throttle, left X roll, right X yaw, and right Y
   pitch. The saved Controls option `Aircraft Pitch + Roll on Same Stick` pairs
   roll with pitch and moves yaw to the other stick. `Swap Aircraft Sticks`
@@ -308,7 +309,7 @@ authored hand placement from inheriting a correction.
 
 The default-on `Sniper Aim Smoothing` checkbox on the Controls page affects
 only scoped micro-motion. It applies a frame-time-aware spherical orientation
-interpolation while total stabilized-to-raw error remains below `0.40` degrees;
+interpolation while total stabilized-to-raw error remains below `1.5` degrees;
 as error grows, raw input receives more weight, and at the boundary the aim
 catches up to raw immediately. Current weapon translation is always preserved.
 The same aim ray drives scoped presentation and native authority convergence,
@@ -330,7 +331,7 @@ future investigation, but the WorkInProgress launcher now clears
 `BFVR_SCOPE_SMOOTHING_AUDIT_LOG`. With no explicit audit path the client does
 not collect its outcome counters or write a scope-exit summary. If deliberately
 enabled, it classifies filtered samples, duplicate generations, invalid/zero
-timestamps, intervals above 50 ms, and 0.40-degree raw bypasses without
+timestamps, intervals above 50 ms, and 1.5-degree raw bypasses without
 altering the filter result.
 
 The VR replay applies only a rigid controller attachment to the classified
@@ -382,6 +383,32 @@ diffuse tint selects White, Green, Blue, Purple, Red, Pink, Orange, or Yellow
 for both eyes and both layers. The tint draw still occurs immediately before transport into
 the owned stereo-world targets, so later world color treatment intentionally
 affects it with the scene.
+
+The first-person part-name classifier remains behind the prefix-verified
+`AnimatedMesh::draw` forwarding context, but it no longer scans template names
+for every animated world mesh. The hook now records only the current mesh;
+classification is requested lazily after the existing projection/semantic
+policy proves a first-person candidate and only when Hands Only needs to
+distinguish separate hands. A bounded per-thread cache stores both recognized
+hands and conservative combined/unrecognized results using the template
+address plus name-storage identity. Arms & Hands and No Hands/Arms require no
+classification, and ordinary soldiers never enter the classifier in any mode.
+
+The owner's first SteamVR headset A/B rejects that classifier as a material
+performance explanation: facing bots felt unchanged after the lazy/cached
+build, and Arms & Hands versus Hands Only produced no noticeable cadence
+difference. The matching 2026-08-16 SteamVR 2.16.7 records instead show a
+runtime-level cadence mismatch. Across 156.892 seconds BFVR submitted 9,900
+frames and consumed 9,426 fresh game frames, while the 90-Hz compositor made
+14,079 headset presents and reprojected 4,081 (29.0%) with zero dropped frames.
+BFVR remained healthy and logged no session, device, or swapchain failure; the
+owner's occasional brief black flashes therefore remain unassigned and may be
+below BFVR's application-visible boundary. Treat the global name scan as
+removed unnecessary work, not as the cause of the observed SteamVR slowdown.
+VirtualDesktopXR is a separate runtime, not a SteamVR extension: its same-day
+log requested 2496x2688 per eye versus SteamVR's 1872x2016, exactly 1.78 times
+the pixel area, so its performance must be compared at matched source
+resolution and refresh rate before attributing a shared runtime defect.
 
 ### Native arm ownership trace
 
@@ -464,6 +491,29 @@ waits, the OpenXR runtime's predicted refresh period, and how often the headset
 had to receive the last complete image because a new one was not ready. These
 “new BFVR frames” are not vanilla BF1942's frame rate.
 
+The ordinary launcher explicitly sets `BFVR_PERFORMANCE_SUMMARY=0` alongside
+broad diagnostics-off behavior. For a deliberate low-noise performance
+capture, temporarily set that explicit launcher assignment to `1`, or use a
+separate diagnostic launcher that supplies the flag without overriding it.
+
+This opt-in records in-memory aggregates and emits one summary every 30 seconds
+plus a final summary. It does not enable per-frame logging, draw provenance, or
+deep restored-state readbacks. The x86 summary covers total replay,
+skinning-family draw counts, native Present, producer waits, and new-frame
+pacing. It intentionally leaves the optional per-draw prepare/draw/restore
+timers off so soldier-heavy scenes do not gain extra clock reads. The x64
+summaries separate shared-texture
+acquisition, SSGI/water-SSR/AO/composite/menu command enqueue, D3D11 flush,
+`xrWaitFrame`, `xrBeginFrame`, each swapchain acquire/wait/copy/release, and the
+actual `xrEndFrame`. Existing AO, SSGI, and bloom GPU timestamp reports are also
+enabled for the explicit profiling run. CPU enqueue times are not GPU duration;
+compare them with `sourceFinalize` and those GPU timestamp summaries.
+
+The targeted flag is inherited by both BF1942 and its x64 companion when a
+diagnostic launcher enables it. The ordinary `Launch-BFVR-VR.bat` explicitly
+forces both `BFVR_DIAGNOSTICS=off` and `BFVR_PERFORMANCE_SUMMARY=0` so normal
+headset use performs no aggregate timing capture.
+
 The x86 game bridge and x64 presenter use two named auto-reset events as
 cross-process doorbells instead of repeatedly sleeping and checking for frame
 changes. Shared sequence numbers remain authoritative, and BFVR automatically
@@ -473,6 +523,19 @@ the one-set image path. Headset timing should compare `consumeWait`,
 `nextRequestWait`, and their sum before adding a second native-resolution
 texture set: Oculus publishes the next pose only after the current source has
 been consumed/submitted, so those two waits are not fully independent.
+
+Two SteamVR-specific speculative future-frame pipelines were live-rejected and
+are absent from the current source. The first waited up to 100 ms after
+`xrEndFrame`; frames 352, 353, 354, and 2972 exhausted that interval and caused
+severe stale-image stutter. A second version kept OpenXR cadence independent and
+never waited for the source, but owner testing found performance every bit as
+bad. Do not restore either `predictedDisplayTime + predictedDisplayPeriod`
+source buffering design. The established immediate runtime-timed path remains
+active for SteamVR, Oculus, and VirtualDesktopXR.
+
+Neither rejected result implicated startup. Preserve the OpenXR 1.0 API request
+that fixed SteamVR/VDXR launch and the temporary x86 D3D11 open of the first
+D3D9Ex texture before publication that fixed the Oasis driver.
 
 The original standalone probe is x86 because it shares the client build. The
 currently installed Oculus x86 runtime faults inside `xrCreateSession`, while

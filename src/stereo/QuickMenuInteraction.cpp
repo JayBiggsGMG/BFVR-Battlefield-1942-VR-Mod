@@ -367,11 +367,38 @@ QuickMenuSelection QuickMenuUtilitySelectionAt(
         static_cast<std::uint32_t>(button));
 }
 
+QuickMenuSelection QuickMenuCommandSelectionAt(
+    float normalizedX,
+    float normalizedY) noexcept
+{
+    if (!IsFinite(normalizedX) || !IsFinite(normalizedY) ||
+        normalizedX < 0.0F || normalizedX > 1.0F ||
+        normalizedY < 0.0F || normalizedY > 1.0F)
+    {
+        return QuickMenuSelection::None;
+    }
+    const std::size_t button = std::min<std::size_t>(
+        static_cast<std::size_t>(
+            normalizedY *
+            static_cast<float>(kQuickMenuCommandButtonCount)),
+        kQuickMenuCommandButtonCount - 1);
+    return static_cast<QuickMenuSelection>(
+        static_cast<std::uint32_t>(QuickMenuSelection::RadioRoger) +
+        static_cast<std::uint32_t>(button));
+}
+
 bool IsQuickMenuUtilitySelection(
     QuickMenuSelection selection) noexcept
 {
     return selection >= QuickMenuSelection::MountedCameraDecouple &&
         selection <= QuickMenuSelection::VrSettings;
+}
+
+bool IsQuickMenuCommandSelection(
+    QuickMenuSelection selection) noexcept
+{
+    return selection >= QuickMenuSelection::RadioRoger &&
+        selection <= QuickMenuSelection::ToggleHud;
 }
 
 const wchar_t* QuickMenuSelectionName(
@@ -391,6 +418,10 @@ const wchar_t* QuickMenuSelectionName(
     case QuickMenuSelection::CameraF10: return L"F10 / camera";
     case QuickMenuSelection::CameraF11: return L"F11 / camera";
     case QuickMenuSelection::CameraF12: return L"F12 / camera";
+    case QuickMenuSelection::RadioRoger: return L"F1, F1 / Roger";
+    case QuickMenuSelection::RadioNegative: return L"F1, F2 / Negative";
+    case QuickMenuSelection::RadioGoGoGo: return L"F7, F7 / Go go go";
+    case QuickMenuSelection::ToggleHud: return L"native HUD toggle";
     case QuickMenuSelection::MountedCameraDecouple:
         return L"mounted-camera decouple toggle";
     case QuickMenuSelection::SwapKit:
@@ -438,6 +469,22 @@ Pose MakeQuickMenuUtilityPose(const Pose& panelPose) noexcept
     return result;
 }
 
+Pose MakeQuickMenuCommandPose(const Pose& panelPose) noexcept
+{
+    Pose result = panelPose;
+    // The owner-authored 86x425 crop is bottom-aligned with the original
+    // 512x512 panel and begins immediately beyond its right edge.
+    const Vec3 localOffset = {
+        kQuickMenuWidthMeters * 0.5F +
+            kQuickMenuCommandWidthMeters * 0.5F,
+        -(kQuickMenuHeightMeters - kQuickMenuCommandHeightMeters) * 0.5F,
+        0.0F};
+    result.position = Add(
+        panelPose.position,
+        Rotate(panelPose.orientation, localOffset));
+    return result;
+}
+
 Pose MakeQuickMenuUtilityCursorPose(
     const Pose& panelPose,
     float pointerU,
@@ -458,6 +505,29 @@ Pose MakeQuickMenuUtilityCursorPose(
     result.position = Add(
         stripPose.position,
         Rotate(stripPose.orientation, localOffset));
+    return result;
+}
+
+Pose MakeQuickMenuCommandCursorPose(
+    const Pose& panelPose,
+    float pointerU,
+    float pointerV,
+    float cursorWidthMeters,
+    float cursorHeightMeters) noexcept
+{
+    const Pose columnPose = MakeQuickMenuCommandPose(panelPose);
+    const float clampedU = std::clamp(pointerU, 0.0F, 1.0F);
+    const float clampedV = std::clamp(pointerV, 0.0F, 1.0F);
+    const Vec3 localOffset = {
+        (clampedU - 0.5F) * kQuickMenuCommandWidthMeters +
+            cursorWidthMeters * (0.5F - kQuickMenuCursorHotspotX),
+        (0.5F - clampedV) * kQuickMenuCommandHeightMeters -
+            cursorHeightMeters * (0.5F - kQuickMenuCursorHotspotY),
+        0.001F};
+    Pose result = columnPose;
+    result.position = Add(
+        columnPose.position,
+        Rotate(columnPose.orientation, localOffset));
     return result;
 }
 
@@ -568,7 +638,21 @@ void QuickMenuInteraction::Update(
         kQuickMenuTextureSize,
         kQuickMenuTextureSize);
     const Pose utilityPose = MakeQuickMenuUtilityPose(panelPose_);
-    const auto utilityHit = menuHit.has_value()
+    const Pose commandPose = MakeQuickMenuCommandPose(panelPose_);
+    const auto commandHit = menuHit.has_value()
+        ? std::nullopt
+        : MapOpenXRAimPoseToAspectFitUiCanvas(
+            input.rightAimPose,
+            commandPose,
+            kQuickMenuCommandWidthMeters,
+            kQuickMenuCommandHeightMeters,
+            kQuickMenuCommandTextureWidth,
+            kQuickMenuCommandTextureHeight,
+            kQuickMenuCommandTextureWidth,
+            kQuickMenuCommandTextureHeight,
+            kQuickMenuCommandTextureWidth,
+            kQuickMenuCommandTextureHeight);
+    const auto utilityHit = menuHit.has_value() || commandHit.has_value()
         ? std::nullopt
         : MapOpenXRAimPoseToAspectFitUiCanvas(
             input.rightAimPose,
@@ -581,18 +665,28 @@ void QuickMenuInteraction::Update(
             kQuickMenuUtilityTextureHeight,
             kQuickMenuUtilityTextureWidth,
             kQuickMenuUtilityTextureHeight);
-    pointerVisible_ = menuHit.has_value() || utilityHit.has_value();
+    pointerVisible_ = menuHit.has_value() || commandHit.has_value() ||
+        utilityHit.has_value();
     pointerOnUtilityStrip_ = utilityHit.has_value();
+    pointerOnCommandColumn_ = commandHit.has_value();
     hovered_ = menuHit.has_value()
         ? QuickMenuSelectionAt(
             menuHit->normalizedX,
             menuHit->normalizedY)
+        : commandHit.has_value()
+        ? QuickMenuCommandSelectionAt(
+            commandHit->normalizedX,
+            commandHit->normalizedY)
         : utilityHit.has_value()
         ? QuickMenuUtilitySelectionAt(
             utilityHit->normalizedX,
             utilityHit->normalizedY)
         : QuickMenuSelection::None;
-    const auto& hit = menuHit.has_value() ? menuHit : utilityHit;
+    const auto& hit = menuHit.has_value()
+        ? menuHit
+        : commandHit.has_value()
+        ? commandHit
+        : utilityHit;
     if (hit.has_value())
     {
         pointerU_ = hit->normalizedX;
@@ -611,6 +705,7 @@ void QuickMenuInteraction::Reset() noexcept
     visible_ = false;
     pointerVisible_ = false;
     pointerOnUtilityStrip_ = false;
+    pointerOnCommandColumn_ = false;
     blockedUntilRelease_ = false;
 }
 
@@ -621,6 +716,8 @@ QuickMenuInteractionSnapshot QuickMenuInteraction::Snapshot() const noexcept
     result.pointerVisible = visible_ && pointerVisible_;
     result.pointerOnUtilityStrip =
         result.pointerVisible && pointerOnUtilityStrip_;
+    result.pointerOnCommandColumn =
+        result.pointerVisible && pointerOnCommandColumn_;
     result.pointerU = pointerU_;
     result.pointerV = pointerV_;
     result.panelPose = panelPose_;
@@ -640,6 +737,7 @@ void QuickMenuInteraction::Cancel(bool blockUntilRelease) noexcept
     visible_ = false;
     pointerVisible_ = false;
     pointerOnUtilityStrip_ = false;
+    pointerOnCommandColumn_ = false;
     hovered_ = QuickMenuSelection::None;
     lastDisplayTime_ = 0;
     blockedUntilRelease_ = blockUntilRelease;

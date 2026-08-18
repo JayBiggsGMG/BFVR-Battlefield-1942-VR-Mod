@@ -314,7 +314,7 @@ bool TestScopeAimSmoothingAttenuatesMicroMotionAndTranslation() noexcept
         stabilized->values[2][0],
         stabilized->values[2][2]);
     return NearlyEqual(first->values[2][2], 1.0F) &&
-        stabilizedYaw > 0.00013F && stabilizedYaw < 0.00016F &&
+        stabilizedYaw > 0.00003F && stabilizedYaw < 0.00005F &&
         NearlyEqual(stabilized->values[3][0], 4.0F) &&
         NearlyEqual(stabilized->values[3][1], 5.0F) &&
         NearlyEqual(stabilized->values[3][2], 6.0F) &&
@@ -357,7 +357,7 @@ bool TestScopeAimSmoothingHandlesSustainedMotionAndBypassesAtBound() noexcept
         4,
         firstTime + 3 * frameTime,
         true);
-    const Matrix4 deliberateMove = Yaw(0.010F);
+    const Matrix4 deliberateMove = Yaw(0.030F);
     const auto bypassed = bfvr::stereo::UpdateD3D8ScopeAimSmoothing(
         state,
         deliberateMove,

@@ -81,7 +81,11 @@ constexpr float kWalkStickMagnitudeThreshold = 0.60F;
 constexpr ULONGLONG kUserSettingsPollIntervalMs = 250;
 constexpr float kVehicleAimStickResponseExponent = 1.35F;
 constexpr bfvr::stereo::VehicleMotionAimConfiguration
-    kSurfaceVehicleMotionAimConfiguration = {};
+    kOriginalSurfaceVehicleMotionAimConfiguration = {
+        48.0F,
+        0.0005F,
+        0.35F,
+        0.15F};
 
 constexpr DWORD kVehicleCategoryAir = 2;
 
@@ -905,6 +909,15 @@ private:
             bfvr::shared::kControllerHandFlagGripPositionTracked;
         const bool motionAimTracked =
             (right.flags & requiredMotionAimFlags) == requiredMotionAimFlags;
+        bfvr::stereo::VehicleMotionAimConfiguration motionAimConfiguration =
+            kOriginalSurfaceVehicleMotionAimConfiguration;
+        const float motionAimSensitivityScale = static_cast<float>(
+            userSettings.vehicleMotionAimSensitivityPercent) * 0.01F;
+        motionAimConfiguration.inputPerMetre *= motionAimSensitivityScale;
+        motionAimConfiguration.maximumInputPerSample = std::min(
+            1.0F,
+            motionAimConfiguration.maximumInputPerSample *
+                motionAimSensitivityScale);
         const bfvr::stereo::VehicleMotionAimOutput motionAim =
             bfvr::stereo::UpdateVehicleMotionAim(
                 surfaceVehicleMotionAim,
@@ -916,7 +929,7 @@ private:
                     right.gripPose.positionY,
                     right.gripPose.positionZ},
                 predictedDisplayTime,
-                kSurfaceVehicleMotionAimConfiguration);
+                motionAimConfiguration);
         const bfvr::stereo::VehicleAimInputSigns vehicleAimSigns =
             bfvr::stereo::CalibratedVehicleAimInputSigns(
                 userSettings.invertTurretPitch,
@@ -928,8 +941,10 @@ private:
                 0) == 0)
         {
             WriteLog(
-                L"Surface/sea/mounted right-grip motion aim acquired a tracked zero-input reference at %.1f native-input units/metre. Relative hand movement now complements right-stick traverse/elevation with matching physical directions on both axes. Quick Menu hold, tracking loss, and control-mode changes rebaseline without a turret jump.",
-                kSurfaceVehicleMotionAimConfiguration.inputPerMetre);
+                L"Surface/sea/mounted right-grip motion aim acquired a tracked zero-input reference at %lu%% sensitivity (%.1f native-input units/metre). Relative hand movement now complements right-stick traverse/elevation with matching physical directions on both axes. Quick Menu hold, tracking loss, and control-mode changes rebaseline without a turret jump.",
+                static_cast<unsigned long>(
+                    userSettings.vehicleMotionAimSensitivityPercent),
+                motionAimConfiguration.inputPerMetre);
         }
 
         if (controlMode == ControllerControlMode::Infantry)
@@ -1663,9 +1678,14 @@ private:
             bfvr::stereo::ResetDigitalLocomotion(
                 infantryMovementDirection);
         }
+        if (updated.vehicleMotionAimSensitivityPercent !=
+            userSettings.vehicleMotionAimSensitivityPercent)
+        {
+            bfvr::stereo::ResetVehicleMotionAim(surfaceVehicleMotionAim);
+        }
         userSettings = updated;
         WriteLog(
-            L"Controller input applied updated UserConfig values: turnMode=%ls infantryTurnSpeed=%lu%% movementDirection=%lu invertFlightPitch=%d aircraftPitchWithRoll=%d swapAircraftSticks=%d invertTurretPitch=%d invertTurretYaw=%d.",
+            L"Controller input applied updated UserConfig values: turnMode=%ls infantryTurnSpeed=%lu%% movementDirection=%lu vehicleMotionAimSensitivity=%lu%% invertFlightPitch=%d aircraftPitchWithRoll=%d swapAircraftSticks=%d invertTurretPitch=%d invertTurretYaw=%d.",
             userSettings.artificialTurnMode ==
                     bfvr::settings::ArtificialTurnMode::Snap
                 ? L"snap"
@@ -1673,6 +1693,8 @@ private:
             static_cast<unsigned long>(
                 userSettings.infantryTurnSpeedPercent),
             static_cast<unsigned long>(userSettings.movementDirection),
+            static_cast<unsigned long>(
+                userSettings.vehicleMotionAimSensitivityPercent),
             userSettings.invertFlightPitch ? 1 : 0,
             userSettings.aircraftPitchWithRoll ? 1 : 0,
             userSettings.swapAircraftSticks ? 1 : 0,

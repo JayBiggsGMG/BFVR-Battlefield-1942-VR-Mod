@@ -100,12 +100,22 @@ post-Reset presentation dimensions, and BFVR runtime diagnostics.
 
 - `src/presenter/BFVRPresenter.cpp`
 - `src/presenter/SharedTextureConsumer.*`
+- `src/presenter/SharedTexturePerformanceSummary.*`
 - `src/openxr/OpenXRPresentation.*`
+- `src/openxr/OpenXRPerformanceSummary.*`
 - `src/openxr/OpenXRQuickMenu.*`
 
 The presenter owns OpenXR lifecycle, swapchains, D3D11 consumption/effects,
 desktop mirror, controller actions, haptics, overlapping kill-sound voices,
 and composition-layer submission.
+
+`src/diagnostics/PerformanceSummary.h` supplies the common opt-in aggregate
+timer. `BFVR_PERFORMANCE_SUMMARY=1` is a targeted, low-volume performance mode:
+it leaves broad `BFVR_DIAGNOSTICS=off`, admits only prefixed x86 performance
+summary messages, and adds QPC timing around existing x64 source/OpenXR calls.
+It must not become a scheduling switch. In particular, it may not change the
+runtime-timed request sequence, source ownership acknowledgement, swapchain
+copy order, or `xrEndFrame` placement.
 
 ### Settings and menu
 
@@ -137,6 +147,11 @@ The potential 1.0.2 settings group adds these runtime invariants:
   continue while draws are hidden. Do not treat a narrow projection alone as
   ownership during an active or entering scope: magnified world soldiers
   satisfy the same lower bounds, so suppression must fail closed there.
+  The global forwarding hook records only the current AnimatedMesh context;
+  template-name classification is deferred until the draw policy has proven a
+  first-person candidate in Hands Only mode, then cached by template/name
+  storage identity. Do not move string inspection back onto every world-mesh
+  draw.
 - Hand weapons, mounted guns, and controller-pointer knife/throwable/gadget
   items each own an independent `WorldCrosshairMode`. Crosshair color is a
   shared base tint inside the existing D3D8 per-eye renderer; do not move this
@@ -219,8 +234,17 @@ These are established behaviors, not cleanup opportunities.
 - Use the translator's current post-Reset presentation dimensions rather than
   stale initial CreateDevice dimensions.
 - Keep producer ownership until the x64 consumer's queued source work is safe.
-- The SteamVR pacing correction intentionally overlaps legacy shared-resource
-  GPU completion with `xrEndFrame`; do not restore the former serial wait.
+- Preserve the Oasis compatibility invariant: the x86 producer temporarily
+  opens the first newly allocated D3D9Ex legacy shared texture through D3D11 on
+  the exact producer adapter before publishing any texture handles. Do not move
+  this primer to x64, remove it, or publish first.
+- The established immediate path queues legacy shared-resource reads before
+  `xrEndFrame` and defers their GPU completion/producer acknowledgement until
+  afterward. Do not restore the former serial wait ahead of `xrEndFrame`.
+- Do not add a SteamVR speculative future-frame buffer. Both the blocking and
+  non-blocking `predictedDisplayTime + predictedDisplayPeriod` variants were
+  live-rejected as equally awful and were completely removed. SteamVR, Oculus,
+  and VirtualDesktopXR all retain the established immediate path.
 - UI capture policies distinguish full replacement frames from accumulating
   HUD draws. Combining them blindly can create trails or repeated translucent
   elements.

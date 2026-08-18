@@ -1,5 +1,6 @@
 #include "openxr/OpenXRPresentation.h"
 #include "presenter/DesktopMirror.h"
+#include "diagnostics/PerformanceSummary.h"
 #include "presenter/SharedControlChannel.h"
 #include "presenter/KillSoundPlayer.h"
 #include "presenter/SharedTextureConsumer.h"
@@ -30,13 +31,7 @@ std::int64_t ReadPerformanceCounter() noexcept
 
 bool ReadPerformanceDiagnosticsEnabled() noexcept
 {
-    wchar_t value[16] = {};
-    const DWORD length = GetEnvironmentVariableW(
-        L"BFVR_DIAGNOSTICS",
-        value,
-        static_cast<DWORD>(std::size(value)));
-    return !((length == 3 && _wcsicmp(value, L"off") == 0) ||
-        (length == 1 && value[0] == L'0'));
+    return bfvr::diagnostics::ReadAggregatePerformanceEnabled();
 }
 
 void WriteLog(void*, const wchar_t* message)
@@ -292,6 +287,7 @@ void PublishControllerSample(
     bfvr::shared::ControlBlock& block,
     LONG sequence,
     LONG mountedCameraToggleSequence,
+    LONG hudToggleSequence,
     const bfvr::OpenXRControllerInputState& input)
 {
     bfvr::shared::SharedControllerSample& destination = block.controllerSample;
@@ -301,6 +297,7 @@ void PublishControllerSample(
         : 0;
     destination.mountedCameraToggleSequence =
         mountedCameraToggleSequence;
+    destination.hudToggleSequence = hudToggleSequence;
     for (std::size_t hand = 0; hand < input.hands.size(); ++hand)
     {
         const bfvr::OpenXRControllerHandState& sourceHand = input.hands[hand];
@@ -323,12 +320,14 @@ void PublishRenderRequest(
     bfvr::shared::ControlBlock& block,
     LONG sequence,
     LONG mountedCameraToggleSequence,
+    LONG hudToggleSequence,
     const bfvr::OpenXRPresentationFrameState& frame)
 {
     PublishControllerSample(
         block,
         sequence,
         mountedCameraToggleSequence,
+        hudToggleSequence,
         frame.controllerInput);
     block.renderRequest.predictedDisplayTime = frame.predictedDisplayTime;
     block.renderRequest.shouldRender = frame.shouldRender ? 1 : 0;
@@ -607,6 +606,14 @@ int RunPresenter(
     LONG openXrReusedSubmitCount = 0;
     LONG predictedDisplayPeriodCount = 0;
     LONG mountedCameraToggleSequence = 0;
+    LONG hudToggleSequence = 0;
+    struct PendingRadioKey
+    {
+        UINT virtualKey = 0;
+        ULONGLONG dueAt = 0;
+        bfvr::stereo::QuickMenuSelection command =
+            bfvr::stereo::QuickMenuSelection::None;
+    } pendingRadioKey;
     LONG consumedShotRightSequence = 0;
     LONG consumedShotBothSequence = 0;
     LONG consumedDeathSequence = 0;
@@ -790,6 +797,40 @@ int RunPresenter(
             ? &acceptedUiWorldAnchor
             : nullptr;
     };
+    const auto dispatchPendingRadioKey = [&](ULONGLONG now)
+    {
+        if (pendingRadioKey.virtualKey == 0 || now < pendingRadioKey.dueAt)
+        {
+            return;
+        }
+        DWORD errorCode = ERROR_SUCCESS;
+        const UINT virtualKey = pendingRadioKey.virtualKey;
+        const bfvr::stereo::QuickMenuSelection command =
+            pendingRadioKey.command;
+        pendingRadioKey = {};
+        const bool sent = runtimeTimedProducer &&
+            SendForegroundKeyPress(
+                block->producerProcessId,
+                virtualKey,
+                errorCode);
+        if (sent)
+        {
+            fwprintf(
+                g_output,
+                L"[PRESENTER] Quick Menu completed delayed %s radio sequence with scan code 0x%02X.\n",
+                bfvr::stereo::QuickMenuSelectionName(command),
+                static_cast<unsigned int>(virtualKey));
+        }
+        else
+        {
+            fwprintf(
+                g_output,
+                L"[PRESENTER] Quick Menu suppressed delayed %s radio key because BF1942 was not foreground or SendInput failed (error %lu).\n",
+                bfvr::stereo::QuickMenuSelectionName(command),
+                static_cast<unsigned long>(errorCode));
+        }
+        fflush(g_output);
+    };
     const auto dispatchQuickMenuCommand = [&]()
     {
         const bfvr::stereo::QuickMenuSelection selection =
@@ -819,6 +860,25 @@ int RunPresenter(
             fflush(g_output);
             return;
         }
+        if (selection == bfvr::stereo::QuickMenuSelection::ToggleHud)
+        {
+            if (!runtimeTimedProducer)
+            {
+                fwprintf(
+                    g_output,
+                    L"[PRESENTER] Offline transport ignored the native HUD toggle.\n");
+            }
+            else
+            {
+                ++hudToggleSequence;
+                fwprintf(
+                    g_output,
+                    L"[PRESENTER] Quick Menu published native HUD toggle sequence %ld to the x86 game-state owner; no console or keyboard input was used.\n",
+                    hudToggleSequence);
+            }
+            fflush(g_output);
+            return;
+        }
         if (selection ==
             bfvr::stereo::QuickMenuSelection::VrSettings)
         {
@@ -836,6 +896,55 @@ int RunPresenter(
                 g_output,
                 L"[PRESENTER] Offline transport ignored Quick Menu release command %s.\n",
                 bfvr::stereo::QuickMenuSelectionName(selection));
+            fflush(g_output);
+            return;
+        }
+        UINT firstRadioKey = 0;
+        UINT secondRadioKey = 0;
+        switch (selection)
+        {
+        case bfvr::stereo::QuickMenuSelection::RadioRoger:
+            firstRadioKey = VK_F1;
+            secondRadioKey = VK_F1;
+            break;
+        case bfvr::stereo::QuickMenuSelection::RadioNegative:
+            firstRadioKey = VK_F1;
+            secondRadioKey = VK_F2;
+            break;
+        case bfvr::stereo::QuickMenuSelection::RadioGoGoGo:
+            firstRadioKey = VK_F7;
+            secondRadioKey = VK_F7;
+            break;
+        default:
+            break;
+        }
+        if (firstRadioKey != 0)
+        {
+            DWORD errorCode = ERROR_SUCCESS;
+            const bool sent = SendForegroundKeyPress(
+                block->producerProcessId,
+                firstRadioKey,
+                errorCode);
+            if (sent)
+            {
+                // Keep the presenter responsive; a later OpenXR frame sends
+                // the second menu key instead of sleeping the frame loop.
+                pendingRadioKey.virtualKey = secondRadioKey;
+                pendingRadioKey.dueAt = GetTickCount64() + 100;
+                pendingRadioKey.command = selection;
+                fwprintf(
+                    g_output,
+                    L"[PRESENTER] Quick Menu began %s and scheduled its second key 100 ms later.\n",
+                    bfvr::stereo::QuickMenuSelectionName(selection));
+            }
+            else
+            {
+                fwprintf(
+                    g_output,
+                    L"[PRESENTER] Quick Menu suppressed %s because BF1942 was not foreground or SendInput failed (error %lu).\n",
+                    bfvr::stereo::QuickMenuSelectionName(selection),
+                    static_cast<unsigned long>(errorCode));
+            }
             fflush(g_output);
             return;
         }
@@ -867,6 +976,7 @@ int RunPresenter(
             ? ReadPerformanceCounter()
             : 0;
         const ULONGLONG now = GetTickCount64();
+        dispatchPendingRadioKey(now);
         if (now >= nextComfortSettingsPollAt)
         {
             auto& userSettingsRuntime =
@@ -1341,6 +1451,7 @@ int RunPresenter(
                 *block,
                 readySequence,
                 mountedCameraToggleSequence,
+                hudToggleSequence,
                 frame);
             (void)channel.SignalPresenterUpdate();
 

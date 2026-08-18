@@ -140,15 +140,19 @@ struct OpenXRQuickMenuMirrorState
         stereo::QuickMenuSelection::None;
     OpenXRPresentationPose panelPose = {};
     OpenXRPresentationPose utilityPose = {};
+    OpenXRPresentationPose commandPose = {};
     OpenXRPresentationPose cursorPose = {};
     float panelWidthMeters = 0.0F;
     float panelHeightMeters = 0.0F;
     float utilityWidthMeters = 0.0F;
     float utilityHeightMeters = 0.0F;
+    float commandWidthMeters = 0.0F;
+    float commandHeightMeters = 0.0F;
     float cursorWidthMeters = 0.0F;
     float cursorHeightMeters = 0.0F;
     ID3D11Texture2D* menuTexture = nullptr;
     ID3D11Texture2D* utilityTexture = nullptr;
+    ID3D11Texture2D* commandTexture = nullptr;
     ID3D11Texture2D* cursorTexture = nullptr;
 };
 

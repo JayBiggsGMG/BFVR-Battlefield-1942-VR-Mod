@@ -23,6 +23,10 @@ enum class QuickMenuSelection : std::uint32_t
     CameraF10,
     CameraF11,
     CameraF12,
+    RadioRoger,
+    RadioNegative,
+    RadioGoGoGo,
+    ToggleHud,
     MountedCameraDecouple,
     SwapKit,
     VrSettings,
@@ -39,6 +43,18 @@ constexpr std::uint32_t kQuickMenuUtilityTextureWidth = 512;
 constexpr std::uint32_t kQuickMenuUtilityTextureHeight = 64;
 constexpr std::size_t kQuickMenuUtilityButtonCount = 3;
 constexpr std::size_t kQuickMenuUtilityVisualCount = 8;
+constexpr std::uint32_t kQuickMenuCommandTextureWidth = 86;
+constexpr std::uint32_t kQuickMenuCommandTextureHeight = 425;
+constexpr std::size_t kQuickMenuCommandButtonCount = 4;
+constexpr std::size_t kQuickMenuCommandVisualCount = 5;
+constexpr float kQuickMenuCommandWidthMeters =
+    kQuickMenuWidthMeters *
+    static_cast<float>(kQuickMenuCommandTextureWidth) /
+    static_cast<float>(kQuickMenuTextureSize);
+constexpr float kQuickMenuCommandHeightMeters =
+    kQuickMenuHeightMeters *
+    static_cast<float>(kQuickMenuCommandTextureHeight) /
+    static_cast<float>(kQuickMenuTextureSize);
 constexpr float kQuickMenuUtilityGapMeters = 0.010F;
 constexpr float kQuickMenuUtilityHeightMeters =
     kQuickMenuWidthMeters *
@@ -72,6 +88,7 @@ struct QuickMenuInteractionSnapshot
     bool visible = false;
     bool pointerVisible = false;
     bool pointerOnUtilityStrip = false;
+    bool pointerOnCommandColumn = false;
     float pointerU = 0.0F;
     float pointerV = 0.0F;
     Pose panelPose = {};
@@ -102,6 +119,7 @@ private:
     bool visible_ = false;
     bool pointerVisible_ = false;
     bool pointerOnUtilityStrip_ = false;
+    bool pointerOnCommandColumn_ = false;
     bool blockedUntilRelease_ = false;
 };
 
@@ -113,7 +131,14 @@ private:
     float normalizedX,
     float normalizedY) noexcept;
 
+[[nodiscard]] QuickMenuSelection QuickMenuCommandSelectionAt(
+    float normalizedX,
+    float normalizedY) noexcept;
+
 [[nodiscard]] bool IsQuickMenuUtilitySelection(
+    QuickMenuSelection selection) noexcept;
+
+[[nodiscard]] bool IsQuickMenuCommandSelection(
     QuickMenuSelection selection) noexcept;
 
 [[nodiscard]] const wchar_t* QuickMenuSelectionName(
@@ -131,7 +156,17 @@ private:
 [[nodiscard]] Pose MakeQuickMenuUtilityPose(
     const Pose& panelPose) noexcept;
 
+[[nodiscard]] Pose MakeQuickMenuCommandPose(
+    const Pose& panelPose) noexcept;
+
 [[nodiscard]] Pose MakeQuickMenuUtilityCursorPose(
+    const Pose& panelPose,
+    float pointerU,
+    float pointerV,
+    float cursorWidthMeters,
+    float cursorHeightMeters) noexcept;
+
+[[nodiscard]] Pose MakeQuickMenuCommandCursorPose(
     const Pose& panelPose,
     float pointerU,
     float pointerV,

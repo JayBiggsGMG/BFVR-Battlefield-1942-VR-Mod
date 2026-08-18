@@ -22,8 +22,17 @@ constexpr BYTE kAnimatedMeshDrawPrefix[] = {
 
 using AnimatedMeshDrawFn = void(__thiscall*)(void*, void*, float);
 
-thread_local bfvr::stereo::D3D8FirstPersonPartKind g_currentPartKind =
-    bfvr::stereo::D3D8FirstPersonPartKind::UnknownOrCombined;
+struct CurrentAnimatedMeshContext
+{
+    void* animatedMesh = nullptr;
+    bfvr::stereo::D3D8FirstPersonPartKind partKind =
+        bfvr::stereo::D3D8FirstPersonPartKind::UnknownOrCombined;
+    bool classificationResolved = false;
+};
+
+thread_local CurrentAnimatedMeshContext g_currentAnimatedMesh = {};
+thread_local bfvr::stereo::D3D8FirstPersonPartClassificationCache
+    g_partClassificationCache = {};
 
 bool HasExpectedPrefix(const void* target) noexcept
 {
@@ -161,8 +170,19 @@ public:
         original_ = nullptr;
         target_ = nullptr;
         appendLog_ = nullptr;
-        g_currentPartKind =
-            bfvr::stereo::D3D8FirstPersonPartKind::UnknownOrCombined;
+        g_currentAnimatedMesh = {};
+        g_partClassificationCache.Clear();
+    }
+
+    bfvr::stereo::D3D8FirstPersonPartKind ReadCurrentPartKind() noexcept
+    {
+        if (!g_currentAnimatedMesh.classificationResolved)
+        {
+            g_currentAnimatedMesh.partKind =
+                ClassifyCached(g_currentAnimatedMesh.animatedMesh);
+            g_currentAnimatedMesh.classificationResolved = true;
+        }
+        return g_currentAnimatedMesh.partKind;
     }
 
 private:
@@ -178,68 +198,129 @@ private:
             return;
         }
         InterlockedIncrement(&context->activeCallbacks_);
-        const auto previous = g_currentPartKind;
-        g_currentPartKind = Classify(animatedMesh);
+        const CurrentAnimatedMeshContext previous = g_currentAnimatedMesh;
+        g_currentAnimatedMesh = {};
+        g_currentAnimatedMesh.animatedMesh = animatedMesh;
         __try
         {
             context->original_(animatedMesh, renderContext, lodDistance);
         }
         __finally
         {
-            g_currentPartKind = previous;
+            g_currentAnimatedMesh = previous;
             InterlockedDecrement(&context->activeCallbacks_);
         }
     }
 
-    static bfvr::stereo::D3D8FirstPersonPartKind Classify(
-        void* animatedMesh) noexcept
+    static bool ReadTemplateIdentity(
+        void* animatedMesh,
+        const void*& meshTemplate,
+        bfvr::stereo::D3D8FirstPersonPartTemplateCacheKey& key) noexcept
     {
-        using bfvr::stereo::ClassifyD3D8FirstPersonPartTemplateName;
-        using bfvr::stereo::D3D8FirstPersonPartKind;
+        meshTemplate = nullptr;
+        key = {};
         if (animatedMesh == nullptr)
         {
-            return D3D8FirstPersonPartKind::UnknownOrCombined;
+            return false;
         }
         __try
         {
             const auto* const mesh =
                 static_cast<const std::byte*>(animatedMesh);
-            const void* const meshTemplate =
-                *reinterpret_cast<void* const*>(
-                    mesh + kAnimatedMeshTemplateOffset);
+            meshTemplate = *reinterpret_cast<void* const*>(
+                mesh + kAnimatedMeshTemplateOffset);
             if (meshTemplate == nullptr)
             {
-                return D3D8FirstPersonPartKind::UnknownOrCombined;
+                return false;
             }
+            const auto* const nameStorage =
+                static_cast<const std::byte*>(meshTemplate) +
+                kAnimatedMeshTemplateNameOffset;
+            key.templateAddress = reinterpret_cast<std::uintptr_t>(
+                meshTemplate);
+            std::memcpy(
+                key.nameStorageIdentity.data(),
+                nameStorage,
+                sizeof(key.nameStorageIdentity));
+            return true;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            meshTemplate = nullptr;
+            key = {};
+            return false;
+        }
+    }
+
+    static bool ClassifyTemplate(
+        const void* meshTemplate,
+        bfvr::stereo::D3D8FirstPersonPartKind& partKind) noexcept
+    {
+        using bfvr::stereo::ClassifyD3D8FirstPersonPartTemplateName;
+        using bfvr::stereo::D3D8FirstPersonPartKind;
+        partKind = D3D8FirstPersonPartKind::UnknownOrCombined;
+        if (meshTemplate == nullptr)
+        {
+            return false;
+        }
+        __try
+        {
             const auto* const nameStorage =
                 static_cast<const std::byte*>(meshTemplate) +
                 kAnimatedMeshTemplateNameOffset;
             std::array<char, 128> name = {};
             std::size_t length = 0;
+            bool validName = false;
             if (CopyPrintableAscii(
                     reinterpret_cast<const char*>(nameStorage),
                     name,
                     length))
             {
-                const auto kind = ClassifyD3D8FirstPersonPartTemplateName(
+                validName = true;
+                partKind = ClassifyD3D8FirstPersonPartTemplateName(
                     std::string_view(name.data(), length));
-                if (kind == D3D8FirstPersonPartKind::SeparateHand)
+                if (partKind == D3D8FirstPersonPartKind::SeparateHand)
                 {
-                    return kind;
+                    return true;
                 }
             }
             const char* const externalName =
                 *reinterpret_cast<const char* const*>(nameStorage);
             if (CopyPrintableAscii(externalName, name, length))
             {
-                return ClassifyD3D8FirstPersonPartTemplateName(
+                partKind = ClassifyD3D8FirstPersonPartTemplateName(
                     std::string_view(name.data(), length));
+                return true;
             }
+            return validName;
         }
         __except (EXCEPTION_EXECUTE_HANDLER)
         {
+            return false;
         }
-        return D3D8FirstPersonPartKind::UnknownOrCombined;
+    }
+
+    static bfvr::stereo::D3D8FirstPersonPartKind ClassifyCached(
+        void* animatedMesh) noexcept
+    {
+        using bfvr::stereo::D3D8FirstPersonPartKind;
+        const void* meshTemplate = nullptr;
+        bfvr::stereo::D3D8FirstPersonPartTemplateCacheKey key = {};
+        if (!ReadTemplateIdentity(animatedMesh, meshTemplate, key))
+        {
+            return D3D8FirstPersonPartKind::UnknownOrCombined;
+        }
+        D3D8FirstPersonPartKind partKind =
+            D3D8FirstPersonPartKind::UnknownOrCombined;
+        if (g_partClassificationCache.Find(key, partKind))
+        {
+            return partKind;
+        }
+        if (ClassifyTemplate(meshTemplate, partKind))
+        {
+            g_partClassificationCache.Store(key, partKind);
+        }
+        return partKind;
     }
 
     void WriteLog(const wchar_t* message) const noexcept
@@ -282,7 +363,7 @@ void StopD3D8FirstPersonPartContext() noexcept
 
 stereo::D3D8FirstPersonPartKind ReadD3D8FirstPersonPartKind() noexcept
 {
-    return g_currentPartKind;
+    return g_partContext.ReadCurrentPartKind();
 }
 
 } // namespace bfvr

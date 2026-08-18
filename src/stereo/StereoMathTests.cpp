@@ -2021,6 +2021,34 @@ void TestBF1942SemanticDrawPolicy()
         Fail(test, "magnified world soldier was suppressible as first-person arms");
     }
     using bfvr::stereo::D3D8FirstPersonPartKind;
+    if (!bfvr::stereo::ShouldClassifyBF1942FirstPersonPartDraw(
+            true,
+            exactFirstPersonArm,
+            false,
+            true) ||
+        bfvr::stereo::ShouldClassifyBF1942FirstPersonPartDraw(
+            true,
+            exactFirstPersonArm,
+            true,
+            true) ||
+        bfvr::stereo::ShouldClassifyBF1942FirstPersonPartDraw(
+            true,
+            exactFirstPersonArm,
+            false,
+            false) ||
+        bfvr::stereo::ShouldClassifyBF1942FirstPersonPartDraw(
+            true,
+            ordinarySoldier,
+            false,
+            true) ||
+        bfvr::stereo::ShouldClassifyBF1942FirstPersonPartDraw(
+            false,
+            exactFirstPersonArm,
+            false,
+            true))
+    {
+        Fail(test, "first-person part classification was not limited to hands-only candidate draws");
+    }
     if (!bfvr::stereo::ShouldSuppressBF1942FirstPersonArmDraw(
             true,
             exactFirstPersonArm,
@@ -2073,6 +2101,41 @@ void TestBF1942SemanticDrawPolicy()
             "1PMonCal_body") != D3D8FirstPersonPartKind::UnknownOrCombined)
     {
         Fail(test, "first-person part template classification changed");
+    }
+    bfvr::stereo::D3D8FirstPersonPartClassificationCache partCache;
+    const bfvr::stereo::D3D8FirstPersonPartTemplateCacheKey handCacheKey = {
+        0x1000U,
+        {0x694C5031U, 0x65487466U, 0x646E6148U, 0x00000000U}};
+    D3D8FirstPersonPartKind cachedPartKind =
+        D3D8FirstPersonPartKind::UnknownOrCombined;
+    if (partCache.Find(handCacheKey, cachedPartKind))
+    {
+        Fail(test, "empty first-person part cache reported a hit");
+    }
+    partCache.Store(handCacheKey, D3D8FirstPersonPartKind::SeparateHand);
+    if (!partCache.Find(handCacheKey, cachedPartKind) ||
+        cachedPartKind != D3D8FirstPersonPartKind::SeparateHand)
+    {
+        Fail(test, "first-person hand classification was not cached");
+    }
+    auto recycledTemplateKey = handCacheKey;
+    recycledTemplateKey.nameStorageIdentity[3] = 0x72657632U;
+    if (partCache.Find(recycledTemplateKey, cachedPartKind))
+    {
+        Fail(test, "first-person part cache ignored changed template-name storage");
+    }
+    partCache.Store(
+        recycledTemplateKey,
+        D3D8FirstPersonPartKind::UnknownOrCombined);
+    if (!partCache.Find(recycledTemplateKey, cachedPartKind) ||
+        cachedPartKind != D3D8FirstPersonPartKind::UnknownOrCombined)
+    {
+        Fail(test, "negative first-person part classification was not cached");
+    }
+    partCache.Clear();
+    if (partCache.Find(recycledTemplateKey, cachedPartKind))
+    {
+        Fail(test, "first-person part cache clear retained an entry");
     }
     signature = {
         0x0066800A,
