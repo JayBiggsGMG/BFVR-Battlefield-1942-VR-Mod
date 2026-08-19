@@ -64,13 +64,13 @@ constexpr DWORD kD3DTextureStageColorArg1 = 2;
 constexpr DWORD kD3DTextureStageColorArg2 = 3;
 constexpr DWORD kD3DTextureStageAlphaOp = 4;
 constexpr DWORD kD3DTextureStageAlphaArg1 = 5;
+constexpr DWORD kD3DTextureStageAlphaArg2 = 6;
 constexpr DWORD kD3DTextureStageAddressU = 13;
 constexpr DWORD kD3DTextureStageAddressV = 14;
 constexpr DWORD kD3DTextureStageMagFilter = 16;
 constexpr DWORD kD3DTextureStageMinFilter = 17;
 constexpr DWORD kD3DTextureStageMipFilter = 18;
 constexpr DWORD kD3DTextureOpDisable = 1;
-constexpr DWORD kD3DTextureOpSelectArg1 = 2;
 constexpr DWORD kD3DTextureOpModulate = 4;
 constexpr DWORD kD3DTextureArgumentDiffuse = 0;
 constexpr DWORD kD3DTextureArgumentTexture = 2;
@@ -179,12 +179,13 @@ struct SavedState
         {kD3DRenderStateFogEnable, 0},
         {kD3DRenderStateLighting, 0},
         {kD3DRenderStateZWriteEnable, 0}}};
-    std::array<TextureStageStateValue, 11> textureStageStates = {{
+    std::array<TextureStageStateValue, 12> textureStageStates = {{
         {0, kD3DTextureStageColorOp, 0},
         {0, kD3DTextureStageColorArg1, 0},
         {0, kD3DTextureStageColorArg2, 0},
         {0, kD3DTextureStageAlphaOp, 0},
         {0, kD3DTextureStageAlphaArg1, 0},
+        {0, kD3DTextureStageAlphaArg2, 0},
         {0, kD3DTextureStageAddressU, 0},
         {0, kD3DTextureStageAddressV, 0},
         {0, kD3DTextureStageMagFilter, 0},
@@ -598,9 +599,12 @@ bool ApplyCrosshairState(const DeviceApi& api, void* device) noexcept
             device, 0, kD3DTextureStageColorArg2,
             kD3DTextureArgumentDiffuse)) &&
         SUCCEEDED(api.setTextureStageState(
-            device, 0, kD3DTextureStageAlphaOp, kD3DTextureOpSelectArg1)) &&
+            device, 0, kD3DTextureStageAlphaOp, kD3DTextureOpModulate)) &&
         SUCCEEDED(api.setTextureStageState(
             device, 0, kD3DTextureStageAlphaArg1, kD3DTextureArgumentTexture)) &&
+        SUCCEEDED(api.setTextureStageState(
+            device, 0, kD3DTextureStageAlphaArg2,
+            kD3DTextureArgumentDiffuse)) &&
         SUCCEEDED(api.setTextureStageState(
             device, 0, kD3DTextureStageAddressU, kD3DTextureAddressClamp)) &&
         SUCCEEDED(api.setTextureStageState(

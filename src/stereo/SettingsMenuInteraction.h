@@ -3,6 +3,7 @@
 #include "settings/UserSettings.h"
 #include "stereo/QuickMenuInteraction.h"
 #include "stereo/UiPointerMath.h"
+#include "stereo/UiPointerSmoothing.h"
 
 #include <array>
 #include <cstddef>
@@ -47,8 +48,10 @@ enum class SettingsMenuSelection : std::uint32_t
     ShowPrevious,
     ShowNext,
     DeathCameraComfortEnabled,
+    MenuPointerSmoothingEnabled,
     CrosshairColorPrevious,
     CrosshairColorNext,
+    CrosshairOpacity,
     OffHandGripPrevious,
     OffHandGripNext,
     HandCrosshairPrevious,
@@ -135,7 +138,9 @@ constexpr std::array<float, 3> kSettingsMenuVrPageThreeRowCentersPixels = {
 constexpr float kSettingsMenuControlsGripRowCenterPixels = 150.0F;
 constexpr std::array<float, 3>
     kSettingsMenuControlsCrosshairRowCentersPixels = {
-        300.0F, 470.0F, 640.0F};
+        205.0F, 335.0F, 465.0F};
+constexpr float kSettingsMenuControlsCrosshairColorRowCenterPixels = 595.0F;
+constexpr float kSettingsMenuControlsCrosshairOpacityRowCenterPixels = 725.0F;
 constexpr float kSettingsMenuControlsVehicleAimSliderCenterPixels = 390.0F;
 constexpr std::array<float, 7> kSettingsMenuControlsToggleRowCentersPixels = {
     335.0F, 410.0F, 485.0F, 560.0F, 635.0F, 710.0F, 785.0F};
@@ -198,11 +203,13 @@ private:
     void SetTurnSpeedFromPointer(float pointerU) noexcept;
     void SetVehicleMotionAimSensitivityFromPointer(float pointerU) noexcept;
     void SetHeightAdjustmentFromPointer(float pointerU) noexcept;
+    void SetCrosshairOpacityFromPointer(float pointerU) noexcept;
     void SetGraphicsSliderFromPointer(
         SettingsMenuSelection selection,
         float pointerU) noexcept;
 
     UiMenuAnchorTracker anchor_ = {};
+    UiPointerSmoother pointerSmoother_ = {};
     Pose panelPose_ = {};
     SettingsMenuTab tab_ = SettingsMenuTab::VrSettings;
     SettingsMenuSelection hovered_ = SettingsMenuSelection::None;

@@ -669,19 +669,6 @@ void QuickMenuInteraction::Update(
         utilityHit.has_value();
     pointerOnUtilityStrip_ = utilityHit.has_value();
     pointerOnCommandColumn_ = commandHit.has_value();
-    hovered_ = menuHit.has_value()
-        ? QuickMenuSelectionAt(
-            menuHit->normalizedX,
-            menuHit->normalizedY)
-        : commandHit.has_value()
-        ? QuickMenuCommandSelectionAt(
-            commandHit->normalizedX,
-            commandHit->normalizedY)
-        : utilityHit.has_value()
-        ? QuickMenuUtilitySelectionAt(
-            utilityHit->normalizedX,
-            utilityHit->normalizedY)
-        : QuickMenuSelection::None;
     const auto& hit = menuHit.has_value()
         ? menuHit
         : commandHit.has_value()
@@ -689,14 +676,54 @@ void QuickMenuInteraction::Update(
         : utilityHit;
     if (hit.has_value())
     {
-        pointerU_ = hit->normalizedX;
-        pointerV_ = hit->normalizedY;
+        UiPointerSmoother& smoother = menuHit.has_value()
+            ? menuPointerSmoother_
+            : commandHit.has_value()
+            ? commandPointerSmoother_
+            : utilityPointerSmoother_;
+        const UiPointerPoint filtered = smoother.Update(
+            hit->normalizedX,
+            hit->normalizedY,
+            input.predictedDisplayTime,
+            input.menuPointerSmoothingEnabled);
+        pointerU_ = filtered.x;
+        pointerV_ = filtered.y;
+        hovered_ = menuHit.has_value()
+            ? QuickMenuSelectionAt(pointerU_, pointerV_)
+            : commandHit.has_value()
+            ? QuickMenuCommandSelectionAt(pointerU_, pointerV_)
+            : QuickMenuUtilitySelectionAt(pointerU_, pointerV_);
+        if (menuHit.has_value())
+        {
+            commandPointerSmoother_.Reset();
+            utilityPointerSmoother_.Reset();
+        }
+        else if (commandHit.has_value())
+        {
+            menuPointerSmoother_.Reset();
+            utilityPointerSmoother_.Reset();
+        }
+        else
+        {
+            menuPointerSmoother_.Reset();
+            commandPointerSmoother_.Reset();
+        }
+    }
+    else
+    {
+        hovered_ = QuickMenuSelection::None;
+        menuPointerSmoother_.Reset();
+        utilityPointerSmoother_.Reset();
+        commandPointerSmoother_.Reset();
     }
 }
 
 void QuickMenuInteraction::Reset() noexcept
 {
     panelPose_ = {};
+    menuPointerSmoother_.Reset();
+    utilityPointerSmoother_.Reset();
+    commandPointerSmoother_.Reset();
     lastDisplayTime_ = 0;
     hovered_ = QuickMenuSelection::None;
     released_ = QuickMenuSelection::None;
@@ -735,6 +762,9 @@ QuickMenuSelection QuickMenuInteraction::TakeReleasedSelection() noexcept
 void QuickMenuInteraction::Cancel(bool blockUntilRelease) noexcept
 {
     visible_ = false;
+    menuPointerSmoother_.Reset();
+    utilityPointerSmoother_.Reset();
+    commandPointerSmoother_.Reset();
     pointerVisible_ = false;
     pointerOnUtilityStrip_ = false;
     pointerOnCommandColumn_ = false;

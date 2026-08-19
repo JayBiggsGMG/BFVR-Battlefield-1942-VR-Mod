@@ -308,7 +308,9 @@ public:
             state.endpoint = *endpoint;
             state.angularDiameterDegrees = angularDiameterDegrees_;
             state.tintArgb =
-                bfvr::stereo::CrosshairTintArgb(settings.crosshairColor);
+                bfvr::stereo::CrosshairTintArgb(
+                    settings.crosshairColor,
+                    settings.crosshairOpacityPercent);
             state.crosshairVisible =
                 mode == bfvr::settings::WorldCrosshairMode::On;
             state.hitMarkerVisible =

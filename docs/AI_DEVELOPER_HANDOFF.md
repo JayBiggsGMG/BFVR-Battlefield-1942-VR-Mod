@@ -300,6 +300,19 @@ not change infantry, ground vehicles, boats, turrets, or mounted weapons.
 SteamVR binding changes are runtime-local. Meta OpenXR and VDXR use BFVR's
 suggested OpenXR bindings, not a user's SteamVR-only customization.
 
+Menu controller pointers share `UiPointerSmoother`, a normalized 2D adaptive
+low-pass with a 0.0015 output deadzone. The Quick Menu maintains independent
+history for its main, command, and utility surfaces; VR Settings and native
+BF1942 menu injection each maintain their own history. Rendering, hover, drag,
+and activation always use the same filtered coordinates. Reset history on
+tracking/panel discontinuities and keep the saved default-on toggle live; do
+not move this policy into startup, OpenXR runtime selection, or Oasis setup.
+
+All 3D crosshair controls are grouped on Controls page 2. The opacity setting
+is strictly 5..100% in 5% steps and changes the premultiplied ARGB tint used by
+both the world aiming crosshair and hit marker. The native scoped RGB synchronization
+remains color-only.
+
 ## Currently validated compatibility
 
 Base-package tests include:

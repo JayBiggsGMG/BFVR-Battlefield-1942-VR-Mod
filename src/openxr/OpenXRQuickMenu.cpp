@@ -177,6 +177,8 @@ bool OpenXRQuickMenu::Initialize(
         userSettingsRuntime_->Initialize(payloadDirectory);
     startupSettingsValues_ = settings::DecodeUserSettings(
         userSettingsRuntime_->Current());
+    menuPointerSmoothingEnabled_ =
+        startupSettingsValues_.menuPointerSmoothingEnabled;
     WriteLog(
         L"BFVR startup user configuration selected %s at %s.",
         settings::UserSettingsLoadStatusName(startupSettingsStatus),
@@ -395,6 +397,7 @@ void OpenXRQuickMenu::Update(
     input.headPose = ToPose(frame.headPose);
     const OpenXRControllerHandState& right = frame.controllerInput.hands[1];
     input.rightPrimaryHeld = right.primaryPressed;
+    input.menuPointerSmoothingEnabled = menuPointerSmoothingEnabled_;
     input.rightGripTracked = right.gripActive &&
         right.gripPositionValid && right.gripPositionTracked;
     input.rightAimTracked = right.aimActive &&
@@ -441,6 +444,11 @@ void OpenXRQuickMenu::Update(
                 settings::DecodeUserSettings(userSettingsSession_.Working());
             const bool saved = userSettingsRuntime_ != nullptr &&
                 userSettingsRuntime_->Commit(userSettingsSession_.Working());
+            if (saved)
+            {
+                menuPointerSmoothingEnabled_ =
+                    savedValues.menuPointerSmoothingEnabled;
+            }
             const bool restartRequired = saved &&
                 settings::UserSettingsRequireRestart(
                     startupSettingsValues_,
@@ -1050,6 +1058,7 @@ void OpenXRQuickMenu::Shutdown()
     userSettingsSession_.Cancel();
     userSettingsRuntime_ = nullptr;
     startupSettingsValues_ = {};
+    menuPointerSmoothingEnabled_ = true;
     settingsInteraction_.Reset();
     settingsArt_.Reset();
     DestroySwapchain(settingsVersionSwapchain_);

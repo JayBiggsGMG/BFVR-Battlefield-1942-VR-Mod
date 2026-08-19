@@ -152,6 +152,7 @@ private:
     settings::UserSettingsRuntime* userSettingsRuntime_ = nullptr;
     settings::UserSettingsSession userSettingsSession_ = {};
     settings::UserSettingsValues startupSettingsValues_ = {};
+    bool menuPointerSmoothingEnabled_ = true;
     stereo::SettingsMenuSnapshot renderedSettingsState_ = {};
     OpenXRLogCallback logCallback_ = nullptr;
     void* logContext_ = nullptr;

@@ -233,7 +233,7 @@ bool TestProductionSeedAndTypedValues(const std::wstring& directory)
     }
     const auto defaults = store.Defaults();
     const auto decodedDefaults = bfvr::settings::DecodeUserSettings(defaults);
-    if (defaults.values.size() != 37 ||
+    if (defaults.values.size() != 39 ||
         decodedDefaults.playMode != bfvr::settings::PlayMode::Seated ||
         decodedDefaults.artificialTurnMode !=
             bfvr::settings::ArtificialTurnMode::Smooth ||
@@ -256,6 +256,7 @@ bool TestProductionSeedAndTypedValues(const std::wstring& directory)
         !decodedDefaults.controllerHapticsEnabled ||
         !decodedDefaults.killSoundEnabled ||
         !decodedDefaults.sniperScopeSmoothingEnabled ||
+        !decodedDefaults.menuPointerSmoothingEnabled ||
         decodedDefaults.offHandGripStyle !=
             bfvr::settings::OffHandGripStyle::Hold ||
         decodedDefaults.handWeaponCrosshair !=
@@ -266,6 +267,7 @@ bool TestProductionSeedAndTypedValues(const std::wstring& directory)
             bfvr::settings::WorldCrosshairMode::On ||
         decodedDefaults.crosshairColor !=
             bfvr::settings::CrosshairColor::Green ||
+        decodedDefaults.crosshairOpacityPercent != 100 ||
         !decodedDefaults.fxaaEnabled ||
         decodedDefaults.fxaaSharpeningPercent != 30 ||
         !decodedDefaults.ambientOcclusionEnabled ||
@@ -323,6 +325,7 @@ bool TestProductionSeedAndTypedValues(const std::wstring& directory)
     changed.controllerHapticsEnabled = false;
     changed.killSoundEnabled = false;
     changed.sniperScopeSmoothingEnabled = false;
+    changed.menuPointerSmoothingEnabled = false;
     changed.offHandGripStyle = bfvr::settings::OffHandGripStyle::Toggle;
     changed.handWeaponCrosshair =
         bfvr::settings::WorldCrosshairMode::HitMarkerOnly;
@@ -331,6 +334,7 @@ bool TestProductionSeedAndTypedValues(const std::wstring& directory)
     changed.pointerItemCrosshair =
         bfvr::settings::WorldCrosshairMode::HitMarkerOnly;
     changed.crosshairColor = bfvr::settings::CrosshairColor::Purple;
+    changed.crosshairOpacityPercent = 35;
     changed.fxaaEnabled = false;
     changed.fxaaSharpeningPercent = 80;
     changed.ambientOcclusionEnabled = false;
@@ -354,11 +358,14 @@ bool TestProductionSeedAndTypedValues(const std::wstring& directory)
     auto legacySettings = defaults;
     legacySettings.values["show_arms"] = "false";
     legacySettings.values["3d_crosshair_color"] = "magenta";
+    legacySettings.values["3d_crosshair_opacity_percent"] = "0";
     const auto legacyDecoded =
         bfvr::settings::DecodeUserSettings(legacySettings);
     if (legacyDecoded.firstPersonVisibility !=
             bfvr::settings::FirstPersonVisibility::NoHandsOrArms ||
-        legacyDecoded.crosshairColor != bfvr::settings::CrosshairColor::Pink)
+        legacyDecoded.crosshairColor != bfvr::settings::CrosshairColor::Pink ||
+        legacyDecoded.crosshairOpacityPercent !=
+            bfvr::settings::kDefaultCrosshairOpacityPercent)
     {
         return false;
     }
@@ -426,6 +433,10 @@ bool TestProductionSeedAndTypedValues(const std::wstring& directory)
             std::string::npos &&
         contents.find("sniper_scope_smoothing_enabled = false") !=
             std::string::npos &&
+        contents.find("menu_pointer_smoothing_enabled = false") !=
+            std::string::npos &&
+        contents.find("native menus, the Quick Menu") !=
+            std::string::npos &&
         contents.find("deliberate movement catches up to raw immediately") !=
             std::string::npos &&
         contents.find("off_hand_grip_style = toggle") != std::string::npos &&
@@ -439,6 +450,10 @@ bool TestProductionSeedAndTypedValues(const std::wstring& directory)
             "knife_throwable_gadget_3d_crosshair = hit_marker_only") !=
             std::string::npos &&
         contents.find("3d_crosshair_color = purple") !=
+            std::string::npos &&
+        contents.find("3d_crosshair_opacity_percent = 35") !=
+            std::string::npos &&
+        contents.find("Zero is deliberately rejected") !=
             std::string::npos &&
         contents.find("fxaa_enabled = false") != std::string::npos &&
         contents.find("fxaa_sharpening_percent = 80") !=

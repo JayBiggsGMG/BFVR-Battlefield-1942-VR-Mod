@@ -61,6 +61,10 @@ constexpr std::int32_t kMinimumColorSaturationPercent = -100;
 constexpr std::int32_t kMaximumColorSaturationPercent = 100;
 constexpr std::int32_t kColorSaturationStepPercent = 1;
 constexpr std::int32_t kDefaultColorSaturationPercent = 0;
+constexpr std::uint32_t kMinimumCrosshairOpacityPercent = 5;
+constexpr std::uint32_t kMaximumCrosshairOpacityPercent = 100;
+constexpr std::uint32_t kCrosshairOpacityStepPercent = 5;
+constexpr std::uint32_t kDefaultCrosshairOpacityPercent = 100;
 
 enum class OffHandGripStyle : std::uint32_t
 {
@@ -146,12 +150,15 @@ struct UserSettingsValues
     bool controllerHapticsEnabled = true;
     bool killSoundEnabled = true;
     bool sniperScopeSmoothingEnabled = true;
+    bool menuPointerSmoothingEnabled = true;
     OffHandGripStyle offHandGripStyle = OffHandGripStyle::Hold;
     WorldCrosshairMode handWeaponCrosshair =
         WorldCrosshairMode::HitMarkerOnly;
     WorldCrosshairMode mountedWeaponCrosshair = WorldCrosshairMode::On;
     WorldCrosshairMode pointerItemCrosshair = WorldCrosshairMode::On;
     CrosshairColor crosshairColor = CrosshairColor::Green;
+    std::uint32_t crosshairOpacityPercent =
+        kDefaultCrosshairOpacityPercent;
     bool fxaaEnabled = true;
     std::uint32_t fxaaSharpeningPercent = kDefaultFxaaSharpeningPercent;
     bool ambientOcclusionEnabled = true;

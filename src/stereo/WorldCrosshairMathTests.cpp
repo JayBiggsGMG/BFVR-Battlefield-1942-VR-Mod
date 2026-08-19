@@ -167,7 +167,11 @@ bool TestCrosshairTints()
         bfvr::stereo::CrosshairTintArgb(CrosshairColor::Orange) ==
             0xFFFF8A30U &&
         bfvr::stereo::CrosshairTintArgb(CrosshairColor::Yellow) ==
-            0xFFFFFF00U;
+            0xFFFFFF00U &&
+        bfvr::stereo::CrosshairTintArgb(CrosshairColor::Green, 35) ==
+            0x59025900U &&
+        bfvr::stereo::CrosshairTintArgb(CrosshairColor::White, 0) ==
+            0x0D0D0D0DU;
 }
 
 } // namespace

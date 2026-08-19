@@ -79,6 +79,7 @@ if(BFVR_PRESENTER_ONLY)
     stereo/SettingsMenuInteraction.cpp
     stereo/ScopeViewMath.cpp
     stereo/UiPointerMath.cpp
+    stereo/UiPointerSmoothing.cpp
   )
   add_executable(BFVROpenXRProbe
     client/QuickMenuArt.cpp
@@ -101,6 +102,7 @@ if(BFVR_PRESENTER_ONLY)
     stereo/SettingsMenuInteraction.cpp
     stereo/ScopeViewMath.cpp
     stereo/UiPointerMath.cpp
+    stereo/UiPointerSmoothing.cpp
   )
   add_executable(BFVRSharedTextureConsumerProbe
     client/MainMenuOverlay.cpp
@@ -310,6 +312,7 @@ add_library(BFVRStereoMath STATIC
   stereo/StereoMath.cpp
   stereo/TreeAngleSlicePolicy.cpp
   stereo/UiPointerMath.cpp
+  stereo/UiPointerSmoothing.cpp
   stereo/VehicleMotionAimMath.cpp
   stereo/WorldCrosshairMath.cpp
   stereo/WeaponPoseMath.cpp
@@ -522,6 +525,10 @@ add_executable(BFVRWorldCrosshairMathTests
   stereo/WorldCrosshairMathTests.cpp
 )
 
+add_executable(BFVRUiPointerSmoothingTests
+  stereo/UiPointerSmoothingTests.cpp
+)
+
 add_executable(BFVRRuntimeDiagnosticsTests
   client/D3D8RuntimeDiagnostics.cpp
   client/D3D8RuntimeDiagnosticsTests.cpp
@@ -542,7 +549,7 @@ add_executable(BFVRRfaInspect
   tools/RfaInspect.cpp
 )
 
-foreach(target BFVRClient BFVRD3D8To9FlatClient BFVRLoader BFVRBf42PlusPlusCompatibilityTests BFVRFrameLimiterOverrideTests BFVROpenXRProbe BFVRSharedTextureProducerProbe BFVRD3D8To9SharedSurfaceProbe BFVRAmbientOcclusionDepthProbe BFVRStereoMath BFVRStereoMathTests BFVRWaterReflectionTextureBasisTests BFVRProjectedShadowTextureTransformTests BFVRWeaponFireAimMathTests BFVRHandWeaponRecoilMathTests BFVROffHandSupportPolicyTests BFVRArmPoleVectorMathTests BFVRArmVrPoseMathTests BFVRMainMenuOverlayTests BFVRQuickMenuTests BFVRSettingsMenuTests BFVRUserSettingsTests BFVRUserSettingsSeedWriter BFVROpenXRHapticsTests BFVROpenXRControllerShortcutTests BFVROpenXRControllerBindingTests BFVRVehicleMotionAimMathTests BFVRDirectionalLocomotionTests BFVRComfortVignetteTests BFVRSurfaceVehicleDriveMathTests BFVRAircraftControlMathTests BFVRTrackingAnchorTests BFVRInfantryAuthoritativeAimTests BFVRInfantryPresentationTurnTests BFVRControllerInputCacheTests BFVRMountedCameraMathTests BFVRInfantryCameraMathTests BFVRScopeViewMathTests BFVROpenXRScopeOverlayLayerTests BFVRWorldCrosshairMathTests BFVRRuntimeDiagnosticsTests BFVRSharedControlChannelTests BFVRKillSoundEventPolicyTests BFVRRfaInspect)
+foreach(target BFVRClient BFVRD3D8To9FlatClient BFVRLoader BFVRBf42PlusPlusCompatibilityTests BFVRFrameLimiterOverrideTests BFVROpenXRProbe BFVRSharedTextureProducerProbe BFVRD3D8To9SharedSurfaceProbe BFVRAmbientOcclusionDepthProbe BFVRStereoMath BFVRStereoMathTests BFVRWaterReflectionTextureBasisTests BFVRProjectedShadowTextureTransformTests BFVRWeaponFireAimMathTests BFVRHandWeaponRecoilMathTests BFVROffHandSupportPolicyTests BFVRArmPoleVectorMathTests BFVRArmVrPoseMathTests BFVRMainMenuOverlayTests BFVRQuickMenuTests BFVRSettingsMenuTests BFVRUserSettingsTests BFVRUserSettingsSeedWriter BFVROpenXRHapticsTests BFVROpenXRControllerShortcutTests BFVROpenXRControllerBindingTests BFVRVehicleMotionAimMathTests BFVRDirectionalLocomotionTests BFVRComfortVignetteTests BFVRSurfaceVehicleDriveMathTests BFVRAircraftControlMathTests BFVRTrackingAnchorTests BFVRInfantryAuthoritativeAimTests BFVRInfantryPresentationTurnTests BFVRControllerInputCacheTests BFVRMountedCameraMathTests BFVRInfantryCameraMathTests BFVRScopeViewMathTests BFVROpenXRScopeOverlayLayerTests BFVRWorldCrosshairMathTests BFVRUiPointerSmoothingTests BFVRRuntimeDiagnosticsTests BFVRSharedControlChannelTests BFVRKillSoundEventPolicyTests BFVRRfaInspect)
   target_compile_definitions(${target} PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
   set_property(TARGET ${target} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
   if(MSVC)
@@ -614,6 +621,7 @@ target_link_libraries(BFVRInfantryCameraMathTests PRIVATE BFVRStereoMath)
 target_link_libraries(BFVRScopeViewMathTests PRIVATE BFVRStereoMath)
 target_link_libraries(BFVROpenXRScopeOverlayLayerTests PRIVATE BFVRStereoMath)
 target_link_libraries(BFVRWorldCrosshairMathTests PRIVATE BFVRStereoMath)
+target_link_libraries(BFVRUiPointerSmoothingTests PRIVATE BFVRStereoMath)
 target_include_directories(BFVRMainMenuOverlayTests PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}")
 target_include_directories(BFVRQuickMenuTests PRIVATE
@@ -740,6 +748,9 @@ if(BUILD_TESTING)
   add_test(
     NAME BFVRWorldCrosshairMathTests
     COMMAND BFVRWorldCrosshairMathTests)
+  add_test(
+    NAME BFVRUiPointerSmoothingTests
+    COMMAND BFVRUiPointerSmoothingTests)
   add_test(
     NAME BFVRRuntimeDiagnosticsTests
     COMMAND BFVRRuntimeDiagnosticsTests)

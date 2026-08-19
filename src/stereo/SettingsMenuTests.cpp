@@ -130,16 +130,24 @@ bool TestBounds()
             false) == SettingsMenuSelection::SwapAircraftSticks &&
         SettingsMenuSelectionAt(
             0.889F,
-            0.293F,
+            0.200F,
             false,
             false,
             SettingsMenuTab::Controls,
             false,
             1) == SettingsMenuSelection::HandCrosshairNext &&
         SettingsMenuSelectionAt(
-            0.889F, 0.625F, false, false,
+            0.889F, 0.454F, false, false,
             SettingsMenuTab::Controls, false, 1) ==
             SettingsMenuSelection::PointerItemCrosshairNext &&
+        SettingsMenuSelectionAt(
+            0.889F, 0.581F, false, false,
+            SettingsMenuTab::Controls, false, 1) ==
+            SettingsMenuSelection::CrosshairColorNext &&
+        SettingsMenuSelectionAt(
+            0.70F, 0.708F, false, false,
+            SettingsMenuTab::Controls, false, 1) ==
+            SettingsMenuSelection::CrosshairOpacity &&
         SettingsMenuSelectionAt(
             0.70F, 0.381F, true, false,
             SettingsMenuTab::Controls, false, 2) ==
@@ -153,9 +161,9 @@ bool TestBounds()
             SettingsMenuTab::VrSettings, false, 1) ==
             SettingsMenuSelection::DeathCameraComfortEnabled &&
         SettingsMenuSelectionAt(
-            0.889F, 0.684F, false, false,
+            0.57F, 0.684F, false, false,
             SettingsMenuTab::VrSettings, false, 1) ==
-            SettingsMenuSelection::CrosshairColorNext &&
+            SettingsMenuSelection::MenuPointerSmoothingEnabled &&
         SettingsMenuSelectionAt(
             0.57F,
             0.571F,
@@ -269,6 +277,7 @@ bool TestInteractionAndPlacement()
         bfvr::settings::MovementDirection::Character;
     interactionTestValues.handWeaponCrosshair =
         bfvr::settings::WorldCrosshairMode::On;
+    interactionTestValues.menuPointerSmoothingEnabled = false;
     interaction.SetValues(interactionTestValues);
     bfvr::stereo::QuickMenuFrameInput input = {};
     input.predictedDisplayTime = 1'000'000'000;
@@ -402,8 +411,7 @@ bool TestInteractionAndPlacement()
         return false;
     }
 
-    // Page 2 groups both comfort effects with the other live presentation
-    // controls, including the base tint shared by both 3D crosshair layers.
+    // Page 2 groups both comfort effects with the live menu-pointer toggle.
     state = interaction.Snapshot();
     AimAt(input, state.panelPose, state.widthMeters, 0.66F, 0.87F);
     Click(interaction, input);
@@ -439,10 +447,17 @@ bool TestInteractionAndPlacement()
         return false;
     }
     state = interaction.Snapshot();
-    AimAt(input, state.panelPose, state.widthMeters, 0.889F, 0.684F);
+    AimAt(input, state.panelPose, state.widthMeters, 0.57F, 0.684F);
     Click(interaction, input);
-    if (interaction.Snapshot().values.crosshairColor !=
-            bfvr::settings::CrosshairColor::Blue ||
+    if (!interaction.Snapshot().values.menuPointerSmoothingEnabled ||
+        !interaction.TakeValuesChanged())
+    {
+        return false;
+    }
+    state = interaction.Snapshot();
+    AimAt(input, state.panelPose, state.widthMeters, 0.57F, 0.684F);
+    Click(interaction, input);
+    if (interaction.Snapshot().values.menuPointerSmoothingEnabled ||
         !interaction.TakeValuesChanged())
     {
         return false;
@@ -519,7 +534,7 @@ bool TestInteractionAndPlacement()
     {
         return false;
     }
-    AimAt(input, state.panelPose, state.widthMeters, 0.889F, 0.293F);
+    AimAt(input, state.panelPose, state.widthMeters, 0.889F, 0.200F);
     input.predictedDisplayTime += 11'111'111;
     interaction.Update(input);
     Click(interaction, input);
@@ -536,10 +551,39 @@ bool TestInteractionAndPlacement()
         return false;
     }
     state = interaction.Snapshot();
-    AimAt(input, state.panelPose, state.widthMeters, 0.889F, 0.625F);
+    AimAt(input, state.panelPose, state.widthMeters, 0.889F, 0.454F);
     Click(interaction, input);
     if (interaction.Snapshot().values.pointerItemCrosshair !=
             bfvr::settings::WorldCrosshairMode::HitMarkerOnly ||
+        !interaction.TakeValuesChanged())
+    {
+        return false;
+    }
+    state = interaction.Snapshot();
+    AimAt(input, state.panelPose, state.widthMeters, 0.889F, 0.581F);
+    Click(interaction, input);
+    if (interaction.Snapshot().values.crosshairColor !=
+            bfvr::settings::CrosshairColor::Blue ||
+        !interaction.TakeValuesChanged())
+    {
+        return false;
+    }
+    state = interaction.Snapshot();
+    AimAt(input, state.panelPose, state.widthMeters, 0.70F, 0.708F);
+    Click(interaction, input);
+    if (interaction.Snapshot().values.crosshairOpacityPercent ==
+            bfvr::settings::kDefaultCrosshairOpacityPercent ||
+        interaction.Snapshot().values.crosshairOpacityPercent <
+            bfvr::settings::kMinimumCrosshairOpacityPercent ||
+        !interaction.TakeValuesChanged())
+    {
+        return false;
+    }
+    state = interaction.Snapshot();
+    AimAt(input, state.panelPose, state.widthMeters, 0.547F, 0.708F);
+    Click(interaction, input);
+    if (interaction.Snapshot().values.crosshairOpacityPercent !=
+            bfvr::settings::kMinimumCrosshairOpacityPercent ||
         !interaction.TakeValuesChanged())
     {
         return false;
@@ -847,7 +891,7 @@ bool TestArt(const wchar_t* directory)
     variant.values.firstPersonVisibility =
         bfvr::settings::FirstPersonVisibility::HandsOnly;
     variant.values.deathCameraComfortEnabled = false;
-    variant.values.crosshairColor = bfvr::settings::CrosshairColor::Pink;
+    variant.values.menuPointerSmoothingEnabled = false;
     if (!differs(variant))
     {
         return false;

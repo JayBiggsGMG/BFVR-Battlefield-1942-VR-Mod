@@ -3,9 +3,11 @@
 #include "client/ControllerInputCache.h"
 #include "client/ControllerHaptics.h"
 #include "presenter/SharedPresentationProtocol.h"
+#include "settings/UserSettings.h"
 #include "stereo/MainMenuOverlayLayout.h"
 #include "stereo/MainMenuScroll.h"
 #include "stereo/UiPointerMath.h"
+#include "stereo/UiPointerSmoothing.h"
 
 #include <MinHook.h>
 
@@ -48,6 +50,7 @@ constexpr float kUiDistanceMeters = 1.5F;
 constexpr float kUiWidthMeters = 1.6F;
 constexpr UINT kLogicalCanvasWidth = 800;
 constexpr UINT kLogicalCanvasHeight = 600;
+constexpr ULONGLONG kSettingsPollMilliseconds = 250;
 constexpr BYTE kBfMenuSetGameInputPrefix[] = {
     0x83, 0xEC, 0x20, 0x53, 0x8B, 0xD9, 0x83, 0xBB,
     0xFC, 0x00, 0x00, 0x00, 0xFF, 0x0F, 0x84, 0xDC};
@@ -218,6 +221,9 @@ public:
         overlayVisibleLastFrame = false;
         overlayHoveredLastFrame = false;
         scrollRepeat = {};
+        pointerSmoother.Reset();
+        menuPointerSmoothingEnabled = true;
+        nextSettingsPollAt = 0;
         if (runtimeWidth == 0 || runtimeHeight == 0 ||
             sourceWidth == 0 || sourceHeight == 0)
         {
@@ -411,6 +417,7 @@ public:
         InterlockedExchange(&g_mainMenuOverlayVisible, 0);
         InterlockedExchange(&g_mainMenuOverlayHovered, 0);
         InterlockedExchange(&g_mainMenuOverlayAvailable, 0);
+        pointerSmoother.Reset();
         WriteLog(
             L"Controller menu pointer report: calls=%ld nativeMenuFrames=%ld mainMenuFrames=%ld hoverFrames=%ld nativeHoverEvents=%ld freshTracking=%ld rayHits=%ld applied=%ld wheelUp=%ld wheelDown=%ld wheelFailures=%ld escapePresses=%ld escapeFailures=%ld readFaults=%ld restoreFaults=%ld.",
             observedCalls,
@@ -548,6 +555,22 @@ private:
         void* gameInput) noexcept
     {
         InterlockedIncrement(&observedCalls);
+        const ULONGLONG nowMilliseconds = GetTickCount64();
+        if (nowMilliseconds >= nextSettingsPollAt)
+        {
+            auto& settingsRuntime =
+                bfvr::settings::ProcessUserSettingsRuntime();
+            (void)settingsRuntime.ReloadIfChanged();
+            if (settingsRuntime.IsReady())
+            {
+                menuPointerSmoothingEnabled =
+                    bfvr::settings::DecodeUserSettings(
+                        settingsRuntime.Current())
+                        .menuPointerSmoothingEnabled;
+            }
+            nextSettingsPollAt = nowMilliseconds +
+                kSettingsPollMilliseconds;
+        }
         bool nativeMenuActive = false;
         bool battlefieldFrontend = false;
         bool battlefieldMainMenu = false;
@@ -697,9 +720,26 @@ private:
             if (mapped.has_value())
             {
                 canvasPoint = *mapped;
+                const bfvr::stereo::UiPointerPoint filtered =
+                    pointerSmoother.Update(
+                        canvasPoint.normalizedX,
+                        canvasPoint.normalizedY,
+                        static_cast<std::int64_t>(nowMilliseconds) *
+                            1'000'000LL,
+                        menuPointerSmoothingEnabled);
+                canvasPoint.normalizedX = filtered.x;
+                canvasPoint.normalizedY = filtered.y;
+                canvasPoint.pixelX = filtered.x *
+                    static_cast<float>(kLogicalCanvasWidth);
+                canvasPoint.pixelY = filtered.y *
+                    static_cast<float>(kLogicalCanvasHeight);
                 rayHit = true;
                 InterlockedIncrement(&rayHits);
             }
+        }
+        if (!rayHit)
+        {
+            pointerSmoother.Reset();
         }
 
         float backupOk = 0.0F;
@@ -1050,6 +1090,9 @@ private:
     bool overlayVisibleLastFrame = false;
     bool overlayHoveredLastFrame = false;
     bool menuAnchorValid = false;
+    bool menuPointerSmoothingEnabled = true;
+    ULONGLONG nextSettingsPollAt = 0;
+    bfvr::stereo::UiPointerSmoother pointerSmoother = {};
     bfvr::stereo::MainMenuScrollRepeatState scrollRepeat = {};
     bfvr::stereo::Pose menuAnchorHead = {};
     bool ownsMinHook = false;

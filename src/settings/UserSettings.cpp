@@ -42,6 +42,8 @@ constexpr std::string_view kControllerHapticsEnabledKey =
 constexpr std::string_view kKillSoundEnabledKey = "kill_sound_enabled";
 constexpr std::string_view kSniperScopeSmoothingEnabledKey =
     "sniper_scope_smoothing_enabled";
+constexpr std::string_view kMenuPointerSmoothingEnabledKey =
+    "menu_pointer_smoothing_enabled";
 constexpr std::string_view kOffHandGripStyleKey = "off_hand_grip_style";
 constexpr std::string_view kHandWeaponCrosshairKey =
     "hand_weapon_3d_crosshair";
@@ -50,6 +52,8 @@ constexpr std::string_view kMountedWeaponCrosshairKey =
 constexpr std::string_view kPointerItemCrosshairKey =
     "knife_throwable_gadget_3d_crosshair";
 constexpr std::string_view kCrosshairColorKey = "3d_crosshair_color";
+constexpr std::string_view kCrosshairOpacityKey =
+    "3d_crosshair_opacity_percent";
 constexpr std::string_view kFxaaEnabledKey = "fxaa_enabled";
 constexpr std::string_view kFxaaSharpeningKey =
     "fxaa_sharpening_percent";
@@ -380,6 +384,15 @@ bool IsFxaaSharpening(std::string_view value) noexcept
         bfvr::settings::kMinimumFxaaSharpeningPercent,
         bfvr::settings::kMaximumFxaaSharpeningPercent,
         bfvr::settings::kFxaaSharpeningStepPercent);
+}
+
+bool IsCrosshairOpacity(std::string_view value) noexcept
+{
+    return IsUnsignedInRangeStep(
+        value,
+        bfvr::settings::kMinimumCrosshairOpacityPercent,
+        bfvr::settings::kMaximumCrosshairOpacityPercent,
+        bfvr::settings::kCrosshairOpacityStepPercent);
 }
 
 bool IsAmbientOcclusionStrength(std::string_view value) noexcept
@@ -726,6 +739,15 @@ UserSettingsSchema SeededUserSettingsSchema()
             IsBoolean
         },
         {
+            std::string(kMenuPointerSmoothingEnabledKey),
+            "true",
+            {
+                "Stabilizes the right-controller pointer in Battlefield's native menus, the Quick Menu, and the VR Settings dialog. A small deadzone suppresses hand tremor while frame-time-aware adaptive filtering keeps deliberate movement responsive.",
+                "Accepted values: true or false. Applied after VR Settings > Save without a restart. Turning it off restores direct unfiltered controller-ray coordinates."
+            },
+            IsBoolean
+        },
+        {
             std::string(kOffHandGripStyleKey),
             "hold",
             {
@@ -748,7 +770,7 @@ UserSettingsSchema SeededUserSettingsSchema()
             "on",
             {
                 "Controls the stereo 3D HUD crosshair for vehicles, turrets, and mounted guns. off hides both the aiming crosshair and its hit marker; on shows both; hit_marker_only hides the aiming crosshair but still shows confirmed-hit feedback.",
-                "Accepted values: off, on, or hit_marker_only. This does not change mounted aim, projectile direction, or BF1942 hit detection. Applied only after VR Settings > Save."
+                "Accepted values: off, on, or hit_marker_only. This does not change mounted aim, projectile direction, or BF1942 hit detection. Applied only after Controls > Save."
             },
             IsWorldCrosshairMode
         },
@@ -766,9 +788,18 @@ UserSettingsSchema SeededUserSettingsSchema()
             "green",
             {
                 "Selects the base tint shared by BFVR's stereo 3D aiming crosshair and 3D hit marker. The existing D3D8 crosshair renderer, endpoint, per-eye projection, angular size, and composition timing remain unchanged.",
-                "Accepted values: white, green, blue, purple, red, pink, orange, or yellow. The legacy value magenta loads as pink. The default green preserves the current appearance. World post-processing and non-neutral Color settings may alter the final displayed tint. Applied after VR Settings > Save without a restart."
+                "Accepted values: white, green, blue, purple, red, pink, orange, or yellow. The legacy value magenta loads as pink. The default green preserves the current appearance. World post-processing and non-neutral Color settings may alter the final displayed tint. Applied after Controls > Save without a restart."
             },
             IsCrosshairColor
+        },
+        {
+            std::string(kCrosshairOpacityKey),
+            std::to_string(kDefaultCrosshairOpacityPercent),
+            {
+                "Controls the opacity shared by BFVR's stereo 3D aiming crosshair and confirmed-hit marker. It does not change their endpoint, per-eye projection, angular size, color, or hit detection.",
+                "Accepted values: 5 through 100 percent in steps of 5. Zero is deliberately rejected so enabled crosshair feedback can never become fully invisible. Applied after Controls > Save without a restart."
+            },
+            IsCrosshairOpacity
         },
         {
             std::string(kFxaaEnabledKey),
@@ -973,6 +1004,9 @@ UserSettingsValues DecodeUserSettings(const UserSettings& settings) noexcept
     result.sniperScopeSmoothingEnabled = readBoolean(
         kSniperScopeSmoothingEnabledKey,
         true);
+    result.menuPointerSmoothingEnabled = readBoolean(
+        kMenuPointerSmoothingEnabledKey,
+        true);
     result.comfortVignetteEnabled = readBoolean(
         kComfortVignetteEnabledKey,
         false);
@@ -1078,6 +1112,10 @@ UserSettingsValues DecodeUserSettings(const UserSettings& settings) noexcept
         kFxaaSharpeningKey,
         kDefaultFxaaSharpeningPercent,
         IsFxaaSharpening);
+    result.crosshairOpacityPercent = readUnsigned(
+        kCrosshairOpacityKey,
+        kDefaultCrosshairOpacityPercent,
+        IsCrosshairOpacity);
     result.ambientOcclusionStrengthPercent = readUnsigned(
         kAmbientOcclusionStrengthKey,
         kDefaultAmbientOcclusionStrengthPercent,
@@ -1217,6 +1255,8 @@ void EncodeUserSettings(
         values.killSoundEnabled ? "true" : "false";
     settings.values[std::string(kSniperScopeSmoothingEnabledKey)] =
         values.sniperScopeSmoothingEnabled ? "true" : "false";
+    settings.values[std::string(kMenuPointerSmoothingEnabledKey)] =
+        values.menuPointerSmoothingEnabled ? "true" : "false";
     settings.values[std::string(kComfortVignetteEnabledKey)] =
         values.comfortVignetteEnabled ? "true" : "false";
     settings.values[std::string(kDeathCameraComfortEnabledKey)] =
@@ -1295,6 +1335,12 @@ void EncodeUserSettings(
             kMinimumFxaaSharpeningPercent,
             kMaximumFxaaSharpeningPercent,
             kFxaaSharpeningStepPercent));
+    settings.values[std::string(kCrosshairOpacityKey)] =
+        std::to_string(snap(
+            values.crosshairOpacityPercent,
+            kMinimumCrosshairOpacityPercent,
+            kMaximumCrosshairOpacityPercent,
+            kCrosshairOpacityStepPercent));
     settings.values[std::string(kVrHeightAdjustmentKey)] =
         std::to_string(std::clamp(
             values.vrHeightAdjustmentCentimeters,

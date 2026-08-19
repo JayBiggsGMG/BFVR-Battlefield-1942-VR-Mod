@@ -7,6 +7,14 @@ a shorter version of the same information.
 
 ### Added
 
+- Added a saved **3D Crosshair Opacity** slider beside all other 3D crosshair
+  controls. It ranges from 5% to 100% in 5% steps and affects both the aiming
+  crosshair and confirmed-hit marker; enabled feedback can never be made fully
+  invisible.
+- Added default-on **Menu Pointer Smoothing** for Battlefield's native menus,
+  the Quick Menu, and the VR Settings dialog. The saved VR Settings toggle
+  suppresses controller tremor while keeping deliberate cursor movement
+  responsive, and can restore direct unfiltered pointing without a restart.
 - VR Settings now shows `BFVR v1.0.2 - JayBiggsGaming` in the selected 3D
   crosshair green beneath the menu. The displayed version, launcher text,
   Windows file metadata, and installer version now share one release-version
@@ -42,6 +50,9 @@ a shorter version of the same information.
 
 ### Changed
 
+- Consolidated the three 3D crosshair mode selectors, color, and opacity onto
+  one Controls page. The vacated VR Settings row now owns Menu Pointer
+  Smoothing.
 - Reduced the Right B reload/recenter hold from 2.5 seconds to 2 seconds;
   reload still triggers on the initial press and each hold recenters only once.
 - Changed Water SSR from replacing world color to adding a restrained

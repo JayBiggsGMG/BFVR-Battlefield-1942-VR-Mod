@@ -155,7 +155,7 @@ particular, each runtime owns its controller-specific aim pose, so BFVR does
 not apply a Quest-derived angular correction to Index or Vive pointer rays.
 
 VR Settings page 2 groups `Comfort Vignette`, `Death Camera Comfort`, `Show`,
-and `3D Crosshair Color`. `Show` selects Arms & Hands, Hands Only, or No
+and the default-on `Menu Pointer Smoothing` toggle. `Show` selects Arms & Hands, Hands Only, or No
 Hands/Arms. While the local soldier or occupied vehicle
 translates, BFVR smoothly closes to a stable, feathered black peripheral
 aperture and restores the full view after movement stops. A filtered
@@ -166,6 +166,15 @@ turning, turret aiming, and a
 vehicle rotating in place do not trigger it. The effect is procedural—there is
 no vignette image asset—and OpenXR composites it over the world but under the
 native HUD, scope texture, Quick Menu, Settings, and other overlays.
+
+`Menu Pointer Smoothing` uses the same normalized, frame-time-aware adaptive
+filter for Battlefield's native menu injection, the Quick Menu, and VR
+Settings. A small output deadzone absorbs controller tremor, while the cutoff
+rises with pointer speed so deliberate movement remains responsive. Cursor
+rendering and hit testing consume the same filtered point. Tracking loss,
+leaving a panel, switching Quick Menu surfaces, or disabling the toggle clears
+history; Controls remain clickable at their displayed cursor position. Save
+applies the setting live without changing any startup or OpenXR path.
 
 The potential 1.0.2 VR Settings presentation adds a green
 `BFVR v1.0.2 - JayBiggsGaming` credit as a separate transparent OpenXR quad
@@ -375,6 +384,14 @@ and `BFVR_CROSSHAIR_ANGULAR_DIAMETER_DEGREES` adjusts apparent size from
 The aligned `HitMarker.png` layer appears only while BF1942's own local network
 hit-indication timer is positive. BFVR reads that timer without changing or
 extending it; it does not infer hits from health, depth, or collision.
+
+Controls page 2 keeps all stereo 3D crosshair policy together: hand-weapon,
+mounted-weapon, and knife/throwable/gadget modes, the eight-color selector,
+and opacity. Opacity is persisted as 5..100% in 5% steps and scales both RGB
+and alpha for BFVR's premultiplied aiming-crosshair and hit-marker blend. The
+parser and renderer both clamp to a nonzero 5% floor; native scoped crosshair artwork
+continues to receive only the selected RGB tint because Battlefield's recovered
+scope color setter has no alpha parameter.
 
 Exact scope is the exception: BFVR suppresses these world-overlay layers while
 BF1942's native CrossHair path carries the scope raster and native hit

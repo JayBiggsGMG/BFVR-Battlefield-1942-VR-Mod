@@ -855,21 +855,6 @@ bool SettingsMenuArt::ComposeSettingsBody(
                     860, 42, 18,
                     DT_LEFT | DT_SINGLELINE | DT_VCENTER);
         };
-        const auto crosshairColorName = [](
-                                            settings::CrosshairColor color) {
-            switch (color)
-            {
-            case settings::CrosshairColor::White: return L"WHITE";
-            case settings::CrosshairColor::Blue: return L"BLUE";
-            case settings::CrosshairColor::Purple: return L"PURPLE";
-            case settings::CrosshairColor::Red: return L"RED";
-            case settings::CrosshairColor::Pink: return L"PINK";
-            case settings::CrosshairColor::Orange: return L"ORANGE";
-            case settings::CrosshairColor::Yellow: return L"YELLOW";
-            case settings::CrosshairColor::Green:
-            default: return L"GREEN";
-            }
-        };
         const auto firstPersonVisibilityName = [](
                 settings::FirstPersonVisibility visibility) {
             switch (visibility)
@@ -959,13 +944,12 @@ bool SettingsMenuArt::ComposeSettingsBody(
                         state.values.firstPersonVisibility),
                     stereo::SettingsMenuSelection::ShowPrevious,
                     stereo::SettingsMenuSelection::ShowNext) &&
-                drawSelectorAt(
+                drawToggleAt(
                     static_cast<int>(
                         stereo::kSettingsMenuVrPageTwoRowCentersPixels[3]),
-                    L"3D Crosshair Color",
-                    crosshairColorName(state.values.crosshairColor),
-                    stereo::SettingsMenuSelection::CrosshairColorPrevious,
-                    stereo::SettingsMenuSelection::CrosshairColorNext);
+                    L"Menu Pointer Smoothing",
+                    state.values.menuPointerSmoothingEnabled,
+                    L"Stabilizes controller-pointer tremor in all Battlefield and BFVR menus.");
         }
         const int heightY = static_cast<int>(
             stereo::kSettingsMenuVrPageThreeRowCentersPixels[0]);
@@ -1371,6 +1355,20 @@ bool SettingsMenuArt::ComposeSettingsBody(
                 state.hovered == next ? 38 : 30,
                 DT_CENTER | DT_SINGLELINE | DT_VCENTER);
     };
+    const auto crosshairColorName = [](settings::CrosshairColor color) {
+        switch (color)
+        {
+        case settings::CrosshairColor::White: return L"WHITE";
+        case settings::CrosshairColor::Blue: return L"BLUE";
+        case settings::CrosshairColor::Purple: return L"PURPLE";
+        case settings::CrosshairColor::Red: return L"RED";
+        case settings::CrosshairColor::Pink: return L"PINK";
+        case settings::CrosshairColor::Orange: return L"ORANGE";
+        case settings::CrosshairColor::Yellow: return L"YELLOW";
+        case settings::CrosshairColor::Green:
+        default: return L"GREEN";
+        }
+    };
     const auto drawSlider = [&](int centerY,
                                 const wchar_t* label,
                                 float normalized,
@@ -1441,9 +1439,26 @@ bool SettingsMenuArt::ComposeSettingsBody(
                 crosshairModeName(state.values.pointerItemCrosshair),
                 stereo::SettingsMenuSelection::PointerItemCrosshairPrevious,
                 stereo::SettingsMenuSelection::PointerItemCrosshairNext) &&
+            drawSelector(
+                static_cast<int>(
+                    stereo::kSettingsMenuControlsCrosshairColorRowCenterPixels),
+                L"Color",
+                crosshairColorName(state.values.crosshairColor),
+                stereo::SettingsMenuSelection::CrosshairColorPrevious,
+                stereo::SettingsMenuSelection::CrosshairColorNext) &&
+            drawSlider(
+                static_cast<int>(
+                    stereo::kSettingsMenuControlsCrosshairOpacityRowCenterPixels),
+                L"Opacity",
+                static_cast<float>(state.values.crosshairOpacityPercent -
+                    settings::kMinimumCrosshairOpacityPercent) /
+                    static_cast<float>(
+                        settings::kMaximumCrosshairOpacityPercent -
+                        settings::kMinimumCrosshairOpacityPercent),
+                std::to_wstring(state.values.crosshairOpacityPercent) + L"%") &&
             DrawWhiteText(destination,
-                L"Each setting controls its aiming crosshair and confirmed-hit marker.",
-                82, 730, 860, 44, 18,
+                L"All settings apply to the stereo aiming crosshair and confirmed-hit marker; opacity never reaches zero.",
+                82, 785, 860, 42, 18,
                 DT_LEFT | DT_SINGLELINE | DT_VCENTER);
     }
     if (!drawSelector(

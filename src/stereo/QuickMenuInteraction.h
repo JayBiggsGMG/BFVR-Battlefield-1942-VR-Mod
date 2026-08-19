@@ -1,6 +1,7 @@
 #pragma once
 
 #include "stereo/StereoMath.h"
+#include "stereo/UiPointerSmoothing.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -76,6 +77,7 @@ struct QuickMenuFrameInput
     bool rightGripTracked = false;
     bool rightAimTracked = false;
     bool rightPrimaryHeld = false;
+    bool menuPointerSmoothingEnabled = true;
     Pose headPose = {};
     Pose rightGripPose = {};
     Pose rightAimPose = {};
@@ -111,6 +113,9 @@ private:
     void Cancel(bool blockUntilRelease) noexcept;
 
     Pose panelPose_ = {};
+    UiPointerSmoother menuPointerSmoother_ = {};
+    UiPointerSmoother utilityPointerSmoother_ = {};
+    UiPointerSmoother commandPointerSmoother_ = {};
     std::int64_t lastDisplayTime_ = 0;
     QuickMenuSelection hovered_ = QuickMenuSelection::None;
     QuickMenuSelection released_ = QuickMenuSelection::None;

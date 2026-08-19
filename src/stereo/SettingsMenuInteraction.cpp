@@ -64,6 +64,7 @@ bool IsSliderSelection(
     return selection == SettingsMenuSelection::InfantryTurnSpeed ||
         selection == SettingsMenuSelection::VehicleMotionAimSensitivity ||
         selection == SettingsMenuSelection::VrHeightAdjustment ||
+        selection == SettingsMenuSelection::CrosshairOpacity ||
         selection == SettingsMenuSelection::FxaaSharpening ||
         selection == SettingsMenuSelection::AmbientOcclusionRadius ||
         selection == SettingsMenuSelection::AmbientOcclusionStrength ||
@@ -220,19 +221,12 @@ SettingsMenuSelection SettingsMenuSelectionAt(
                 return SettingsMenuSelection::ShowNext;
             }
         }
-        const float centerY = kSettingsMenuVrPageTwoRowCentersPixels[3];
-        if (pixelY >= centerY - 38.0F && pixelY <= centerY + 38.0F)
+        if (pixelX >= kSettingsMenuControlColumnPixels &&
+            pixelX <= kSettingsMenuControlColumnPixels + 72.0F &&
+            pixelY >= kSettingsMenuVrPageTwoRowCentersPixels[3] - 38.0F &&
+            pixelY <= kSettingsMenuVrPageTwoRowCentersPixels[3] + 38.0F)
         {
-            if (pixelX >= kSettingsMenuSelectorLeftArrowCenterPixels - 40.0F &&
-                pixelX <= kSettingsMenuSelectorLeftArrowCenterPixels + 40.0F)
-            {
-                return SettingsMenuSelection::CrosshairColorPrevious;
-            }
-            if (pixelX >= kSettingsMenuSelectorRightArrowCenterPixels - 40.0F &&
-                pixelX <= kSettingsMenuSelectorRightArrowCenterPixels + 40.0F)
-            {
-                return SettingsMenuSelection::CrosshairColorNext;
-            }
+            return SettingsMenuSelection::MenuPointerSmoothingEnabled;
         }
     }
     if (tab == SettingsMenuTab::VrSettings && page == 2)
@@ -317,6 +311,29 @@ SettingsMenuSelection SettingsMenuSelectionAt(
                 return static_cast<SettingsMenuSelection>(
                     static_cast<std::uint32_t>(previous) + 1U);
             }
+        }
+        const float colorY =
+            kSettingsMenuControlsCrosshairColorRowCenterPixels;
+        if (pixelY >= colorY - 38.0F && pixelY <= colorY + 38.0F)
+        {
+            if (pixelX >= kSettingsMenuSelectorLeftArrowCenterPixels - 40.0F &&
+                pixelX <= kSettingsMenuSelectorLeftArrowCenterPixels + 40.0F)
+            {
+                return SettingsMenuSelection::CrosshairColorPrevious;
+            }
+            if (pixelX >= kSettingsMenuSelectorRightArrowCenterPixels - 40.0F &&
+                pixelX <= kSettingsMenuSelectorRightArrowCenterPixels + 40.0F)
+            {
+                return SettingsMenuSelection::CrosshairColorNext;
+            }
+        }
+        const float opacityY =
+            kSettingsMenuControlsCrosshairOpacityRowCenterPixels;
+        if (pixelX >= kSettingsMenuControlColumnPixels &&
+            pixelX <= kSettingsMenuSliderRightPixels &&
+            pixelY >= opacityY - 38.0F && pixelY <= opacityY + 38.0F)
+        {
+            return SettingsMenuSelection::CrosshairOpacity;
         }
     }
     if (tab == SettingsMenuTab::Controls && page == 2)
@@ -447,10 +464,14 @@ const wchar_t* SettingsMenuSelectionName(
     case SettingsMenuSelection::ShowNext: return L"next Show mode";
     case SettingsMenuSelection::DeathCameraComfortEnabled:
         return L"Death Camera Comfort";
+    case SettingsMenuSelection::MenuPointerSmoothingEnabled:
+        return L"Menu Pointer Smoothing";
     case SettingsMenuSelection::CrosshairColorPrevious:
         return L"previous 3D Crosshair Color";
     case SettingsMenuSelection::CrosshairColorNext:
         return L"next 3D Crosshair Color";
+    case SettingsMenuSelection::CrosshairOpacity:
+        return L"3D Crosshair Opacity";
     case SettingsMenuSelection::OffHandGripPrevious:
         return L"previous Off-hand Grip Style";
     case SettingsMenuSelection::OffHandGripNext:
@@ -585,6 +606,11 @@ void SettingsMenuInteraction::SetValues(
         settings::kMinimumSnapTurnAngleDegrees,
         settings::kMaximumSnapTurnAngleDegrees,
         settings::kSnapTurnAngleStepDegrees);
+    values_.crosshairOpacityPercent = snap(
+        values_.crosshairOpacityPercent,
+        settings::kMinimumCrosshairOpacityPercent,
+        settings::kMaximumCrosshairOpacityPercent,
+        settings::kCrosshairOpacityStepPercent);
     values_.vrHeightAdjustmentCentimeters = std::clamp(
         values_.vrHeightAdjustmentCentimeters,
         settings::kMinimumVrHeightAdjustmentCentimeters,
@@ -677,8 +703,13 @@ void SettingsMenuInteraction::Update(
         if (hit.has_value())
         {
             pointerVisible_ = true;
-            pointerU_ = hit->normalizedX;
-            pointerV_ = hit->normalizedY;
+            const UiPointerPoint filtered = pointerSmoother_.Update(
+                hit->normalizedX,
+                hit->normalizedY,
+                input.predictedDisplayTime,
+                values_.menuPointerSmoothingEnabled);
+            pointerU_ = filtered.x;
+            pointerV_ = filtered.y;
             hovered_ = SettingsMenuSelectionAt(
                 pointerU_,
                 pointerV_,
@@ -711,6 +742,10 @@ void SettingsMenuInteraction::Update(
             {
                 SetHeightAdjustmentFromPointer(pointerU_);
             }
+            else if (pressed_ == SettingsMenuSelection::CrosshairOpacity)
+            {
+                SetCrosshairOpacityFromPointer(pointerU_);
+            }
             else
             {
                 SetGraphicsSliderFromPointer(pressed_, pointerU_);
@@ -732,6 +767,10 @@ void SettingsMenuInteraction::Update(
         {
             SetHeightAdjustmentFromPointer(pointerU_);
         }
+        else if (pressed_ == SettingsMenuSelection::CrosshairOpacity)
+        {
+            SetCrosshairOpacityFromPointer(pointerU_);
+        }
         else
         {
             SetGraphicsSliderFromPointer(pressed_, pointerU_);
@@ -748,11 +787,16 @@ void SettingsMenuInteraction::Update(
         pressed_ = SettingsMenuSelection::None;
     }
     primaryWasHeld_ = input.rightPrimaryHeld;
+    if (!pointerVisible_)
+    {
+        pointerSmoother_.Reset();
+    }
 }
 
 void SettingsMenuInteraction::Reset() noexcept
 {
     ResetUiMenuAnchor(anchor_);
+    pointerSmoother_.Reset();
     panelPose_ = {};
     tab_ = SettingsMenuTab::VrSettings;
     hovered_ = SettingsMenuSelection::None;
@@ -778,6 +822,7 @@ void SettingsMenuInteraction::Reset() noexcept
 void SettingsMenuInteraction::ResetTrackingAnchor() noexcept
 {
     ResetUiMenuAnchor(anchor_);
+    pointerSmoother_.Reset();
     panelPose_ = {};
     poseValid_ = false;
     pointerVisible_ = false;
@@ -988,6 +1033,13 @@ void SettingsMenuInteraction::Activate(
         valuesChanged_ = true;
         status_ = SettingsMenuStatus::SettingsNotSaved;
         break;
+    case SettingsMenuSelection::MenuPointerSmoothingEnabled:
+        values_.menuPointerSmoothingEnabled =
+            !values_.menuPointerSmoothingEnabled;
+        pointerSmoother_.Reset();
+        valuesChanged_ = true;
+        status_ = SettingsMenuStatus::SettingsNotSaved;
+        break;
     case SettingsMenuSelection::CrosshairColorPrevious:
     case SettingsMenuSelection::CrosshairColorNext:
     {
@@ -1133,6 +1185,7 @@ void SettingsMenuInteraction::Activate(
     case SettingsMenuSelection::InfantryTurnSpeed:
     case SettingsMenuSelection::VehicleMotionAimSensitivity:
     case SettingsMenuSelection::VrHeightAdjustment:
+    case SettingsMenuSelection::CrosshairOpacity:
     case SettingsMenuSelection::FxaaSharpening:
     case SettingsMenuSelection::AmbientOcclusionRadius:
     case SettingsMenuSelection::AmbientOcclusionStrength:
@@ -1145,6 +1198,38 @@ void SettingsMenuInteraction::Activate(
     case SettingsMenuSelection::None:
     default:
         break;
+    }
+}
+
+void SettingsMenuInteraction::SetCrosshairOpacityFromPointer(
+    float pointerU) noexcept
+{
+    const float pixelX = std::clamp(pointerU, 0.0F, 1.0F) *
+        kSettingsMenuTextureSize;
+    const float normalized = std::clamp(
+        (pixelX - kSettingsMenuControlColumnPixels) /
+            (kSettingsMenuSliderRightPixels -
+             kSettingsMenuControlColumnPixels),
+        0.0F,
+        1.0F);
+    const float unsnapped = static_cast<float>(
+        settings::kMinimumCrosshairOpacityPercent) +
+        normalized * static_cast<float>(
+            settings::kMaximumCrosshairOpacityPercent -
+            settings::kMinimumCrosshairOpacityPercent);
+    const auto steps = static_cast<std::uint32_t>(std::lround(
+        (unsnapped - settings::kMinimumCrosshairOpacityPercent) /
+        static_cast<float>(settings::kCrosshairOpacityStepPercent)));
+    const std::uint32_t selected = std::clamp(
+        settings::kMinimumCrosshairOpacityPercent +
+            steps * settings::kCrosshairOpacityStepPercent,
+        settings::kMinimumCrosshairOpacityPercent,
+        settings::kMaximumCrosshairOpacityPercent);
+    if (values_.crosshairOpacityPercent != selected)
+    {
+        values_.crosshairOpacityPercent = selected;
+        valuesChanged_ = true;
+        status_ = SettingsMenuStatus::SettingsNotSaved;
     }
 }
 
