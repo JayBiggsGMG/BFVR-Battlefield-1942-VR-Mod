@@ -10,14 +10,16 @@
 #include "client/ScopedOffHandSupportPoseCache.h"
 #include "client/BFSoldierRightGripRotationBinding.h"
 #include "client/BFSoldierTrackedHandPose.h"
+#include "client/BFSoldierVrArmFoundation.h"
+#include "client/BFSoldierVrArmTracking.h"
 #include "client/BFSoldierVrMotionFilter.h"
-#include "client/ControllerInputCache.h"
-#include "client/D3D8TrackingAnchor.h"
+#include "client/BFSoldierWristPositionBinding.h"
 #include "client/HandWeaponRecoilRuntime.h"
 #include "client/WeaponPoseRuntimeCache.h"
 #include "presenter/SharedPresentationProtocol.h"
 #include "settings/UserSettings.h"
 #include "stereo/StereoMath.h"
+#include "stereo/ArmVrPoseMath.h"
 #include "stereo/WeaponFireAimMath.h"
 #include "stereo/WeaponPoseMath.h"
 #include <MinHook.h>
@@ -43,6 +45,8 @@ constexpr std::ptrdiff_t kBFSoldierGetPoseRva = 0x000F6CA0;
 constexpr std::ptrdiff_t kBFSoldierGetPoseCameraPositionRva = 0x000F6CC0;
 constexpr std::ptrdiff_t kActiveItemAttachmentCallerReturnRva =
     0x000FBC4B;
+constexpr std::ptrdiff_t kVisibleArmSkeletonCallerReturnRva =
+    0x000FBBF8;
 constexpr std::size_t kAnimatedBundleInterfaceOffset = 0x11C;
 constexpr std::size_t kSoldierTemplateOffset = 0x4C;
 constexpr std::size_t kSoldierFirstPersonStateOffset = 0x290;
@@ -85,8 +89,6 @@ constexpr float kMotionProbeMinimumDelta = 0.050F;
 constexpr float kMotionProbeRepeatDelta = 0.150F;
 constexpr LONG kMaximumMotionProbeReports = 12;
 constexpr LONG kStandingPose = 0;
-constexpr LONG kLastSupportedPose = 2;
-constexpr float kMaximumPoseCameraTranslation = 3.0F;
 constexpr char kLeftHandBoneName[] = "Bip01 L Hand";
 constexpr BYTE kSkeletonTransformPrefix[] = {
     0x81, 0xEC, 0x90, 0x00, 0x00, 0x00, 0x8B, 0xD1,
@@ -115,7 +117,6 @@ constexpr BYTE kBFSoldierGetPoseCameraPositionPrefix[] = {
     0x00, 0xC2, 0x04, 0x00};
 using Matrix4 = bfvr::stereo::Matrix4;
 using bfvr::native_arm_math::DistanceSquared;
-using bfvr::native_arm_math::ExtractBodyYaw;
 using bfvr::native_arm_math::IdentityMatrix;
 using bfvr::native_arm_math::Invert;
 using bfvr::native_arm_math::Multiply;
@@ -190,8 +191,12 @@ struct RightHandFrameContext
     const void* activeItem = nullptr;
     Matrix4 controllerRightHandWorld = {};
     Matrix4 inverseSoldierWorld = {};
+    bfvr::stereo::ArmVrShoulderAnchors shoulderAnchors = {};
+    bfvr::settings::OffHandGripStyle offHandGripStyle =
+        bfvr::settings::OffHandGripStyle::Hold;
     LONG controllerGeneration = 0;
     LONG activeItemIndex = -1;
+    bool shoulderAnchorsValid = false;
     bool valid = false;
 };
 struct ActiveItemAlignmentSnapshot
@@ -204,20 +209,11 @@ struct ActiveItemAlignmentSnapshot
     LONG leftHandBone = -1;
     bool leftSupportPoseValid = false;
 };
-struct PoseCameraTranslation
-{
-    std::array<float, 3> localDelta = {};
-    LONG pose = kStandingPose;
-};
 class NativeArmIk
 {
 public:
     using SkeletonTransformFn = void(__thiscall*)(void*, const Matrix4*, LONG);
     using ApplyIkFn = void(__thiscall*)(void*, LONG, const float*, const Matrix4*);
-    using GetTransformationFn = const Matrix4*(__thiscall*)(void*);
-    using GetSoldierPoseFn = LONG(__thiscall*)(void*);
-    using GetPoseCameraPositionFn =
-        const float*(__thiscall*)(void*, LONG);
     using SetRelativeBoneTransformFn =
         void(__thiscall*)(void*, LONG, const Matrix4*);
 
@@ -357,10 +353,10 @@ public:
         enabled_ = true;
         (void)armPole_.Start(gameImage_, appendLog_);
         WriteLog(
-            L"Native 1P right-arm IK armed at Skeleton::transform and the exact active-item AnimatedBundle attachment callback. Primary slot 3 retains direct OpenXR gun aim and automatically establishes one controller-grip-to-anatomical-wrist reference; non-primary items use that wrist reference and BF1942's selected-item relation to reconstruct their authored functional basis. No shot, spawn-camera, or per-item user calibration is required. BF1942's authored crouch/prone camera translation is inherited without changing controller orientation. The complete native 1P arm root is shifted %.2f metres forward for VR shoulder placement. Existing authored IK targets are left untouched.",
+            L"Native 1P right-arm IK armed at Skeleton::transform and the exact active-item attachment callback. OpenXR grip/aim retains gun and fire authority; BF1942 retains hand/finger pose, selected-item relation, and animation state. The neutral hand location is unchanged, while an 8-cm grip-local anatomical-wrist lever arm contributes only its rotation-dependent visual delta. At the exact consumed first-person pass, a second native evaluation temporarily places the upper-arm origin from tracked head/body shoulders instead of flat weapon animation. The established whole-arm root shift remains %.2f metres. Existing authored IK targets bypass unchanged.",
             kFirstPersonArmRootForwardOffset);
         WriteLog(
-            L"Native 1P left-hand IK follows tracked OpenXR grip position and relative wrist rotation after selected-item warm-up. A successful authored primary support grip establishes one automatic anatomical left-wrist reference for later item switches; the prior native per-item zero remains the fail-closed fallback until then. Left squeeze is reserved for proximity-gated acquisition; a held grip has no distance auto-detach. Primary slot 3 preserves BF1942's native left-to-right-hand relation and permits full-direction fixed-pivot steering; the exact result is shared by weapon presentation and fire. Close sidearm slot 2 captures the user's current visual cup without a jump and is permanently visual-only. Elbow bend uses only Maya's direction-only rotate-plane pole for exact BFVR-owned 1P targets; no third-person body position is consumed.");
+            L"Native 1P left-hand IK retains tracked free-hand and authored rifle/sidearm support behavior. Its wrist lever arm and shoulder foundation follow the same visual-only policy as the right arm. Elbow intent is computed in the stable shoulder/body frame once per accepted XR generation, with position response, singularity fallback, and bounded continuity; Maya remains the sole two-bone projector. No third-person body, gameplay input, item, reload, projectile, startup, or runtime-selection state is changed.");
         return true;
     }
 
@@ -421,6 +417,11 @@ public:
                 stanceTranslatedFrames_,
                 stanceTransitions_,
                 stanceReadFailures_);
+            WriteLog(
+                L"VR-owned arm foundation stopped: evaluations=%ld right=%ld left=%ld.",
+                vrFoundationFrames_,
+                vrRightFoundationFrames_,
+                vrLeftFoundationFrames_);
         }
         RemoveHooks();
         Reset();
@@ -442,14 +443,18 @@ private:
         pendingLocalActiveItemAttachment_ = {};
         ArmIkRestore rightRestore = {};
         ArmIkRestore leftRestore = {};
+        bfvr::BFSoldierVrArmFoundationRestore foundationRestore = {};
         RightHandFrameContext rightFrame = {};
         __try
         {
             Matrix4 adjustedRoot = {};
             const Matrix4* effectiveRootTransform = rootTransform;
-            if (self->TryMakeForwardShiftedRoot(
+            if (bfvr::TryMakeForwardShiftedBFSoldierVrArmRoot(
                     skeleton,
                     rootTransform,
+                    bfvr::ReadCurrentBFSoldierVrCameraSoldier(),
+                    self->IsLocalPlayerAlive(),
+                    kFirstPersonArmRootForwardOffset,
                     adjustedRoot))
             {
                 effectiveRootTransform = &adjustedRoot;
@@ -462,17 +467,75 @@ private:
                 leftRestore);
             self->armPole_.BeginFrame(skeleton, rightRestore.handBone,
                 rightRestore.handleIndex, leftRestore.handBone,
-                leftRestore.handleIndex, rightFrame.activeItemIndex);
+                leftRestore.handleIndex, rightFrame.activeItemIndex,
+                rightFrame.controllerGeneration,
+                rightFrame.shoulderAnchorsValid
+                    ? &rightFrame.shoulderAnchors
+                    : nullptr);
             self->originalSkeletonTransform_(
                 skeleton,
                 effectiveRootTransform,
                 transformLimit);
+            if (rightFrame.valid && rightFrame.shoulderAnchorsValid &&
+                _ReturnAddress() ==
+                    self->gameImage_ +
+                        kVisibleArmSkeletonCallerReturnRva)
+            {
+                bfvr::BFSoldierVrArmFoundationInput foundationInput = {};
+                foundationInput.skeleton = skeleton;
+                foundationInput.rightHandBone = rightRestore.handBone;
+                foundationInput.leftHandBone = leftRestore.handBone;
+                foundationInput.rightHandTarget =
+                    rightRestore.targetPosition;
+                foundationInput.leftHandTarget =
+                    leftRestore.targetPosition;
+                foundationInput.shoulderAnchors =
+                    rightFrame.shoulderAnchors;
+                foundationInput.controllerGeneration =
+                    rightFrame.controllerGeneration;
+                foundationInput.rightActive = rightRestore.active;
+                foundationInput.leftActive = leftRestore.active;
+                if (self->armFoundation_.PrepareAfterNativeTransform(
+                        foundationInput,
+                        self->boneResolver_,
+                        foundationRestore))
+                {
+                    self->armPole_.EnableVrSolve(
+                        foundationRestore.rightApplied,
+                        foundationRestore.leftApplied);
+                    self->originalSkeletonTransform_(
+                        skeleton,
+                        effectiveRootTransform,
+                        transformLimit);
+                    if (foundationRestore.rightApplied)
+                    {
+                        InterlockedIncrement(
+                            &self->vrRightFoundationFrames_);
+                    }
+                    if (foundationRestore.leftApplied)
+                    {
+                        InterlockedIncrement(
+                            &self->vrLeftFoundationFrames_);
+                    }
+                    const LONG foundationFrame = InterlockedIncrement(
+                        &self->vrFoundationFrames_);
+                    if (foundationFrame == 1)
+                    {
+                        self->WriteLog(
+                            L"VR-owned arm foundation reached the exact consumed Skeleton pass; right=%d left=%d controllerGeneration=%ld.",
+                            foundationRestore.rightApplied ? 1 : 0,
+                            foundationRestore.leftApplied ? 1 : 0,
+                            rightFrame.controllerGeneration);
+                    }
+                }
+            }
             self->armPole_.CaptureSolvedEndpoints(
                 rightRestore.boneRecord, leftRestore.boneRecord);
             self->CaptureInjectedMotionProbe(rightRestore);
         }
         __finally
         {
+            self->armFoundation_.Restore(foundationRestore);
             self->armPole_.EndFrame();
             self->Restore(leftRestore);
             self->Restore(rightRestore);
@@ -602,7 +665,8 @@ private:
             InterlockedIncrement(&activeItemAlignmentFailures_);
             return;
         }
-        const auto soldierTransform = ReadSoldierTransform(soldier);
+        const auto soldierTransform =
+            bfvr::ReadBf1942ObjectTransform(soldier);
         if (!soldierTransform.has_value())
         {
             InterlockedIncrement(&activeItemAlignmentFailures_);
@@ -611,7 +675,8 @@ private:
         const Matrix4 nativeHandWorld = Multiply(
             nativeHandLocal,
             *soldierTransform);
-        const auto nativeFireWorld = ReadObjectTransform(item);
+        const auto nativeFireWorld =
+            bfvr::ReadBf1942ObjectTransform(item);
         if (!nativeFireWorld.has_value() || !IsFinite(nativeHandWorld))
         {
             InterlockedIncrement(&activeItemAlignmentFailures_);
@@ -810,126 +875,35 @@ private:
         return cachedLeftHandBone_;
     }
 
-    bool TryMakeForwardShiftedRoot(
-        void* skeleton,
-        const Matrix4* rootTransform,
-        Matrix4& adjustedRoot) noexcept
-    {
-        adjustedRoot = {};
-        void* const soldier = bfvr::ReadCurrentBFSoldierVrCameraSoldier();
-        if (skeleton == nullptr || rootTransform == nullptr || soldier == nullptr ||
-            !IsLocalPlayerAlive())
-        {
-            return false;
-        }
-
-        __try
-        {
-            const auto* const soldierBytes = static_cast<const std::byte*>(soldier);
-            if (soldierBytes[kSoldierFirstPersonStateOffset] == std::byte{0} ||
-                *reinterpret_cast<void* const*>(
-                    soldierBytes + kSoldierAnimationSkeletonOffset) != skeleton)
-            {
-                return false;
-            }
-
-            const void* const soldierTemplate = *reinterpret_cast<void* const*>(
-                soldierBytes + kSoldierTemplateOffset);
-            if (soldierTemplate == nullptr)
-            {
-                return false;
-            }
-            const LONG handBone = *reinterpret_cast<const LONG*>(
-                static_cast<const std::byte*>(soldierTemplate) +
-                kTemplateRightHandBoneOffset);
-            const LONG boneCount = *reinterpret_cast<const LONG*>(
-                static_cast<const std::byte*>(skeleton) + kSkeletonBoneCountOffset);
-            std::byte* const boneRecords = *reinterpret_cast<std::byte* const*>(
-                static_cast<const std::byte*>(skeleton) +
-                kSkeletonBoneRecordsOffset);
-            if (handBone < 0 || handBone >= boneCount ||
-                handBone >= static_cast<LONG>(kMaximumBones) ||
-                boneRecords == nullptr)
-            {
-                return false;
-            }
-            const std::byte* const handRecord = boneRecords +
-                static_cast<std::size_t>(handBone) * kBoneRecordStride;
-            if (*reinterpret_cast<const LONG*>(
-                    handRecord + kBoneIkHandleIndexOffset) != -1)
-            {
-                // Preserve vehicle steering and any mod-authored right-hand
-                // target, just as the controller injection path does.
-                return false;
-            }
-
-            Matrix4 nativeRoot = {};
-            std::memcpy(&nativeRoot, rootTransform, sizeof(nativeRoot));
-            if (!IsFinite(nativeRoot))
-            {
-                return false;
-            }
-            Matrix4 forwardOffset = {};
-            forwardOffset.values[0][0] = 1.0F;
-            forwardOffset.values[1][1] = 1.0F;
-            forwardOffset.values[2][2] = 1.0F;
-            forwardOffset.values[3][2] = kFirstPersonArmRootForwardOffset;
-            forwardOffset.values[3][3] = 1.0F;
-            adjustedRoot = Multiply(forwardOffset, nativeRoot);
-            return IsFinite(adjustedRoot);
-        }
-        __except (EXCEPTION_EXECUTE_HANDLER)
-        {
-            adjustedRoot = {};
-            return false;
-        }
-    }
-
     bool ReadCurrentArmControllerSample(
         void* soldier,
         bfvr::D3D8RuntimeControllerSample& sample,
         LONG& generation,
-        Matrix4& soldierTransform) noexcept
+        Matrix4& soldierTransform,
+        std::array<float, 3>& trackedHeadSkeleton) noexcept
     {
         sample = {};
         generation = 0;
         soldierTransform = {};
-        float observedBodyYaw = 0.0F;
-        bool observedBodyYawValid = false;
-        if (!bfvr::ReadFreshAcceptedInfantryPresentationInput(
-                sample,
-                observedBodyYaw,
-                observedBodyYawValid,
-                generation,
-                kControllerSampleMaximumAgeMs))
-        {
-            return false;
-        }
-        const auto currentSoldierTransform = ReadSoldierTransform(soldier);
+        trackedHeadSkeleton = {};
+        const auto currentSoldierTransform =
+            bfvr::ReadBf1942ObjectTransform(soldier);
         if (!currentSoldierTransform.has_value())
         {
             return false;
         }
         soldierTransform = *currentSoldierTransform;
-        if (!observedBodyYawValid)
-        {
-            return true;
-        }
-        const auto currentBodyYaw = ExtractBodyYaw(soldierTransform);
-        if (!currentBodyYaw.has_value())
-        {
-            return false;
-        }
-        bfvr::D3D8RuntimeControllerSample adjusted = {};
-        if (!bfvr::RebaseInfantryControllerSampleToCurrentBodyYaw(
-                sample,
-                observedBodyYaw,
-                *currentBodyYaw,
-                adjusted))
+        bfvr::BFSoldierVrArmTracking tracking = {};
+        if (!bfvr::ReadFreshBFSoldierVrArmTracking(
+                soldierTransform,
+                kControllerSampleMaximumAgeMs,
+                tracking))
         {
             return false;
         }
-        sample = adjusted;
+        sample = tracking.controllers;
+        generation = tracking.generation;
+        trackedHeadSkeleton = tracking.headSkeletonPosition;
         return true;
     }
 
@@ -975,11 +949,13 @@ private:
         bfvr::D3D8RuntimeControllerSample sample = {};
         LONG generation = 0;
         Matrix4 sameCallbackSoldierTransform = {};
+        std::array<float, 3> trackedHeadSkeleton = {};
         if (!ReadCurrentArmControllerSample(
                 soldier,
                 sample,
                 generation,
-                sameCallbackSoldierTransform) ||
+                sameCallbackSoldierTransform,
+                trackedHeadSkeleton) ||
             !IsTrackedGrip(sample.hands[kRightControllerHand]) ||
             !IsTrackedAim(sample.hands[kRightControllerHand]))
         {
@@ -998,6 +974,9 @@ private:
                 sample.hands[kRightControllerHand].gripPose.orientationY,
                     sample.hands[kRightControllerHand].gripPose.orientationZ,
                     sample.hands[kRightControllerHand].gripPose.orientationW}};
+        const bfvr::settings::UserSettingsValues armSettings =
+            bfvr::settings::DecodeUserSettings(
+                bfvr::settings::ProcessUserSettingsRuntime().Current());
         const bfvr::stereo::Pose currentAimPose = {
             {
                 sample.hands[kRightControllerHand].aimPose.positionX,
@@ -1179,7 +1158,10 @@ private:
 
             std::array<float, 3> stanceTranslation = {};
             const auto poseCameraTranslation =
-                ReadPoseCameraTranslation(soldier);
+                bfvr::ReadBFSoldierVrPoseCameraTranslation(
+                    soldier,
+                    getSoldierPoseTarget_,
+                    getPoseCameraPositionTarget_);
             if (poseCameraTranslation.has_value())
             {
                 for (std::size_t axis = 0; axis < 3; ++axis)
@@ -1214,6 +1196,39 @@ private:
             {
                 InterlockedIncrement(&stanceReadFailures_);
             }
+
+            std::array<float, 3> visualWristPosition = {
+                controllerGunLocal.values[3][0],
+                controllerGunLocal.values[3][1],
+                controllerGunLocal.values[3][2]};
+            const auto wristOffset = rightWristPositionBinding_.Update(
+                soldier,
+                skeleton,
+                handBone,
+                currentGripPose.orientation);
+            if (wristOffset.has_value())
+            {
+                for (std::size_t axis = 0; axis < 3; ++axis)
+                {
+                    visualWristPosition[axis] += (*wristOffset)[axis];
+                }
+            }
+            const auto calibratedWrist =
+                bfvr::stereo::ApplyArmVrHandPositionCalibration(
+                    visualWristPosition,
+                    bfvr::stereo::
+                        kRightHandPositionCalibrationCentimeters);
+            if (calibratedWrist.has_value())
+            {
+                visualWristPosition = *calibratedWrist;
+            }
+            bfvr::stereo::ArmVrShoulderAnchorInput shoulderInput = {};
+            shoulderInput.trackedHead = trackedHeadSkeleton;
+            shoulderInput.trackingToSkeleton =
+                kTrackingToSkeletonPositionOffset;
+            shoulderInput.stanceTranslation = stanceTranslation;
+            const auto shoulderAnchors =
+                bfvr::stereo::ComputeArmVrShoulderAnchors(shoulderInput);
 
             // Keep the held-item functional basis and raw OpenXR aim pointer
             // separate. Slot 3's basis also establishes one anatomical
@@ -1378,9 +1393,9 @@ private:
                 *inverseSoldierTransform);
             // The selected-item relation is rotation-only. Keep the exact
             // live grip location even under a translated soldier transform.
-            target.values[3][0] = controllerGunLocal.values[3][0];
-            target.values[3][1] = controllerGunLocal.values[3][1];
-            target.values[3][2] = controllerGunLocal.values[3][2];
+            target.values[3][0] = visualWristPosition[0];
+            target.values[3][1] = visualWristPosition[1];
+            target.values[3][2] = visualWristPosition[2];
             target.values[3][3] = 1.0F;
             const Matrix4 nativeTargetWorld = Multiply(nativeTarget, *soldierTransform);
             const Matrix4 targetWorld = Multiply(target, *soldierTransform);
@@ -1504,6 +1519,12 @@ private:
             frame.controllerRightHandWorld = targetWorld;
             frame.inverseSoldierWorld =
                 *inverseSoldierTransform;
+            frame.offHandGripStyle = armSettings.offHandGripStyle;
+            if (shoulderAnchors.has_value())
+            {
+                frame.shoulderAnchors = *shoulderAnchors;
+                frame.shoulderAnchorsValid = true;
+            }
             frame.controllerGeneration = generation;
             frame.activeItemIndex = alignment.activeItemIndex;
             frame.valid = true;
@@ -1558,11 +1579,13 @@ private:
         bfvr::D3D8RuntimeControllerSample sample = {};
         LONG generation = 0;
         Matrix4 sameCallbackSoldierTransform = {};
+        std::array<float, 3> trackedHeadSkeleton = {};
         if (!ReadCurrentArmControllerSample(
                 soldier,
                 sample,
                 generation,
-                sameCallbackSoldierTransform) ||
+                sameCallbackSoldierTransform,
+                trackedHeadSkeleton) ||
             !IsTrackedGrip(sample.hands[kLeftControllerHand]))
         {
             leftGripRotationBinding_.ResetTransient();
@@ -1651,7 +1674,10 @@ private:
 
             std::array<float, 3> stanceTranslation = {};
             const auto poseCameraTranslation =
-                ReadPoseCameraTranslation(soldier);
+                bfvr::ReadBFSoldierVrPoseCameraTranslation(
+                    soldier,
+                    getSoldierPoseTarget_,
+                    getPoseCameraPositionTarget_);
             if (poseCameraTranslation.has_value())
             {
                 stanceTranslation =
@@ -1688,7 +1714,28 @@ private:
             target.values[3][1] = leftGrip->local.values[3][1];
             target.values[3][2] = leftGrip->local.values[3][2];
             target.values[3][3] = 1.0F;
+            const auto leftWristOffset =
+                leftWristPositionBinding_.Update(
+                    soldier,
+                    skeleton,
+                    leftHandBone,
+                    {
+                        sample.hands[kLeftControllerHand]
+                            .gripPose.orientationX,
+                        sample.hands[kLeftControllerHand]
+                            .gripPose.orientationY,
+                        sample.hands[kLeftControllerHand]
+                            .gripPose.orientationZ,
+                        sample.hands[kLeftControllerHand]
+                            .gripPose.orientationW});
+            if (leftWristOffset.has_value())
+            {
+                target.values[3][0] += (*leftWristOffset)[0];
+                target.values[3][1] += (*leftWristOffset)[1];
+                target.values[3][2] += (*leftWristOffset)[2];
+            }
 
+            bool supportedByItem = false;
             if (rightFrame.valid &&
                 rightFrame.soldier == soldier &&
                 rightFrame.activeItem == activeItem &&
@@ -1713,9 +1760,7 @@ private:
                      bfvr::shared::
                          kControllerHandFlagSqueezeActive) != 0;
                 supportInput.toggleGripStyle =
-                    bfvr::settings::DecodeUserSettings(
-                        bfvr::settings::ProcessUserSettingsRuntime().Current())
-                            .offHandGripStyle ==
+                    rightFrame.offHandGripStyle ==
                     bfvr::settings::OffHandGripStyle::Toggle;
                 supportInput.nativeLeftHandTargetActive = false;
                 supportInput.mode =
@@ -1787,8 +1832,27 @@ private:
                 if (support.supported)
                 {
                     target = support.targetLocal;
+                    supportedByItem = true;
                 }
+            }
+            if (!supportedByItem)
+            {
+                const std::array<float, 3> position = {
+                    target.values[3][0],
+                    target.values[3][1],
+                    target.values[3][2]};
+                const auto calibrated =
+                    bfvr::stereo::ApplyArmVrHandPositionCalibration(
+                        position,
+                        bfvr::stereo::
+                            kLeftHandPositionCalibrationCentimeters);
+                if (calibrated.has_value())
+                {
+                    target.values[3][0] = (*calibrated)[0];
+                    target.values[3][1] = (*calibrated)[1];
+                    target.values[3][2] = (*calibrated)[2];
                 }
+            }
             const std::array<float, 3> nativePosition = {
                 nativeLeftHandLocal.values[3][0],
                 nativeLeftHandLocal.values[3][1],
@@ -1962,58 +2026,6 @@ private:
         return IsFinite(target);
     }
 
-    std::optional<Matrix4> ReadSoldierTransform(void* soldier) noexcept
-    {
-        return ReadObjectTransform(soldier);
-    }
-
-    std::optional<PoseCameraTranslation> ReadPoseCameraTranslation(
-        void* soldier) noexcept
-    {
-        if (soldier == nullptr || getSoldierPoseTarget_ == nullptr ||
-            getPoseCameraPositionTarget_ == nullptr)
-        {
-            return std::nullopt;
-        }
-        __try
-        {
-            const auto getPose =
-                reinterpret_cast<GetSoldierPoseFn>(getSoldierPoseTarget_);
-            const auto getPoseCameraPosition =
-                reinterpret_cast<GetPoseCameraPositionFn>(
-                    getPoseCameraPositionTarget_);
-            const LONG pose = getPose(soldier);
-            if (pose < kStandingPose || pose > kLastSupportedPose)
-            {
-                return std::nullopt;
-            }
-            const float* const standing =
-                getPoseCameraPosition(soldier, kStandingPose);
-            const float* const current =
-                getPoseCameraPosition(soldier, pose);
-            if (standing == nullptr || current == nullptr)
-            {
-                return std::nullopt;
-            }
-            PoseCameraTranslation result = {};
-            result.pose = pose;
-            for (std::size_t axis = 0; axis < 3; ++axis)
-            {
-                result.localDelta[axis] = current[axis] - standing[axis];
-                if (!IsFinite(result.localDelta[axis]) ||
-                    std::fabs(result.localDelta[axis]) >
-                        kMaximumPoseCameraTranslation)
-                {
-                    return std::nullopt;
-                }
-            }
-            return result;
-        }
-        __except (EXCEPTION_EXECUTE_HANDLER)
-        {
-            return std::nullopt;
-        }
-    }
     bool SafeCopyMatrix(
         const Matrix4* source,
         Matrix4& destination) const noexcept
@@ -2032,36 +2044,6 @@ private:
         {
             destination = {};
             return false;
-        }
-    }
-
-    std::optional<Matrix4> ReadObjectTransform(void* object) noexcept
-    {
-        if (object == nullptr)
-        {
-            return std::nullopt;
-        }
-        __try
-        {
-            void* const vtable = *reinterpret_cast<void* const*>(object);
-            void* const target = vtable == nullptr
-                ? nullptr
-                : *reinterpret_cast<void* const*>(
-                    static_cast<const std::byte*>(vtable) + 0x3C);
-            const auto getter = reinterpret_cast<GetTransformationFn>(target);
-            const Matrix4* const matrix =
-                getter == nullptr ? nullptr : getter(object);
-            if (matrix == nullptr)
-            {
-                return std::nullopt;
-            }
-            Matrix4 copy = {};
-            std::memcpy(&copy, matrix, sizeof(copy));
-            return IsFinite(copy) ? std::optional<Matrix4>(copy) : std::nullopt;
-        }
-        __except (EXCEPTION_EXECUTE_HANDLER)
-        {
-            return std::nullopt;
         }
     }
 
@@ -2357,6 +2339,7 @@ private:
         getSoldierPoseTarget_ = nullptr;
         getPoseCameraPositionTarget_ = nullptr;
         boneResolver_.Reset();
+        armFoundation_.Reset();
         cachedLeftHandSkeleton_ = nullptr;
         cachedLeftHandBone_ = -1;
         originalSkeletonTransform_ = nullptr;
@@ -2366,6 +2349,8 @@ private:
         ResetOwnedHandle();
         ResetOwnedLeftHandle();
         leftGripRotationBinding_.Reset(); rightGripRotationBinding_.Reset(); primarySupportPoseCache_.Reset(); offHandCalibration_.Reset();
+        leftWristPositionBinding_.Reset();
+        rightWristPositionBinding_.Reset();
         ResetOffHandSupportBinding();
         ResetActiveItemAlignment();
         loggedFreeLeftSoldier_ = nullptr;
@@ -2441,6 +2426,9 @@ private:
     volatile LONG stanceTranslatedFrames_ = 0;
     volatile LONG stanceTransitions_ = 0;
     volatile LONG stanceReadFailures_ = 0;
+    volatile LONG vrFoundationFrames_ = 0;
+    volatile LONG vrRightFoundationFrames_ = 0;
+    volatile LONG vrLeftFoundationFrames_ = 0;
     volatile LONG loggedActiveItemChanges_ = 0;
     bool skeletonHookCreated_ = false;
     bool attachmentHookCreated_ = false;
@@ -2462,6 +2450,7 @@ private:
     bool activeItemLeftSupportPoseValid_ = false;
     bfvr::BFSoldierBoneResolver boneResolver_ = {};
     bfvr::BFSoldierNativeArmPole armPole_ = {};
+    bfvr::BFSoldierVrArmFoundation armFoundation_ = {};
     void* cachedLeftHandSkeleton_ = nullptr;
     LONG cachedLeftHandBone_ = -1;
     void* loggedStanceSoldier_ = nullptr;
@@ -2480,6 +2469,8 @@ private:
     LONG ownedLeftHandleIndex_ = -1;
     bfvr::BFSoldierLeftGripRotationBinding leftGripRotationBinding_ = {};
     bfvr::BFSoldierRightGripRotationBinding rightGripRotationBinding_ = {};
+    bfvr::BFSoldierWristPositionBinding leftWristPositionBinding_ = {};
+    bfvr::BFSoldierWristPositionBinding rightWristPositionBinding_ = {};
     bfvr::BFSoldierPrimarySupportPoseCache primarySupportPoseCache_ = {};
     bfvr::BFSoldierOffHandCalibration offHandCalibration_ = {};
     bfvr::BFSoldierOffHandSupportBinding offHandSupportBinding_ = {};

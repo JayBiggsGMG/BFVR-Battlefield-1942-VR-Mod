@@ -228,6 +228,9 @@ add_library(BFVRClient SHARED
   client/BFSoldierPrimarySupportPoseCache.cpp
   client/BFSoldierRightGripRotationBinding.cpp
   client/BFSoldierNativeArmPole.cpp
+  client/BFSoldierVrArmFoundation.cpp
+  client/BFSoldierVrArmTracking.cpp
+  client/BFSoldierWristPositionBinding.cpp
   client/BFSoldierOffHandCalibration.cpp
   client/BFSoldierOffHandOverrides.cpp
   client/BFSoldierOffHandSupportBinding.cpp
@@ -280,6 +283,7 @@ add_library(BFVRD3D8To9FlatClient SHARED
 add_library(BFVRStereoMath STATIC
   stereo/AircraftControlMath.cpp
   stereo/ArmPoleVectorMath.cpp
+  stereo/ArmVrPoseMath.cpp
   stereo/ComfortVignette.cpp
   stereo/D3D8DrawPolicy.cpp
   stereo/D3D8FirstPersonArmPolicy.cpp
@@ -414,6 +418,10 @@ add_executable(BFVRArmPoleVectorMathTests
   stereo/ArmPoleVectorMathTests.cpp
 )
 
+add_executable(BFVRArmVrPoseMathTests
+  stereo/ArmVrPoseMathTests.cpp
+)
+
 add_executable(BFVRMainMenuOverlayTests
   client/MainMenuOverlay.cpp
   client/MainMenuOverlayTests.cpp
@@ -534,7 +542,7 @@ add_executable(BFVRRfaInspect
   tools/RfaInspect.cpp
 )
 
-foreach(target BFVRClient BFVRD3D8To9FlatClient BFVRLoader BFVRBf42PlusPlusCompatibilityTests BFVRFrameLimiterOverrideTests BFVROpenXRProbe BFVRSharedTextureProducerProbe BFVRD3D8To9SharedSurfaceProbe BFVRAmbientOcclusionDepthProbe BFVRStereoMath BFVRStereoMathTests BFVRWaterReflectionTextureBasisTests BFVRProjectedShadowTextureTransformTests BFVRWeaponFireAimMathTests BFVRHandWeaponRecoilMathTests BFVROffHandSupportPolicyTests BFVRArmPoleVectorMathTests BFVRMainMenuOverlayTests BFVRQuickMenuTests BFVRSettingsMenuTests BFVRUserSettingsTests BFVRUserSettingsSeedWriter BFVROpenXRHapticsTests BFVROpenXRControllerShortcutTests BFVROpenXRControllerBindingTests BFVRVehicleMotionAimMathTests BFVRDirectionalLocomotionTests BFVRComfortVignetteTests BFVRSurfaceVehicleDriveMathTests BFVRAircraftControlMathTests BFVRTrackingAnchorTests BFVRInfantryAuthoritativeAimTests BFVRInfantryPresentationTurnTests BFVRControllerInputCacheTests BFVRMountedCameraMathTests BFVRInfantryCameraMathTests BFVRScopeViewMathTests BFVROpenXRScopeOverlayLayerTests BFVRWorldCrosshairMathTests BFVRRuntimeDiagnosticsTests BFVRSharedControlChannelTests BFVRKillSoundEventPolicyTests BFVRRfaInspect)
+foreach(target BFVRClient BFVRD3D8To9FlatClient BFVRLoader BFVRBf42PlusPlusCompatibilityTests BFVRFrameLimiterOverrideTests BFVROpenXRProbe BFVRSharedTextureProducerProbe BFVRD3D8To9SharedSurfaceProbe BFVRAmbientOcclusionDepthProbe BFVRStereoMath BFVRStereoMathTests BFVRWaterReflectionTextureBasisTests BFVRProjectedShadowTextureTransformTests BFVRWeaponFireAimMathTests BFVRHandWeaponRecoilMathTests BFVROffHandSupportPolicyTests BFVRArmPoleVectorMathTests BFVRArmVrPoseMathTests BFVRMainMenuOverlayTests BFVRQuickMenuTests BFVRSettingsMenuTests BFVRUserSettingsTests BFVRUserSettingsSeedWriter BFVROpenXRHapticsTests BFVROpenXRControllerShortcutTests BFVROpenXRControllerBindingTests BFVRVehicleMotionAimMathTests BFVRDirectionalLocomotionTests BFVRComfortVignetteTests BFVRSurfaceVehicleDriveMathTests BFVRAircraftControlMathTests BFVRTrackingAnchorTests BFVRInfantryAuthoritativeAimTests BFVRInfantryPresentationTurnTests BFVRControllerInputCacheTests BFVRMountedCameraMathTests BFVRInfantryCameraMathTests BFVRScopeViewMathTests BFVROpenXRScopeOverlayLayerTests BFVRWorldCrosshairMathTests BFVRRuntimeDiagnosticsTests BFVRSharedControlChannelTests BFVRKillSoundEventPolicyTests BFVRRfaInspect)
   target_compile_definitions(${target} PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
   set_property(TARGET ${target} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
   if(MSVC)
@@ -579,6 +587,7 @@ target_link_libraries(BFVRWeaponFireAimMathTests PRIVATE BFVRStereoMath)
 target_link_libraries(BFVRHandWeaponRecoilMathTests PRIVATE BFVRStereoMath)
 target_link_libraries(BFVROffHandSupportPolicyTests PRIVATE BFVRStereoMath)
 target_link_libraries(BFVRArmPoleVectorMathTests PRIVATE BFVRStereoMath)
+target_link_libraries(BFVRArmVrPoseMathTests PRIVATE BFVRStereoMath)
 target_link_libraries(BFVRMainMenuOverlayTests PRIVATE
   ole32 user32 windowscodecs)
 target_link_libraries(BFVRQuickMenuTests PRIVATE
@@ -662,6 +671,9 @@ if(BUILD_TESTING)
   add_test(
     NAME BFVRArmPoleVectorMathTests
     COMMAND BFVRArmPoleVectorMathTests)
+  add_test(
+    NAME BFVRArmVrPoseMathTests
+    COMMAND BFVRArmVrPoseMathTests)
   add_test(
     NAME BFVRMainMenuOverlayTests
     COMMAND BFVRMainMenuOverlayTests

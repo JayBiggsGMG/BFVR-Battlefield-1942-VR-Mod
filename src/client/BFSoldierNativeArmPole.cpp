@@ -39,8 +39,13 @@ struct ArmPoleFrameContext
     const float* rightTarget = nullptr;
     const float* leftTarget = nullptr;
     std::int32_t activeItemIndex = -1;
+    std::int32_t controllerGeneration = 0;
+    bfvr::stereo::ArmVrShoulderAnchors shoulderAnchors = {};
     std::array<float, 3> rightPole = {};
     std::array<float, 3> leftPole = {};
+    bool shoulderAnchorsValid = false;
+    bool rightVrSolve = false;
+    bool leftVrSolve = false;
     bool rightApplied = false;
     bool leftApplied = false;
 };
@@ -188,7 +193,7 @@ bool BFSoldierNativeArmPole::Start(
     }
     hookEnabled_ = true;
     WriteLog(
-        L"Native 1P arm pole enabled the exact Maya rotate-plane argument. Only the zero pole of pointer-matched BFVR-owned hand targets may change; shoulder, elbow, wrist, hand target, and output pointers are forwarded unchanged. Right primary slot 3 remains native.");
+        L"Native 1P arm pole enabled the exact Maya rotate-plane argument. Only a zero pole belonging to pointer-matched BFVR wrist targets may change. Raw body-frame elbow intent is generation-locked and Maya performs the only solve-plane projection. Right primary joins this policy only while its VR-owned upper-arm foundation is active; native nonzero poles and every non-BFVR target remain unchanged.");
     return true;
 }
 
@@ -237,6 +242,10 @@ void BFSoldierNativeArmPole::Stop() noexcept
         previousLeftPole_[2] = 0.0F;
     hasPreviousRightPole_ = false;
     hasPreviousLeftPole_ = false;
+    cachedRightGeneration_ = 0;
+    cachedLeftGeneration_ = 0;
+    cachedRightVrAnchor_ = false;
+    cachedLeftVrAnchor_ = false;
 }
 
 void BFSoldierNativeArmPole::BeginFrame(
@@ -245,7 +254,9 @@ void BFSoldierNativeArmPole::BeginFrame(
     const std::int32_t rightHandleIndex,
     const std::int32_t leftHandBone,
     const std::int32_t leftHandleIndex,
-    const std::int32_t activeItemIndex) noexcept
+    const std::int32_t activeItemIndex,
+    const std::int32_t controllerGeneration,
+    const stereo::ArmVrShoulderAnchors* shoulderAnchors) noexcept
 {
     EndFrame();
     if (!hookEnabled_ || active_ != this)
@@ -260,20 +271,53 @@ void BFSoldierNativeArmPole::BeginFrame(
     {
         return;
     }
-    if (rightTarget != priorRightTarget_ ||
-        activeItemIndex != priorActiveItemIndex_)
+    if (rightTarget != priorRightTarget_)
     {
         hasPreviousRightPole_ = false;
+        cachedRightGeneration_ = 0;
+        cachedRightVrAnchor_ = false;
     }
-    if (leftTarget != priorLeftTarget_ ||
-        activeItemIndex != priorActiveItemIndex_)
+    if (leftTarget != priorLeftTarget_)
     {
         hasPreviousLeftPole_ = false;
+        cachedLeftGeneration_ = 0;
+        cachedLeftVrAnchor_ = false;
     }
     priorRightTarget_ = rightTarget;
     priorLeftTarget_ = leftTarget;
     priorActiveItemIndex_ = activeItemIndex;
-    g_frame = {this, rightTarget, leftTarget, activeItemIndex};
+    g_frame.owner = this;
+    g_frame.rightTarget = rightTarget;
+    g_frame.leftTarget = leftTarget;
+    g_frame.activeItemIndex = activeItemIndex;
+    g_frame.controllerGeneration = controllerGeneration;
+    if (shoulderAnchors != nullptr)
+    {
+        g_frame.shoulderAnchors = *shoulderAnchors;
+        g_frame.shoulderAnchorsValid = true;
+    }
+}
+
+void BFSoldierNativeArmPole::EnableVrSolve(
+    const bool rightArm,
+    const bool leftArm) noexcept
+{
+    if (g_frame.owner != this || !g_frame.shoulderAnchorsValid)
+    {
+        return;
+    }
+    g_frame.rightVrSolve = rightArm;
+    g_frame.leftVrSolve = leftArm;
+    if (rightArm && cachedRightGeneration_ == g_frame.controllerGeneration &&
+        !cachedRightVrAnchor_)
+    {
+        cachedRightGeneration_ = 0;
+    }
+    if (leftArm && cachedLeftGeneration_ == g_frame.controllerGeneration &&
+        !cachedLeftVrAnchor_)
+    {
+        cachedLeftGeneration_ = 0;
+    }
 }
 
 void BFSoldierNativeArmPole::CaptureSolvedEndpoints(
@@ -375,7 +419,8 @@ void __fastcall BFSoldierNativeArmPole::MayaApplyIk2BoneSolverHook(
         handTarget == g_frame.rightTarget;
     const bool preserveRightPrimary =
         rightArm &&
-        g_frame.activeItemIndex == kPrimaryItemIndex;
+        g_frame.activeItemIndex == kPrimaryItemIndex &&
+        !g_frame.rightVrSolve;
 
     const float* effectivePole = pole;
     std::array<float, 3> replacement = {};
@@ -387,63 +432,92 @@ void __fastcall BFSoldierNativeArmPole::MayaApplyIk2BoneSolverHook(
         }
         else if (shoulder != nullptr)
         {
-            stereo::ArmPoleVectorInput input = {};
-            std::memcpy(
-                input.shoulder.data(),
-                shoulder,
-                sizeof(input.shoulder));
-            std::memcpy(
-                input.handTarget.data(),
-                handTarget,
-                sizeof(input.handTarget));
-            input.leftArm = leftArm;
-            input.hasPreviousPole = leftArm
+            float* const previous = leftArm
+                ? self->previousLeftPole_
+                : self->previousRightPole_;
+            bool& hasPrevious = leftArm
                 ? self->hasPreviousLeftPole_
                 : self->hasPreviousRightPole_;
-            std::memcpy(
-                input.previousPole.data(),
-                leftArm
-                    ? self->previousLeftPole_
-                    : self->previousRightPole_,
-                sizeof(input.previousPole));
-            const auto computed = stereo::ComputeArmPoleVector(input);
-            if (computed.has_value())
+            std::int32_t& cachedGeneration = leftArm
+                ? self->cachedLeftGeneration_
+                : self->cachedRightGeneration_;
+            bool& cachedVrAnchor = leftArm
+                ? self->cachedLeftVrAnchor_
+                : self->cachedRightVrAnchor_;
+            const bool useVrAnchor =
+                g_frame.shoulderAnchorsValid &&
+                (leftArm ? g_frame.leftVrSolve : g_frame.rightVrSolve);
+            const bool reuseGeneration =
+                g_frame.controllerGeneration > 0 &&
+                cachedGeneration == g_frame.controllerGeneration &&
+                hasPrevious;
+            bool usedContinuity = false;
+            bool usedFallback = false;
+            if (reuseGeneration)
             {
-                replacement = computed->pole;
-                effectivePole = replacement.data();
-                float* const previous = leftArm
-                    ? self->previousLeftPole_
-                    : self->previousRightPole_;
-                std::memcpy(
-                    previous,
-                    replacement.data(),
-                    sizeof(replacement));
-                if (leftArm)
-                {
-                    self->hasPreviousLeftPole_ = true;
-                    g_frame.leftPole = replacement;
-                    g_frame.leftApplied = true;
-                    InterlockedIncrement(&self->appliedLeft_);
-                }
-                else
-                {
-                    self->hasPreviousRightPole_ = true;
-                    g_frame.rightPole = replacement;
-                    g_frame.rightApplied = true;
-                    InterlockedIncrement(&self->appliedRight_);
-                }
-                if (computed->usedPreviousPole)
-                {
-                    InterlockedIncrement(&self->previousContinuity_);
-                }
-                if (computed->usedFallbackAxis)
-                {
-                    InterlockedIncrement(&self->fallbackAxis_);
-                }
+                std::memcpy(replacement.data(), previous, sizeof(replacement));
             }
             else
             {
-                InterlockedIncrement(&self->rejected_);
+                stereo::ArmPoleVectorInput input = {};
+                if (useVrAnchor)
+                {
+                    input.shoulder = leftArm
+                        ? g_frame.shoulderAnchors.left
+                        : g_frame.shoulderAnchors.right;
+                }
+                else
+                {
+                    std::memcpy(
+                        input.shoulder.data(), shoulder,
+                        sizeof(input.shoulder));
+                }
+                std::memcpy(
+                    input.handTarget.data(), handTarget,
+                    sizeof(input.handTarget));
+                input.leftArm = leftArm;
+                input.hasPreviousPole = hasPrevious;
+                std::memcpy(
+                    input.previousPole.data(), previous,
+                    sizeof(input.previousPole));
+                const auto computed = stereo::ComputeArmPoleVector(input);
+                if (!computed.has_value())
+                {
+                    InterlockedIncrement(&self->rejected_);
+                    self->original_(
+                        effectivePole, shoulder, elbow, wrist, handTarget,
+                        upperRotation, forearmRotation);
+                    InterlockedDecrement(&self->callbackEntrants_);
+                    return;
+                }
+                replacement = computed->pole;
+                std::memcpy(previous, replacement.data(), sizeof(replacement));
+                hasPrevious = true;
+                cachedGeneration = g_frame.controllerGeneration;
+                cachedVrAnchor = useVrAnchor;
+                usedContinuity = computed->usedPreviousPole;
+                usedFallback = computed->usedFallbackAxis;
+            }
+            effectivePole = replacement.data();
+            if (leftArm)
+            {
+                g_frame.leftPole = replacement;
+                g_frame.leftApplied = true;
+                InterlockedIncrement(&self->appliedLeft_);
+            }
+            else
+            {
+                g_frame.rightPole = replacement;
+                g_frame.rightApplied = true;
+                InterlockedIncrement(&self->appliedRight_);
+            }
+            if (usedContinuity)
+            {
+                InterlockedIncrement(&self->previousContinuity_);
+            }
+            if (usedFallback)
+            {
+                InterlockedIncrement(&self->fallbackAxis_);
             }
         }
     }

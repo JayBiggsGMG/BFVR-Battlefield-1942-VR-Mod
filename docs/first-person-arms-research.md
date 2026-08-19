@@ -1246,3 +1246,58 @@ graded by the owner's concise report and remain open.
 5. Headset-validate rifle and pistol separately before claiming general
    two-hand support. Knives and grenades remain outside the claim while their
    existing right-wrist presentation is unresolved.
+
+### Current VR-owned arm candidate (2026-08-19)
+
+The current candidate deliberately stops using BF1942's flat weapon and
+locomotion animation as the shoulder foundation while retaining the parts of
+the native viewmodel that remain valuable. It is active only for BFVR-owned
+local hand IK at the exact `BFSoldier::updateAnimations` Skeleton pass whose
+right-hand result is consumed by the selected-item attachment.
+
+- BF1942 first evaluates its ordinary pose. BFVR then temporarily places each
+  validated upper-arm origin at an HMD/body-frame shoulder anchor and asks the
+  unchanged native Skeleton solver to evaluate once more. The authored local
+  translations are restored before the hook returns.
+- Hand/finger poses, item-relative placement, recoil, reload and other native
+  animation state remain native. The existing controller target and gun/fire
+  paths remain separate from shoulder reconstruction.
+- A captured neutral grip has zero added hand displacement. Controller
+  rotation contributes only the delta of the previously measured 8-cm
+  grip-local wristward lever arm, improving wrist-vs-controller motion without
+  adding a new OpenXR pose/action space.
+- Elbow intent is derived from hand position in the stable shoulder/body frame,
+  reused for the full accepted XR generation, bounded between generations, and
+  left for Maya to project into the solve plane.
+- Stock bone names, contiguous upper-arm/forearm/hand layout, native segment
+  lengths, target reach, local IK ownership, controller/head generation, and
+  exact caller identity are all fail-closed gates.
+
+This keeps the implementation below the shared Skeleton root, whose earlier
+replacement moved hands and attached weapons. It also leaves startup,
+launcher, OpenXR bootstrap, runtime selection, Oasis-driver compatibility, and
+Steam launching untouched. Pure validation passes; rifle, pistol, free hands,
+knives, throwables, gadgets, reload/switching, extreme reaches, locomotion,
+stance changes, respawn, and non-stock rigs still require headset judgment.
+
+### First headset result
+
+The owner reports that the VR-owned arm behavior works excellently and accepts
+the shoulder/elbow reconstruction as the solution to the prior wild-elbow
+problem. Do not reopen the shared-root or flat-animation shoulder approaches.
+
+### Accepted two-hand position calibration
+
+The owner measured and accepted the visible-wrist corrections in-headset:
+right `(-5, +4, +2)` cm and left `(-1, +8, -8)` cm in body-local X/Y/Z, where
+positive X is right, positive Y is up, and positive Z is forward. These values
+are baked into the arm pose math; the temporary fourth VR Settings page and
+all six `UserConfig.txt` keys were removed.
+
+Right calibration moves the controller-owned wrist target and its attached
+item together, preserving the hand/item relation and aim direction. Left
+calibration moves only the free-hand target; an acquired rifle or sidearm
+support pose continues to own the visual hand-to-weapon relation and bypasses
+the baked left correction. Neither path changes the tracked shoulders, elbow
+intent, native hand/finger rotation, support acquisition/steering, startup,
+OpenXR bootstrap, runtime selection, Oasis, or Steam launch behavior.
