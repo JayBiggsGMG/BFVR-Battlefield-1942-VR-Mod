@@ -246,6 +246,8 @@ add_library(BFVRClient SHARED
   client/D3D8RuntimeDiagnostics.cpp
   client/D3D8RuntimeRedirect.cpp
   client/BFSoldierBoneResolver.cpp
+  client/DSoundListenerProbe.cpp
+  client/VrListenerBasis.cpp
   client/PlayerInputProbe.cpp
   client/WeaponFireProbe.cpp
   client/WeaponAimOverlay.cpp

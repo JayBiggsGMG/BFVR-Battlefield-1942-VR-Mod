@@ -55,6 +55,10 @@ constexpr std::string_view kWaterReflectionsEnabledKey =
 constexpr std::string_view kBloomEnabledKey = "bloom_enabled";
 constexpr std::string_view kBloomThresholdKey = "bloom_threshold_percent";
 constexpr std::string_view kBloomIntensityKey = "bloom_intensity_percent";
+constexpr std::string_view kHeadTrackedAudioEnabledKey =
+    "head_tracked_audio_enabled";
+constexpr std::string_view kHeadTrackedAudioPositionEnabledKey =
+    "head_tracked_audio_position_enabled";
 
 std::string_view Trim(std::string_view value) noexcept
 {
@@ -629,6 +633,24 @@ UserSettingsSchema SeededUserSettingsSchema()
                 "Accepted values: 0 through 100 percent in steps of 5. 45 means an intensity of 0.45. This setting is applied only after VR Settings > Save."
             },
             IsBloomIntensity
+        },
+        {
+            std::string(kHeadTrackedAudioEnabledKey),
+            "true",
+            {
+                "Enables 3D positional audio. Without it, you will hear sounds relative non-VR camera view direction rather than your actual head orientation. Requires dsound.dll with HRTF support (OpenAL-Soft/DSOAL) and `game.setHardware 1` in Sound.con. Ignored when no such DLL is loaded.",
+                "Accepted values: true or false. Changing this setting requires restarting BFVR after Save because dsound.dll is loaded & hooked at startup."
+            },
+            IsBoolean
+        },
+        {
+            std::string(kHeadTrackedAudioPositionEnabledKey),
+            "true",
+            {
+                "Enables head position tracking for 3D positional audio. This setting adds head position tracking in addition to orientation by head_tracked_audio_enabled. Has no effect if head_tracked_audio_enabled is disabled or inactive.",
+                "Accepted values: true or false. Changing this setting requires restarting BFVR after Save because dsound.dll is loaded & hooked at startup."
+            },
+            IsBoolean
         }
     };
 }
@@ -737,6 +759,12 @@ UserSettingsValues DecodeUserSettings(const UserSettings& settings) noexcept
         kWaterReflectionsEnabledKey,
         true);
     result.bloomEnabled = readBoolean(kBloomEnabledKey, true);
+    result.headTrackedAudioEnabled = readBoolean(
+        kHeadTrackedAudioEnabledKey,
+        true);
+    result.headTrackedAudioPositionEnabled = readBoolean(
+        kHeadTrackedAudioPositionEnabledKey,
+        true);
     const auto readUnsigned = [&settings](
                                   std::string_view key,
                                   std::uint32_t fallback,
@@ -872,6 +900,10 @@ void EncodeUserSettings(
         values.waterReflectionsEnabled ? "true" : "false";
     settings.values[std::string(kBloomEnabledKey)] =
         values.bloomEnabled ? "true" : "false";
+    settings.values[std::string(kHeadTrackedAudioEnabledKey)] =
+        values.headTrackedAudioEnabled ? "true" : "false";
+    settings.values[std::string(kHeadTrackedAudioPositionEnabledKey)] =
+        values.headTrackedAudioPositionEnabled ? "true" : "false";
     const auto snap = [](std::uint32_t value,
                          std::uint32_t minimum,
                          std::uint32_t maximum,

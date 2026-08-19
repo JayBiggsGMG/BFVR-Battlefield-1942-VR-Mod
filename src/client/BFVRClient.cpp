@@ -2,6 +2,7 @@
 #include "client/D3D8CallInventory.h"
 #include "client/BF1942FrameLimiterOverride.h"
 #include "client/D3D8ImportRoute.h"
+#include "client/DSoundListenerProbe.h"
 #include "client/D3D8RuntimeRedirect.h"
 #include "client/D3D8RuntimeDiagnostics.h"
 #include "client/D3D8StateCensus.h"
@@ -1681,6 +1682,7 @@ extern "C" __declspec(dllexport) DWORD WINAPI BFVRInitializeObserver(LPVOID init
     if (isD3D8To9OpenXRPresentationProbe)
     {
         bfvr::RequestBF1942FrameLimiterOverride();
+        bfvr::StartDSoundListenerProbe(AppendD3D8ObserverLog);
     }
     const bool usesD3D8To9Observer =
         isD3D8To9ObserverProbe ||
