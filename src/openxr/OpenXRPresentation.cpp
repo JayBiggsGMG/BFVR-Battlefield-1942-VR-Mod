@@ -1764,8 +1764,8 @@ public:
             {
                 WriteLog(
                     recentered
-                        ? L"Right B 2.5-second hold requested a forward recenter."
-                        : L"Right B 2.5-second hold could not recenter because head tracking was unavailable.");
+                        ? L"Right B 2-second hold requested a forward recenter."
+                        : L"Right B 2-second hold could not recenter because head tracking was unavailable.");
                 controllerRecenterPending = false;
             }
             if (recentered)

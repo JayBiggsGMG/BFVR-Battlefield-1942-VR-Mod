@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "Bf42PlusPlusCompatibility.h"
+#include "../BFVRVersion.h"
 
 namespace
 {
@@ -701,7 +702,7 @@ bool ParseOptions(int argc, wchar_t* argv[], Options& options)
 
 void PrintUsage()
 {
-    wprintf(L"BFVR 1.0.1\n");
+    wprintf(L"BFVR %s\n", bfvr::kVersionString);
     wprintf(L"Double-click BFVR.exe, or run it without arguments, to start Battlefield 1942 in VR.\n");
     wprintf(L"A diagnostic timeout closes only the game process started by this loader after the requested observation window. --run-until-stopped keeps the combined translated OpenXR test active for BF1942's process lifetime.\n");
     wprintf(L"Usage: BFVR [--play] [--dry-run] [developer diagnostic options] [--game-root <path>] [--client <path>] [-- <game arguments>]\n");
@@ -1406,7 +1407,9 @@ int wmain(int argc, wchar_t* argv[])
 
     if (options.bf42PlusPlus && !bf42PlusPlusProxySelected)
     {
-        wprintf(L"BFVR 1.0.1 is starting Battlefield 1942 in VR.\n");
+        wprintf(
+            L"BFVR %s is starting Battlefield 1942 in VR.\n",
+            bfvr::kVersionString);
         wprintf(L"Developer diagnostics are off. Close Battlefield 1942 normally to end BFVR.\n");
     }
 
@@ -1418,8 +1421,11 @@ int wmain(int argc, wchar_t* argv[])
     }
     std::vector<wchar_t> mutableCommandLine(commandLine.begin(), commandLine.end());
     ResetLoaderLog();
+    const std::wstring playerStartMessage =
+        std::wstring(L"Starting BFVR ") + bfvr::kVersionString +
+        L" with player diagnostics disabled.";
     AppendLoaderLog(options.playerLaunch
-            ? L"Starting BFVR 1.0.1 with player diagnostics disabled."
+            ? playerStartMessage.c_str()
             : options.weaponMotionProbe
             ? L"Starting the opt-in OpenXR right-hand 6DOF weapon presentation and rendered-weapon-directed local-infantry fire overlays."
             : options.runUntilStopped

@@ -133,15 +133,19 @@ private:
         stereo::kQuickMenuCommandVisualCount> commandSources_ = {};
     ID3D11Texture2D* cursorSource_ = nullptr;
     ID3D11Texture2D* settingsSource_ = nullptr;
+    ID3D11Texture2D* settingsVersionSource_ = nullptr;
     Swapchain menuSwapchain_ = {};
     Swapchain utilitySwapchain_ = {};
     Swapchain commandSwapchain_ = {};
     Swapchain cursorSwapchain_ = {};
     Swapchain settingsSwapchain_ = {};
+    Swapchain settingsVersionSwapchain_ = {};
     XrCompositionLayerQuad menuLayer_{XR_TYPE_COMPOSITION_LAYER_QUAD};
     XrCompositionLayerQuad utilityLayer_{XR_TYPE_COMPOSITION_LAYER_QUAD};
     XrCompositionLayerQuad commandLayer_{XR_TYPE_COMPOSITION_LAYER_QUAD};
     XrCompositionLayerQuad cursorLayer_{XR_TYPE_COMPOSITION_LAYER_QUAD};
+    XrCompositionLayerQuad settingsVersionLayer_{
+        XR_TYPE_COMPOSITION_LAYER_QUAD};
     stereo::QuickMenuInteraction interaction_ = {};
     stereo::SettingsMenuInteraction settingsInteraction_ = {};
     SettingsMenuArt settingsArt_ = {};

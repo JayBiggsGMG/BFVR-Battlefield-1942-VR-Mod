@@ -1,7 +1,8 @@
+#include "..\BFVRVersion.inc"
 #define AppName "BFVR"
-#define AppVersion "1.0.1"
+#define AppVersion BFVR_VERSION_STRING
 #ifndef PayloadRoot
-  #define PayloadRoot AddBackslash(SourcePath) + "..\..\build\bfvr-installer-payload-v1.0.1-test\BFVR"
+  #define PayloadRoot AddBackslash(SourcePath) + "..\..\build\bfvr-installer-payload-v" + AppVersion + "-test\BFVR"
 #endif
 #ifndef OutputRoot
   #define OutputRoot AddBackslash(SourcePath) + "..\..\build\bfvr-release-output"
@@ -12,12 +13,12 @@ AppId={{1C2646DE-4BFD-4491-B102-7A40AFB0953F}
 AppName={#AppName}
 AppVersion={#AppVersion}
 AppVerName={#AppName} v{#AppVersion}
-VersionInfoVersion=1.0.1.0
-VersionInfoDescription=BFVR v1.0.1 Installer
+VersionInfoVersion={#AppVersion}.0
+VersionInfoDescription=BFVR v{#AppVersion} Installer
 DefaultDirName={code:GetDefaultBfvrDirectory}
 DefaultGroupName=BFVR
 OutputDir={#OutputRoot}
-OutputBaseFilename=BFVR-Setup-v1.0.1
+OutputBaseFilename=BFVR-Setup-v{#AppVersion}
 SetupIconFile=..\assets\BFVR.ico
 UninstallDisplayIcon={app}\BFVR.exe
 ArchitecturesAllowed=x64compatible

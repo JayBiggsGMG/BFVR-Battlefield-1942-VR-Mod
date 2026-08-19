@@ -7,6 +7,10 @@ a shorter version of the same information.
 
 ### Added
 
+- VR Settings now shows `BFVR v1.0.2 - JayBiggsGaming` in the selected 3D
+  crosshair green beneath the menu. The displayed version, launcher text,
+  Windows file metadata, and installer version now share one release-version
+  definition.
 - Added a saved **Turret Motion Sensitivity** slider to Controls for tank
   cannons, other land/sea vehicle turrets, AA, and mounted weapons. It ranges
   from 50% to 300%, defaults to the accepted 200% response, applies after Save
@@ -38,6 +42,12 @@ a shorter version of the same information.
 
 ### Changed
 
+- Reduced the Right B reload/recenter hold from 2.5 seconds to 2 seconds;
+  reload still triggers on the initial press and each hold recenters only once.
+- Changed Water SSR from replacing world color to adding a restrained
+  reflection into the pixel's remaining brightness. This preserves foreground
+  tree-card color when BF1942's depth-write-disabled foliage leaves the water
+  receiver mask visible behind it, without adding render passes or resources.
 - Increased the sniper aim-smoothing boundary from 0.40 to 1.5 degrees so
   runtime pose variation is less likely to bypass stabilization during fine
   aiming.

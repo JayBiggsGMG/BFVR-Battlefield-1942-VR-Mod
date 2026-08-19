@@ -1,4 +1,5 @@
 #include "client/SettingsMenuArt.h"
+#include "BFVRVersion.h"
 #include "stereo/SettingsMenuInteraction.h"
 
 #include <windows.h>
@@ -6,6 +7,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <cwchar>
 #include <iostream>
 #include <vector>
 
@@ -872,6 +874,39 @@ bool TestArt(const wchar_t* directory)
     {
         return false;
     }
+    if (std::wcsstr(bfvr::kVersionCredit, bfvr::kVersionString) == nullptr)
+    {
+        return false;
+    }
+    std::vector<std::uint32_t> versionBanner;
+    UINT versionWidth = 0;
+    UINT versionHeight = 0;
+    if (!art.ComposeVersionBanner(
+            versionBanner,
+            versionWidth,
+            versionHeight) ||
+        versionWidth != bfvr::SettingsMenuArt::kVersionBannerWidth ||
+        versionHeight != bfvr::SettingsMenuArt::kVersionBannerHeight)
+    {
+        return false;
+    }
+    std::size_t greenVersionPixels = 0;
+    for (const std::uint32_t pixel : versionBanner)
+    {
+        const std::uint32_t blue = pixel & 0xFFU;
+        const std::uint32_t green = (pixel >> 8U) & 0xFFU;
+        const std::uint32_t red = (pixel >> 16U) & 0xFFU;
+        const std::uint32_t alpha = (pixel >> 24U) & 0xFFU;
+        if (alpha >= 32U && green >= 32U && green > red * 8U &&
+            green > blue * 8U)
+        {
+            ++greenVersionPixels;
+        }
+    }
+    if (greenVersionPixels < 100)
+    {
+        return false;
+    }
     variant.page = 2;
     variant.values.vehicleMotionAimSensitivityPercent =
         bfvr::settings::kMaximumVehicleMotionAimSensitivityPercent;
@@ -1042,7 +1077,26 @@ bool CaptureArt(const wchar_t* assetDirectory, const wchar_t* outputDirectory)
         return art.Compose(state, pixels, width, height) &&
             WriteCaptureBitmap(path, pixels, width, height);
     };
-    return capture(
+    std::vector<std::uint32_t> versionPixels;
+    UINT versionWidth = 0;
+    UINT versionHeight = 0;
+    std::wstring versionPath = outputDirectory;
+    if (!versionPath.empty() && versionPath.back() != L'\\' &&
+        versionPath.back() != L'/')
+    {
+        versionPath.push_back(L'\\');
+    }
+    versionPath += L"Settings-Version-Banner.bmp";
+    const bool capturedVersion = art.ComposeVersionBanner(
+        versionPixels,
+        versionWidth,
+        versionHeight) &&
+        WriteCaptureBitmap(
+            versionPath,
+            versionPixels,
+            versionWidth,
+            versionHeight);
+    return capturedVersion && capture(
                SettingsMenuTab::VrSettings,
                L"Settings-VR.bmp",
                false,

@@ -406,6 +406,21 @@ void DesktopMirror::Render(
                 crop.sourceScale,
                 crop.sourceOffset);
         }
+        if (quickMenuVersionView_ != nullptr &&
+            quickMenu->versionTexture != nullptr)
+        {
+            D3D11_TEXTURE2D_DESC versionDescription = {};
+            quickMenu->versionTexture->GetDesc(&versionDescription);
+            DrawQuickMenuQuad(
+                quickMenu->versionPose,
+                quickMenu->versionWidthMeters,
+                quickMenu->versionHeightMeters,
+                quickMenuVersionView_,
+                IsSrgbFormat(versionDescription.Format),
+                *rightEyeView,
+                crop.sourceScale,
+                crop.sourceOffset);
+        }
         if (quickMenu->pointerVisible &&
             quickMenuCursorView_ != nullptr &&
             quickMenu->cursorTexture != nullptr)
@@ -721,12 +736,15 @@ bool DesktopMirror::EnsureQuickMenuViews(
     if (quickMenuTexture_ == quickMenu.menuTexture &&
         quickMenuUtilityTexture_ == quickMenu.utilityTexture &&
         quickMenuCommandTexture_ == quickMenu.commandTexture &&
+        quickMenuVersionTexture_ == quickMenu.versionTexture &&
         quickMenuCursorTexture_ == quickMenu.cursorTexture &&
         quickMenuView_ != nullptr &&
         (quickMenu.utilityTexture == nullptr ||
          quickMenuUtilityView_ != nullptr) &&
         (quickMenu.commandTexture == nullptr ||
          quickMenuCommandView_ != nullptr) &&
+        (quickMenu.versionTexture == nullptr ||
+         quickMenuVersionView_ != nullptr) &&
         (!quickMenu.pointerVisible || quickMenuCursorView_ != nullptr))
     {
         return true;
@@ -747,6 +765,15 @@ bool DesktopMirror::EnsureQuickMenuViews(
                 quickMenu.utilityTexture,
                 nullptr,
                 &quickMenuUtilityView_);
+    }
+    if (SUCCEEDED(result))
+    {
+        result = quickMenu.versionTexture == nullptr
+            ? S_OK
+            : device_->CreateShaderResourceView(
+                quickMenu.versionTexture,
+                nullptr,
+                &quickMenuVersionView_);
     }
     if (SUCCEEDED(result))
     {
@@ -777,6 +804,7 @@ bool DesktopMirror::EnsureQuickMenuViews(
     quickMenuTexture_ = quickMenu.menuTexture;
     quickMenuUtilityTexture_ = quickMenu.utilityTexture;
     quickMenuCommandTexture_ = quickMenu.commandTexture;
+    quickMenuVersionTexture_ = quickMenu.versionTexture;
     quickMenuCursorTexture_ = quickMenu.cursorTexture;
     return true;
 }
@@ -1021,6 +1049,11 @@ void DesktopMirror::ReleaseQuickMenuViews()
         quickMenuUtilityView_->Release();
         quickMenuUtilityView_ = nullptr;
     }
+    if (quickMenuVersionView_ != nullptr)
+    {
+        quickMenuVersionView_->Release();
+        quickMenuVersionView_ = nullptr;
+    }
     if (quickMenuCommandView_ != nullptr)
     {
         quickMenuCommandView_->Release();
@@ -1034,6 +1067,7 @@ void DesktopMirror::ReleaseQuickMenuViews()
     quickMenuTexture_ = nullptr;
     quickMenuUtilityTexture_ = nullptr;
     quickMenuCommandTexture_ = nullptr;
+    quickMenuVersionTexture_ = nullptr;
     quickMenuCursorTexture_ = nullptr;
 }
 

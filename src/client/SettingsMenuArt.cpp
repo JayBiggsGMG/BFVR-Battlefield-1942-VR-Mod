@@ -1,4 +1,6 @@
 #include "client/SettingsMenuArt.h"
+#include "BFVRVersion.h"
+#include "stereo/CrosshairColorPolicy.h"
 
 #include <wincodec.h>
 
@@ -331,6 +333,45 @@ bool SettingsMenuArt::Compose(
     return true;
 }
 
+bool SettingsMenuArt::ComposeVersionBanner(
+    std::vector<std::uint32_t>& pixels,
+    UINT& width,
+    UINT& height) const
+{
+    pixels.clear();
+    width = 0;
+    height = 0;
+    if (!IsReady())
+    {
+        return false;
+    }
+    Image result = {};
+    result.width = kVersionBannerWidth;
+    result.height = kVersionBannerHeight;
+    result.pixels.assign(
+        static_cast<std::size_t>(result.width) * result.height,
+        0U);
+    constexpr std::uint32_t versionTint =
+        stereo::CrosshairTintArgb(settings::CrosshairColor::Green);
+    if (!DrawTintedText(
+            result,
+            kVersionCredit,
+            16,
+            0,
+            static_cast<int>(kVersionBannerWidth - 32),
+            static_cast<int>(kVersionBannerHeight),
+            26,
+            DT_CENTER | DT_SINGLELINE | DT_VCENTER,
+            versionTint))
+    {
+        return false;
+    }
+    pixels = std::move(result.pixels);
+    width = result.width;
+    height = result.height;
+    return true;
+}
+
 bool SettingsMenuArt::IsReady() const noexcept
 {
     const auto valid = [](const Image& image) {
@@ -507,6 +548,29 @@ bool SettingsMenuArt::DrawWhiteText(
     int pixelHeight,
     UINT format) const
 {
+    return DrawTintedText(
+        destination,
+        text,
+        left,
+        top,
+        width,
+        height,
+        pixelHeight,
+        format,
+        0xFFFFFFFFU);
+}
+
+bool SettingsMenuArt::DrawTintedText(
+    Image& destination,
+    const wchar_t* text,
+    int left,
+    int top,
+    int width,
+    int height,
+    int pixelHeight,
+    UINT format,
+    std::uint32_t tintArgb) const
+{
     if (text == nullptr || text[0] == L'\0' || width <= 0 || height <= 0 ||
         pixelHeight <= 0)
     {
@@ -518,7 +582,7 @@ bool SettingsMenuArt::DrawWhiteText(
         [&](const TextCacheEntry& entry) {
             return entry.text == text && entry.width == width &&
                 entry.height == height && entry.pixelHeight == pixelHeight &&
-                entry.format == format;
+                entry.format == format && entry.tintArgb == tintArgb;
         });
     if (cached != textCache_.end())
     {
@@ -588,6 +652,10 @@ bool SettingsMenuArt::DrawWhiteText(
     textImage.pixels.resize(
         static_cast<std::size_t>(textImage.width) * textImage.height);
     const auto* sourcePixels = static_cast<const std::uint32_t*>(bitmapPixels);
+    const std::uint32_t tintBlue = tintArgb & 0xFFU;
+    const std::uint32_t tintGreen = (tintArgb >> 8U) & 0xFFU;
+    const std::uint32_t tintRed = (tintArgb >> 16U) & 0xFFU;
+    const std::uint32_t tintAlpha = (tintArgb >> 24U) & 0xFFU;
     for (std::size_t index = 0; index < textImage.pixels.size(); ++index)
     {
         const std::uint32_t source = sourcePixels[index];
@@ -595,11 +663,12 @@ bool SettingsMenuArt::DrawWhiteText(
             source & 0xFFU,
             (source >> 8U) & 0xFFU,
             (source >> 16U) & 0xFFU});
+        const std::uint32_t alpha = (coverage * tintAlpha + 127U) / 255U;
         textImage.pixels[index] = PackPixel(
-            coverage,
-            coverage,
-            coverage,
-            coverage);
+            (tintBlue * alpha + 127U) / 255U,
+            (tintGreen * alpha + 127U) / 255U,
+            (tintRed * alpha + 127U) / 255U,
+            alpha);
     }
     SelectObject(deviceContext, previousFont);
     SelectObject(deviceContext, previousBitmap);
@@ -616,6 +685,7 @@ bool SettingsMenuArt::DrawWhiteText(
     entry.height = height;
     entry.pixelHeight = pixelHeight;
     entry.format = format;
+    entry.tintArgb = tintArgb;
     entry.image = std::move(textImage);
     textCache_.push_back(std::move(entry));
     const Image& cachedImage = textCache_.back().image;

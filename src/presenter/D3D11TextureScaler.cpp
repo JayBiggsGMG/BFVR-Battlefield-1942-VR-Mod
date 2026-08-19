@@ -138,10 +138,16 @@ float4 main(float4 position : SV_Position, float2 texcoord : TEXCOORD0) : SV_Tar
 #if BFVR_WATER_REFLECTIONS
     const float4 reflection = waterReflectionTexture.SampleLevel(
         sourceSampler, texcoord, 0.0);
-    linearColor = lerp(
-        linearColor,
-        reflection.rgb,
-        saturate(reflection.a * waterReflectionIntensity));
+    // BF1942's blended foliage does not write depth, so the transported water
+    // mask can remain set behind a visible tree card. Preserve the complete
+    // source pixel and add a restrained reflection only into its remaining
+    // brightness instead of replacing foreground color.
+    const float reflectionStrength =
+        saturate(reflection.a * waterReflectionIntensity) * 0.20;
+    const float3 remainingBrightness =
+        float3(1.0, 1.0, 1.0) - saturate(linearColor);
+    linearColor = linearColor +
+        reflection.rgb * reflectionStrength * remainingBrightness;
 #endif
 #if BFVR_BLOOM
     linearColor += bloomTexture.SampleLevel(
@@ -368,10 +374,12 @@ float4 main(float4 position : SV_Position, float2 texcoord : TEXCOORD0) : SV_Tar
 #if BFVR_WATER_REFLECTIONS
     const float4 reflection = waterReflectionTexture.SampleLevel(
         sourceSampler, texcoord, 0.0);
-    linearColor = lerp(
-        linearColor,
-        reflection.rgb,
-        saturate(reflection.a * waterReflectionIntensity));
+    const float reflectionStrength =
+        saturate(reflection.a * waterReflectionIntensity) * 0.20;
+    const float3 remainingBrightness =
+        float3(1.0, 1.0, 1.0) - saturate(linearColor);
+    linearColor = linearColor +
+        reflection.rgb * reflectionStrength * remainingBrightness;
 #endif
 #if BFVR_BLOOM
     linearColor += bloomTexture.SampleLevel(
@@ -609,6 +617,10 @@ bool D3D11TextureScaler::Initialize(
             nullptr,
             &vertexShader_);
     }
+    else
+    {
+        result = E_FAIL;
+    }
     if (SUCCEEDED(result) &&
         CompileShader(
             kTexturePixelShader,
@@ -622,6 +634,10 @@ bool D3D11TextureScaler::Initialize(
             pixelBytecode->GetBufferSize(),
             nullptr,
             &colorPixelShader_);
+    }
+    else
+    {
+        result = E_FAIL;
     }
     if (pixelBytecode != nullptr)
     {
@@ -646,6 +662,10 @@ bool D3D11TextureScaler::Initialize(
             pixelBytecode->GetBufferSize(),
             nullptr,
             &fxaaPixelShader_);
+    }
+    else
+    {
+        result = E_FAIL;
     }
     if (pixelBytecode != nullptr)
     {
@@ -674,6 +694,10 @@ bool D3D11TextureScaler::Initialize(
                 nullptr,
                 &compositeColorPixelShader_);
         }
+        else
+        {
+            result = E_FAIL;
+        }
         if (pixelBytecode != nullptr)
         {
             pixelBytecode->Release();
@@ -696,6 +720,10 @@ bool D3D11TextureScaler::Initialize(
                 pixelBytecode->GetBufferSize(),
                 nullptr,
                 &compositeFxaaPixelShader_);
+        }
+        else
+        {
+            result = E_FAIL;
         }
         if (pixelBytecode != nullptr)
         {
@@ -720,6 +748,10 @@ bool D3D11TextureScaler::Initialize(
                 nullptr,
                 &bloomDownsamplePixelShader_);
         }
+        else
+        {
+            result = E_FAIL;
+        }
         if (pixelBytecode != nullptr)
         {
             pixelBytecode->Release();
@@ -739,6 +771,10 @@ bool D3D11TextureScaler::Initialize(
                 nullptr,
                 &bloomBlurHorizontalPixelShader_);
         }
+        else
+        {
+            result = E_FAIL;
+        }
         if (pixelBytecode != nullptr)
         {
             pixelBytecode->Release();
@@ -757,6 +793,10 @@ bool D3D11TextureScaler::Initialize(
                 pixelBytecode->GetBufferSize(),
                 nullptr,
                 &bloomBlurVerticalPixelShader_);
+        }
+        else
+        {
+            result = E_FAIL;
         }
         if (pixelBytecode != nullptr)
         {
@@ -847,7 +887,7 @@ bool D3D11TextureScaler::Initialize(
     else if (enableWaterReflections)
     {
         WriteLog(
-            L"D3D11 texture scaler initialized with a water-reflection composite input; the input is sampled only for world eyes and Ref2 UI remains isolated.");
+            L"D3D11 texture scaler initialized with a source-preserving soft-add Water SSR input capped at 0.20 strength; the input is sampled only for world eyes and Ref2 UI remains isolated.");
     }
     else if (enableBloom)
     {

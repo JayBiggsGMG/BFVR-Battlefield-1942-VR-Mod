@@ -141,6 +141,7 @@ struct OpenXRQuickMenuMirrorState
     OpenXRPresentationPose panelPose = {};
     OpenXRPresentationPose utilityPose = {};
     OpenXRPresentationPose commandPose = {};
+    OpenXRPresentationPose versionPose = {};
     OpenXRPresentationPose cursorPose = {};
     float panelWidthMeters = 0.0F;
     float panelHeightMeters = 0.0F;
@@ -148,11 +149,14 @@ struct OpenXRQuickMenuMirrorState
     float utilityHeightMeters = 0.0F;
     float commandWidthMeters = 0.0F;
     float commandHeightMeters = 0.0F;
+    float versionWidthMeters = 0.0F;
+    float versionHeightMeters = 0.0F;
     float cursorWidthMeters = 0.0F;
     float cursorHeightMeters = 0.0F;
     ID3D11Texture2D* menuTexture = nullptr;
     ID3D11Texture2D* utilityTexture = nullptr;
     ID3D11Texture2D* commandTexture = nullptr;
+    ID3D11Texture2D* versionTexture = nullptr;
     ID3D11Texture2D* cursorTexture = nullptr;
 };
 

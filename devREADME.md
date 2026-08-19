@@ -108,7 +108,7 @@ following one-pass infantry layout for a normal local/offline play test:
   and release A to choose Escape, Enter, 1-6, or F9-F12. Releasing off-panel
   or losing focus/tracking cancels. Its authored stack is background, selected
   hover, text, then the frame as the final/top layer.
-- Right B: reload on press. Hold continuously for 2.5 seconds to recenter the
+- Right B: reload on press. Hold continuously for 2 seconds to recenter the
   current infantry or vehicle view using the same action as VR Settings >
   Recenter Forward; one hold produces one recenter and reload remains intact.
 - Left X / Y / grip: prone / scoreboard (hold through BF1942's paired native
@@ -139,7 +139,7 @@ The default profile layouts are:
 - Valve Index/Knuckles maps physical A/B to primary/secondary on each hand.
   Consequently left A acts like Touch X (Prone), left B like Touch Y
   (Scoreboard), right A like Touch A (Quick Menu), and right B like Touch B
-  (Reload; hold 2.5 seconds to recenter). Triggers, squeezes, sticks, stick
+  (Reload; hold 2 seconds to recenter). Triggers, squeezes, sticks, stick
   clicks, aim/grip poses, and haptics remain on the corresponding hand. Index
   exposes no application Menu component, so Map has no default Index binding;
   it can be assigned to either controller through SteamVR.
@@ -166,6 +166,14 @@ turning, turret aiming, and a
 vehicle rotating in place do not trigger it. The effect is procedural—there is
 no vignette image asset—and OpenXR composites it over the world but under the
 native HUD, scope texture, Quick Menu, Settings, and other overlays.
+
+The potential 1.0.2 VR Settings presentation adds a green
+`BFVR v1.0.2 - JayBiggsGaming` credit as a separate transparent OpenXR quad
+below the menu. It deliberately leaves the authored 1024-square menu texture,
+panel pose, and ray-to-pointer mapping unchanged; the desktop mirror composes
+the same extra quad. `BFVRVersion.inc` is the canonical release version shared
+by this C++ text, loader console text, the Windows version resource, and the
+Inno Setup metadata/output name.
 
 When the local player controls a non-default vehicle or mounted
 `PlayerControlObject`, BFVR switches only the stick axes while retaining the
@@ -533,6 +541,18 @@ bad. Do not restore either `predictedDisplayTime + predictedDisplayPeriod`
 source buffering design. The established immediate runtime-timed path remains
 active for SteamVR, Oculus, and VirtualDesktopXR.
 
+A distinct 2026-08-18 Present-boundary overlap experiment was also live-
+rejected and is absent from the current source. It completed the current
+source reads into x64-local textures and acknowledged x86 before `xrEndFrame`,
+then allowed an ordinary native BF1942 bubble frame when the next real OpenXR
+request was unavailable at Present. It did not predict a pose, but owner
+testing found performance the same or probably worse and found a new severe
+gun-alignment error whose magnitude depended on look direction. The bubble
+frame therefore broke the established synchronization between request-bound
+camera/weapon state and the submitted stereo source. The environment flag,
+early acknowledgement, pose-clearing branch, policy/test files, and wrapper
+launcher were fully removed. Do not restore this scheduling family.
+
 Neither rejected result implicated startup. Preserve the OpenXR 1.0 API request
 that fixed SteamVR/VDXR launch and the temporary x86 D3D11 open of the first
 D3D9Ex texture before publication that fixed the Oasis driver.
@@ -780,6 +800,29 @@ matching confidence fade recover substantially taller or more distant finite
 geometry without making the per-water-pixel search unbounded.
 That reflection is blended only into the corresponding world eye, on top of
 the native normal-mapped, map-authored sun shine.
+BF1942's alpha-blended tree cards test depth but do not write it, so the water
+receiver mask can remain present behind their visible pixels. The first cheap
+1.0.2 trial capped final SSR replacement at 35%, but the owner saw exactly the
+same artifact; the active reflection weight in that scene was evidently not
+crossing the cap often enough to matter. That cap is fully removed.
+
+The replacement trial no longer subtracts any original world color. It keeps
+the complete source pixel and adds at most 20% of the reflected color into the
+pixel's unused brightness, which avoids simple additive blowout. It adds no
+texture, draw, target switch, shared handle, protocol field, or pass, and does
+not alter tree depth/sorting or the water ray marcher. This is a low-cost visual
+workaround rather than material-accurate foliage occlusion and awaits headset
+review for tree visibility, water strength, and unwanted brightening.
+Both exact embedded Water-SSR composite variants compile under strict `ps_4_0`
+and create successfully on the installed D3D11 hardware device. The scaler
+initializer also now treats any shader-compilation failure as a real
+initialization failure instead of accidentally continuing with a missing
+shader. The first build's new success log mistakenly said literal
+`20% strength` through a printf-style variadic logger. `% s` consumed a
+nonexistent string argument and crashed both the standalone consumer and the
+owner's presenter after Water SSR initialization. The owner-run dump confirms
+the resulting wide-string read at `0xFFFFFFFFFFFFFFFF`. The log now uses
+non-format text `0.20 strength`; the soft-add shader itself is unchanged.
 There is no temporal history or motion-vector dependency, and Ref2 UI is never
 sampled or modified. Missing masks/depth/projections, unsupported resources, or
 shader failures retain the native water image for that frame.

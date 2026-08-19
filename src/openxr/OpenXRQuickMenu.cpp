@@ -315,8 +315,11 @@ bool OpenXRQuickMenu::Initialize(
     }
 
     std::vector<std::uint32_t> settingsPixels;
+    std::vector<std::uint32_t> settingsVersionPixels;
     UINT settingsWidth = 0;
     UINT settingsHeight = 0;
+    UINT settingsVersionWidth = 0;
+    UINT settingsVersionHeight = 0;
     settingsAvailable_ =
         settingsArt_.InitializeFromDirectory(
             settingsDirectory,
@@ -327,28 +330,43 @@ bool OpenXRQuickMenu::Initialize(
             settingsPixels,
             settingsWidth,
             settingsHeight) &&
+        settingsArt_.ComposeVersionBanner(
+            settingsVersionPixels,
+            settingsVersionWidth,
+            settingsVersionHeight) &&
         CreateMutableSourceTexture(
             settingsPixels,
             settingsWidth,
             settingsHeight,
             &settingsSource_) &&
+        CreateSourceTexture(
+            settingsVersionPixels,
+            settingsVersionWidth,
+            settingsVersionHeight,
+            &settingsVersionSource_) &&
         CreateSwapchain(
             settingsSwapchain_,
             stereo::kSettingsMenuTextureSize,
-            stereo::kSettingsMenuTextureSize);
+            stereo::kSettingsMenuTextureSize) &&
+        CreateSwapchain(
+            settingsVersionSwapchain_,
+            SettingsMenuArt::kVersionBannerWidth,
+            SettingsMenuArt::kVersionBannerHeight);
     if (!settingsAvailable_)
     {
         settingsInteraction_.Reset();
         settingsArt_.Reset();
+        DestroySwapchain(settingsVersionSwapchain_);
         DestroySwapchain(settingsSwapchain_);
+        ReleaseInterface(settingsVersionSource_);
         ReleaseInterface(settingsSource_);
         WriteLog(
             L"VR Settings resources are unavailable; the independent Quick Menu remains active and Settings will fail closed.");
     }
     WriteLog(
         settingsAvailable_
-            ? L"Quick Menu and VR Settings OpenXR resources are ready: quick=%ux%u utilityStrip=%ux%u commandColumn=%ux%u settings=%ux%u cursor=%ux%u. Settings uses the owner-tuned %.2f m width and sits %.2f m closer than its Deploy/Spawn plane; right A remains the dedicated interaction action."
-            : L"Quick Menu OpenXR resources are ready without VR Settings: quick=%ux%u utilityStrip=%ux%u commandColumn=%ux%u settings=%ux%u cursor=%ux%u. The Quick Menu remains independent; owner-tuned Settings width %.2f m and depth offset %.2f m are reserved for a later successful Settings load.",
+            ? L"Quick Menu and VR Settings OpenXR resources are ready: quick=%ux%u utilityStrip=%ux%u commandColumn=%ux%u settings=%ux%u version=%ux%u cursor=%ux%u. Settings uses the owner-tuned %.2f m width and sits %.2f m closer than its Deploy/Spawn plane; right A remains the dedicated interaction action."
+            : L"Quick Menu OpenXR resources are ready without VR Settings: quick=%ux%u utilityStrip=%ux%u commandColumn=%ux%u settings=%ux%u version=%ux%u cursor=%ux%u. The Quick Menu remains independent; owner-tuned Settings width %.2f m and depth offset %.2f m are reserved for a later successful Settings load.",
         menuSwapchain_.width,
         menuSwapchain_.height,
         utilitySwapchain_.width,
@@ -357,6 +375,8 @@ bool OpenXRQuickMenu::Initialize(
         commandSwapchain_.height,
         settingsSwapchain_.width,
         settingsSwapchain_.height,
+        settingsVersionSwapchain_.width,
+        settingsVersionSwapchain_.height,
         cursorSwapchain_.width,
         cursorSwapchain_.height,
         nativeMenuWidthMeters * stereo::kSettingsMenuNativeWidthScale,
@@ -565,6 +585,45 @@ std::size_t OpenXRQuickMenu::AppendLayers(
             reinterpret_cast<const XrCompositionLayerBaseHeader*>(
                 &menuLayer_);
         std::size_t appended = 1;
+        if (capacity > appended &&
+            CopyToSwapchain(
+                settingsVersionSwapchain_,
+                settingsVersionSource_,
+                L"VR Settings version banner"))
+        {
+            const float versionWidthMeters = settings.widthMeters;
+            const float versionHeightMeters = versionWidthMeters *
+                static_cast<float>(settingsVersionSwapchain_.height) /
+                static_cast<float>(settingsVersionSwapchain_.width);
+            constexpr float versionGapScale = 0.012F;
+            const stereo::Pose versionPose =
+                stereo::MakeSettingsMenuCursorPose(
+                    settings.panelPose,
+                    settings.widthMeters,
+                    settings.heightMeters,
+                    0.5F,
+                    1.0F,
+                    0.0F,
+                    versionHeightMeters +
+                        settings.widthMeters * versionGapScale * 2.0F);
+            settingsVersionLayer_ = {XR_TYPE_COMPOSITION_LAYER_QUAD};
+            settingsVersionLayer_.layerFlags =
+                XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+            settingsVersionLayer_.space = localSpace;
+            settingsVersionLayer_.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+            settingsVersionLayer_.subImage.swapchain =
+                settingsVersionSwapchain_.handle;
+            settingsVersionLayer_.subImage.imageRect.extent = {
+                static_cast<std::int32_t>(settingsVersionSwapchain_.width),
+                static_cast<std::int32_t>(settingsVersionSwapchain_.height)};
+            settingsVersionLayer_.pose = ToXrPose(versionPose);
+            settingsVersionLayer_.size = {
+                versionWidthMeters,
+                versionHeightMeters};
+            destination[appended++] =
+                reinterpret_cast<const XrCompositionLayerBaseHeader*>(
+                    &settingsVersionLayer_);
+        }
         if (settings.pointerVisible && capacity > appended &&
             CopyToSwapchain(
                 cursorSwapchain_,
@@ -846,6 +905,25 @@ bool OpenXRQuickMenu::GetMirrorState(
         state.panelWidthMeters = settings.widthMeters;
         state.panelHeightMeters = settings.heightMeters;
         state.menuTexture = settingsSource_;
+        if (settingsVersionSource_ != nullptr)
+        {
+            state.versionWidthMeters = settings.widthMeters;
+            state.versionHeightMeters = settings.widthMeters *
+                static_cast<float>(SettingsMenuArt::kVersionBannerHeight) /
+                static_cast<float>(SettingsMenuArt::kVersionBannerWidth);
+            constexpr float versionGapScale = 0.012F;
+            state.versionPose = ToPresentationPose(
+                stereo::MakeSettingsMenuCursorPose(
+                    settings.panelPose,
+                    settings.widthMeters,
+                    settings.heightMeters,
+                    0.5F,
+                    1.0F,
+                    0.0F,
+                    state.versionHeightMeters +
+                        settings.widthMeters * versionGapScale * 2.0F));
+            state.versionTexture = settingsVersionSource_;
+        }
         if (settings.pointerVisible && cursorSource_ != nullptr &&
             settingsSwapchain_.width != 0 && settingsSwapchain_.height != 0)
         {
@@ -974,12 +1052,14 @@ void OpenXRQuickMenu::Shutdown()
     startupSettingsValues_ = {};
     settingsInteraction_.Reset();
     settingsArt_.Reset();
+    DestroySwapchain(settingsVersionSwapchain_);
     DestroySwapchain(settingsSwapchain_);
     DestroySwapchain(cursorSwapchain_);
     DestroySwapchain(commandSwapchain_);
     DestroySwapchain(utilitySwapchain_);
     DestroySwapchain(menuSwapchain_);
     ReleaseInterface(cursorSource_);
+    ReleaseInterface(settingsVersionSource_);
     ReleaseInterface(settingsSource_);
     for (ID3D11Texture2D*& source : menuSources_)
     {
@@ -1002,6 +1082,7 @@ void OpenXRQuickMenu::Shutdown()
     utilityLayer_ = {XR_TYPE_COMPOSITION_LAYER_QUAD};
     commandLayer_ = {XR_TYPE_COMPOSITION_LAYER_QUAD};
     cursorLayer_ = {XR_TYPE_COMPOSITION_LAYER_QUAD};
+    settingsVersionLayer_ = {XR_TYPE_COMPOSITION_LAYER_QUAD};
     firstVisibleFrameLogged_ = false;
     firstSettingsFrameLogged_ = false;
     settingsAvailable_ = false;

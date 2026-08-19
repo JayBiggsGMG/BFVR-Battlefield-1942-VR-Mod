@@ -18,6 +18,8 @@ class SettingsMenuArt
 {
 public:
     using LogCallback = void (*)(void* context, const wchar_t* message);
+    static constexpr UINT kVersionBannerWidth = 1024;
+    static constexpr UINT kVersionBannerHeight = 64;
 
     bool InitializeFromDirectory(
         const std::wstring& settingsDirectory,
@@ -27,6 +29,10 @@ public:
 
     bool Compose(
         const stereo::SettingsMenuSnapshot& state,
+        std::vector<std::uint32_t>& pixels,
+        UINT& width,
+        UINT& height) const;
+    bool ComposeVersionBanner(
         std::vector<std::uint32_t>& pixels,
         UINT& width,
         UINT& height) const;
@@ -47,6 +53,7 @@ private:
         int height = 0;
         int pixelHeight = 0;
         UINT format = 0;
+        std::uint32_t tintArgb = 0xFFFFFFFFU;
         Image image;
     };
 
@@ -71,6 +78,16 @@ private:
         int height,
         int pixelHeight,
         UINT format) const;
+    bool DrawTintedText(
+        Image& destination,
+        const wchar_t* text,
+        int left,
+        int top,
+        int width,
+        int height,
+        int pixelHeight,
+        UINT format,
+        std::uint32_t tintArgb) const;
     bool DrawStatusField(
         Image& destination,
         stereo::SettingsMenuStatus status) const;

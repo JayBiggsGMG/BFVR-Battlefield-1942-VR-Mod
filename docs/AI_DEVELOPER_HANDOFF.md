@@ -128,6 +128,14 @@ copy order, or `xrEndFrame` placement.
 updates preserve an existing user file. New keys require a safe default,
 decode/encode coverage, menu wiring where applicable, and persistence tests.
 
+`BFVRVersion.inc` is the canonical release version. C++ consumes it through
+`src/BFVRVersion.h`; the loader resource and Inno Setup definition include it
+directly. Update that file instead of independently editing launcher text,
+Windows file metadata, installer naming, or the VR Settings credit. The credit
+is a static transparent OpenXR quad below the unchanged 1024-square Settings
+surface, so it does not alter the existing pointer coordinate system. The
+desktop mirror reproduces the same separate quad.
+
 The repository `assets/` directory is the canonical source for every runtime
 asset. The CMake runtime-asset targets execute whenever `BFVRClient` or
 `BFVRPresenter` is requested, so an asset-only edit is copied even when native
@@ -245,6 +253,12 @@ These are established behaviors, not cleanup opportunities.
   non-blocking `predictedDisplayTime + predictedDisplayPeriod` variants were
   live-rejected as equally awful and were completely removed. SteamVR, Oculus,
   and VirtualDesktopXR all retain the established immediate path.
+- Do not add a native BF1942 bubble frame by acknowledging the current source
+  before `xrEndFrame` and waiting for the next real request at a later Present.
+  That distinct non-predictive experiment was also live-rejected: performance
+  was the same or probably worse, and gun alignment gained a severe erroneous
+  dependence on look direction. Its flag and implementation were fully
+  removed. Preserve request-bound camera, weapon, and submitted-source cadence.
 - UI capture policies distinguish full replacement frames from accumulating
   HUD draws. Combining them blindly can create trails or repeated translucent
   elements.
