@@ -2560,6 +2560,20 @@ void RemoveHooks()
     }
 }
 
+// MinHook is process-wide and shared with every other BFVR client module, so
+// this probe must neither require that it be the first initializer nor tear
+// the library down on behalf of modules that are still using it.
+bool g_ownsMinHook = false;
+
+void UninitializeMinHookIfOwned()
+{
+    if (g_ownsMinHook)
+    {
+        MH_Uninitialize();
+        g_ownsMinHook = false;
+    }
+}
+
 bool InstallHooks()
 {
     if (!ResolveDeviceMethods() || !InitializeGameImageRange())
@@ -2593,7 +2607,11 @@ bool InstallHooks()
         reinterpret_cast<void*>(g_methods.drawIndexedPrimitiveUP);
 
     const MH_STATUS initializeStatus = MH_Initialize();
-    if (initializeStatus != MH_OK)
+    if (initializeStatus == MH_OK)
+    {
+        g_ownsMinHook = true;
+    }
+    else if (initializeStatus != MH_ERROR_ALREADY_INITIALIZED)
     {
         AppendLog(
             L"D3D8 stereo-pair probe skipped: MH_Initialize failed (%d).",
@@ -2639,7 +2657,7 @@ bool InstallHooks()
     if (!created)
     {
         RemoveHooks();
-        MH_Uninitialize();
+        UninitializeMinHookIfOwned();
         return false;
     }
 
@@ -2650,7 +2668,7 @@ bool InstallHooks()
     if (MH_EnableHook(MH_ALL_HOOKS) != MH_OK)
     {
         RemoveHooks();
-        MH_Uninitialize();
+        UninitializeMinHookIfOwned();
         return false;
     }
 
@@ -2686,7 +2704,7 @@ bool InstallHooks()
             Sleep(0);
         }
         RemoveHooks();
-        MH_Uninitialize();
+        UninitializeMinHookIfOwned();
         return false;
     }
     if (IsPresentationMode())
@@ -2966,7 +2984,7 @@ DWORD WINAPI RunProbe(void*)
     {
         bfvr::ShutdownMountedWeaponAimResolver();
     }
-    MH_Uninitialize();
+    UninitializeMinHookIfOwned();
     AppendLog(
         IsFullFrameMode() && g_runUntilStopped
             ? L"D3D8 full-draw-frame stereo probe removed its Reset, Present, and four draw-family hooks after the presentation pipeline ended."

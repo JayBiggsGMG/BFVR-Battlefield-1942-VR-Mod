@@ -113,6 +113,8 @@ struct UserSettingsValues
     bool bloomEnabled = true;
     std::uint32_t bloomThresholdPercent = kDefaultBloomThresholdPercent;
     std::uint32_t bloomIntensityPercent = kDefaultBloomIntensityPercent;
+    bool headTrackedAudioEnabled = true;
+    bool headTrackedAudioPositionEnabled = true;
 
     [[nodiscard]] bool operator==(const UserSettingsValues&) const = default;
 };

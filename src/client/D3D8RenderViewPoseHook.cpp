@@ -5,6 +5,7 @@
 #include "client/MountedWeaponAimResolver.h"
 #include "client/D3D8RuntimeDiagnostics.h"
 #include "client/ScopeViewOverlay.h"
+#include "client/VrListenerBasis.h"
 
 #include "stereo/MountedCameraMath.h"
 #include "stereo/InfantryCameraMath.h"
@@ -822,6 +823,17 @@ private:
             infantryBodyRead ? &infantryBody.world : nullptr);
         lastPresentedHead = currentHead;
         lastPresentedHeadValid = true;
+
+        PublishVrListenerBasis(
+            {finalCamera.values[2][0],
+             finalCamera.values[2][1],
+             finalCamera.values[2][2],
+             finalCamera.values[1][0],
+             finalCamera.values[1][1],
+             finalCamera.values[1][2],
+             finalCamera.values[3][0],
+             finalCamera.values[3][1],
+             finalCamera.values[3][2]});
 
         original(renderView, &finalCamera);
         appliedSourceCamera = source;
