@@ -233,7 +233,7 @@ bool TestProductionSeedAndTypedValues(const std::wstring& directory)
     }
     const auto defaults = store.Defaults();
     const auto decodedDefaults = bfvr::settings::DecodeUserSettings(defaults);
-    if (defaults.values.size() != 39 ||
+    if (defaults.values.size() != 45 ||
         decodedDefaults.playMode != bfvr::settings::PlayMode::Seated ||
         decodedDefaults.artificialTurnMode !=
             bfvr::settings::ArtificialTurnMode::Smooth ||
@@ -241,6 +241,12 @@ bool TestProductionSeedAndTypedValues(const std::wstring& directory)
         decodedDefaults.movementDirection !=
             bfvr::settings::MovementDirection::Head ||
         decodedDefaults.vrHeightAdjustmentCentimeters != 0 ||
+        decodedDefaults.rightHandPositionXCentimeters != -7 ||
+        decodedDefaults.rightHandPositionYCentimeters != 4 ||
+        decodedDefaults.rightHandPositionZCentimeters != -5 ||
+        decodedDefaults.leftHandPositionXCentimeters != -2 ||
+        decodedDefaults.leftHandPositionYCentimeters != 6 ||
+        decodedDefaults.leftHandPositionZCentimeters != -2 ||
         decodedDefaults.standingEyeHeightCentimeters != 170 ||
         decodedDefaults.comfortVignetteEnabled ||
         !decodedDefaults.deathCameraComfortEnabled ||
@@ -311,6 +317,12 @@ bool TestProductionSeedAndTypedValues(const std::wstring& directory)
     changed.movementDirection =
         bfvr::settings::MovementDirection::OffHandController;
     changed.vrHeightAdjustmentCentimeters = 12;
+    changed.rightHandPositionXCentimeters = -12;
+    changed.rightHandPositionYCentimeters = 3;
+    changed.rightHandPositionZCentimeters = 17;
+    changed.leftHandPositionXCentimeters = 9;
+    changed.leftHandPositionYCentimeters = -4;
+    changed.leftHandPositionZCentimeters = -20;
     changed.standingEyeHeightCentimeters = 182;
     changed.comfortVignetteEnabled = false;
     changed.deathCameraComfortEnabled = false;
@@ -359,18 +371,22 @@ bool TestProductionSeedAndTypedValues(const std::wstring& directory)
     legacySettings.values["show_arms"] = "false";
     legacySettings.values["3d_crosshair_color"] = "magenta";
     legacySettings.values["3d_crosshair_opacity_percent"] = "0";
+    legacySettings.values["right_hand_position_x_centimeters"] = "21";
     const auto legacyDecoded =
         bfvr::settings::DecodeUserSettings(legacySettings);
     if (legacyDecoded.firstPersonVisibility !=
             bfvr::settings::FirstPersonVisibility::NoHandsOrArms ||
         legacyDecoded.crosshairColor != bfvr::settings::CrosshairColor::Pink ||
         legacyDecoded.crosshairOpacityPercent !=
-            bfvr::settings::kDefaultCrosshairOpacityPercent)
+            bfvr::settings::kDefaultCrosshairOpacityPercent ||
+        legacyDecoded.rightHandPositionXCentimeters !=
+            bfvr::settings::kDefaultRightHandPositionXCentimeters)
     {
         return false;
     }
     auto liveOnlyChange = decodedDefaults;
     liveOnlyChange.fxaaEnabled = false;
+    liveOnlyChange.rightHandPositionXCentimeters = 6;
     auto waterRestartChange = decodedDefaults;
     waterRestartChange.waterReflectionsEnabled = false;
     if (bfvr::settings::UserSettingsRequireRestart(
@@ -401,6 +417,20 @@ bool TestProductionSeedAndTypedValues(const std::wstring& directory)
         contents.find("movement_direction = off_hand_controller") !=
             std::string::npos &&
         contents.find("manual_height_adjustment_centimeters = 12") !=
+            std::string::npos &&
+        contents.find("right_hand_position_x_centimeters = -12") !=
+            std::string::npos &&
+        contents.find("right_hand_position_y_centimeters = 3") !=
+            std::string::npos &&
+        contents.find("right_hand_position_z_centimeters = 17") !=
+            std::string::npos &&
+        contents.find("left_hand_position_x_centimeters = 9") !=
+            std::string::npos &&
+        contents.find("left_hand_position_y_centimeters = -4") !=
+            std::string::npos &&
+        contents.find("left_hand_position_z_centimeters = -20") !=
+            std::string::npos &&
+        contents.find("It does not alter aim, firing, projectile direction") !=
             std::string::npos &&
         contents.find("standing_eye_height_centimeters = 182") !=
             std::string::npos &&

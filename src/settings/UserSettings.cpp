@@ -21,6 +21,18 @@ constexpr std::string_view kSnapTurnAngleKey = "snap_turn_angle_degrees";
 constexpr std::string_view kMovementDirectionKey = "movement_direction";
 constexpr std::string_view kVrHeightAdjustmentKey =
     "manual_height_adjustment_centimeters";
+constexpr std::string_view kRightHandPositionXKey =
+    "right_hand_position_x_centimeters";
+constexpr std::string_view kRightHandPositionYKey =
+    "right_hand_position_y_centimeters";
+constexpr std::string_view kRightHandPositionZKey =
+    "right_hand_position_z_centimeters";
+constexpr std::string_view kLeftHandPositionXKey =
+    "left_hand_position_x_centimeters";
+constexpr std::string_view kLeftHandPositionYKey =
+    "left_hand_position_y_centimeters";
+constexpr std::string_view kLeftHandPositionZKey =
+    "left_hand_position_z_centimeters";
 constexpr std::string_view kStandingEyeHeightKey =
     "standing_eye_height_centimeters";
 constexpr std::string_view kComfortVignetteEnabledKey =
@@ -368,6 +380,20 @@ bool IsColorSaturation(std::string_view value) noexcept
         bfvr::settings::kColorSaturationStepPercent);
 }
 
+bool IsHandPosition(std::string_view value) noexcept
+{
+    std::int32_t centimeters = 0;
+    const auto parsed = std::from_chars(
+        value.data(), value.data() + value.size(), centimeters);
+    return parsed.ec == std::errc{} &&
+        parsed.ptr == value.data() + value.size() &&
+        centimeters >= bfvr::settings::kMinimumHandPositionCentimeters &&
+        centimeters <= bfvr::settings::kMaximumHandPositionCentimeters &&
+        (centimeters - bfvr::settings::kMinimumHandPositionCentimeters) %
+                bfvr::settings::kHandPositionStepCentimeters ==
+            0;
+}
+
 bool IsAmbientOcclusionRadius(std::string_view value) noexcept
 {
     return IsUnsignedInRangeStep(
@@ -620,6 +646,60 @@ UserSettingsSchema SeededUserSettingsSchema()
                 "It does not resize the world or alter BF1942 collision, stance, or networked player position. Units are centimeters; accepted values are -30 through 30 in steps of 1. Positive values raise the infantry view. Applied only after VR Settings > Save."
             },
             IsVrHeightAdjustment
+        },
+        {
+            std::string(kRightHandPositionXKey),
+            std::to_string(kDefaultRightHandPositionXCentimeters),
+            {
+                "Moves the visible right hand and its attached held item sideways in the player's body-local frame. Positive X is right; negative X is left. It does not alter aim, firing, projectile direction, or the crosshair.",
+                "Units are centimeters; accepted values are -20 through 20 in steps of 1. Applied live after VR Settings > Save without a restart."
+            },
+            IsHandPosition
+        },
+        {
+            std::string(kRightHandPositionYKey),
+            std::to_string(kDefaultRightHandPositionYCentimeters),
+            {
+                "Moves the visible right hand and its attached held item vertically in the player's body-local frame. Positive Y is up; negative Y is down. It does not alter aim, firing, projectile direction, or the crosshair.",
+                "Units are centimeters; accepted values are -20 through 20 in steps of 1. Applied live after VR Settings > Save without a restart."
+            },
+            IsHandPosition
+        },
+        {
+            std::string(kRightHandPositionZKey),
+            std::to_string(kDefaultRightHandPositionZCentimeters),
+            {
+                "Moves the visible right hand and its attached held item forward or backward in the player's body-local frame. Positive Z is forward; negative Z is backward. It does not alter aim, firing, projectile direction, or the crosshair.",
+                "Units are centimeters; accepted values are -20 through 20 in steps of 1. Applied live after VR Settings > Save without a restart."
+            },
+            IsHandPosition
+        },
+        {
+            std::string(kLeftHandPositionXKey),
+            std::to_string(kDefaultLeftHandPositionXCentimeters),
+            {
+                "Moves the visible free left hand sideways in the player's body-local frame. Positive X is right; negative X is left. A rifle or sidearm support pose keeps its authored hand-to-weapon relationship.",
+                "Units are centimeters; accepted values are -20 through 20 in steps of 1. Applied live after VR Settings > Save without a restart; aim and firing are unchanged."
+            },
+            IsHandPosition
+        },
+        {
+            std::string(kLeftHandPositionYKey),
+            std::to_string(kDefaultLeftHandPositionYCentimeters),
+            {
+                "Moves the visible free left hand vertically in the player's body-local frame. Positive Y is up; negative Y is down. A rifle or sidearm support pose keeps its authored hand-to-weapon relationship.",
+                "Units are centimeters; accepted values are -20 through 20 in steps of 1. Applied live after VR Settings > Save without a restart; aim and firing are unchanged."
+            },
+            IsHandPosition
+        },
+        {
+            std::string(kLeftHandPositionZKey),
+            std::to_string(kDefaultLeftHandPositionZCentimeters),
+            {
+                "Moves the visible free left hand forward or backward in the player's body-local frame. Positive Z is forward; negative Z is backward. A rifle or sidearm support pose keeps its authored hand-to-weapon relationship.",
+                "Units are centimeters; accepted values are -20 through 20 in steps of 1. Applied live after VR Settings > Save without a restart; aim and firing are unchanged."
+            },
+            IsHandPosition
         },
         {
             std::string(kStandingEyeHeightKey),
@@ -1179,6 +1259,30 @@ UserSettingsValues DecodeUserSettings(const UserSettings& settings) noexcept
         kColorSaturationKey,
         kDefaultColorSaturationPercent,
         IsColorSaturation);
+    result.rightHandPositionXCentimeters = readSigned(
+        kRightHandPositionXKey,
+        kDefaultRightHandPositionXCentimeters,
+        IsHandPosition);
+    result.rightHandPositionYCentimeters = readSigned(
+        kRightHandPositionYKey,
+        kDefaultRightHandPositionYCentimeters,
+        IsHandPosition);
+    result.rightHandPositionZCentimeters = readSigned(
+        kRightHandPositionZKey,
+        kDefaultRightHandPositionZCentimeters,
+        IsHandPosition);
+    result.leftHandPositionXCentimeters = readSigned(
+        kLeftHandPositionXKey,
+        kDefaultLeftHandPositionXCentimeters,
+        IsHandPosition);
+    result.leftHandPositionYCentimeters = readSigned(
+        kLeftHandPositionYKey,
+        kDefaultLeftHandPositionYCentimeters,
+        IsHandPosition);
+    result.leftHandPositionZCentimeters = readSigned(
+        kLeftHandPositionZKey,
+        kDefaultLeftHandPositionZCentimeters,
+        IsHandPosition);
     const auto height = settings.values.find(
         std::string(kVrHeightAdjustmentKey));
     if (height != settings.values.end() &&
@@ -1346,6 +1450,25 @@ void EncodeUserSettings(
             values.vrHeightAdjustmentCentimeters,
             kMinimumVrHeightAdjustmentCentimeters,
             kMaximumVrHeightAdjustmentCentimeters));
+    const auto encodeHandPosition = [&](std::string_view key,
+                                        std::int32_t value) {
+        settings.values[std::string(key)] = std::to_string(std::clamp(
+            value,
+            kMinimumHandPositionCentimeters,
+            kMaximumHandPositionCentimeters));
+    };
+    encodeHandPosition(
+        kRightHandPositionXKey, values.rightHandPositionXCentimeters);
+    encodeHandPosition(
+        kRightHandPositionYKey, values.rightHandPositionYCentimeters);
+    encodeHandPosition(
+        kRightHandPositionZKey, values.rightHandPositionZCentimeters);
+    encodeHandPosition(
+        kLeftHandPositionXKey, values.leftHandPositionXCentimeters);
+    encodeHandPosition(
+        kLeftHandPositionYKey, values.leftHandPositionYCentimeters);
+    encodeHandPosition(
+        kLeftHandPositionZKey, values.leftHandPositionZCentimeters);
     settings.values[std::string(kStandingEyeHeightKey)] =
         std::to_string(std::clamp(
             values.standingEyeHeightCentimeters,

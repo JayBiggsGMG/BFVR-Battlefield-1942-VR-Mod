@@ -58,6 +58,16 @@ int main()
     constexpr float kHalfSqrtTwo = 0.70710678F;
     wrist.currentGripOrientation = {
         0.0F, kHalfSqrtTwo, 0.0F, kHalfSqrtTwo};
+    const auto zeroLeverRotated =
+        bfvr::stereo::ComputeArmVrWristOffsetDelta(wrist);
+    passed &= Check(
+        zeroLeverRotated.has_value() &&
+            Near((*zeroLeverRotated)[0], 0.0F) &&
+            Near((*zeroLeverRotated)[1], 0.0F) &&
+            Near((*zeroLeverRotated)[2], 0.0F),
+        "production wrist rotation translated the visual hand");
+
+    wrist.gripLocalWristOffset = {0.0F, 0.0F, 0.08F};
     const auto rotated = bfvr::stereo::ComputeArmVrWristOffsetDelta(wrist);
     passed &= Check(
         rotated.has_value() && Near((*rotated)[0], 0.08F) &&
@@ -73,22 +83,22 @@ int main()
     const auto calibratedRight =
         bfvr::stereo::ApplyArmVrHandPositionCalibration(
             {0.25F, 0.50F, -0.10F},
-            bfvr::stereo::kRightHandPositionCalibrationCentimeters);
+            {-7, 4, -5});
     passed &= Check(
         calibratedRight.has_value() &&
-            Near((*calibratedRight)[0], 0.20F) &&
+            Near((*calibratedRight)[0], 0.18F) &&
             Near((*calibratedRight)[1], 0.54F) &&
-            Near((*calibratedRight)[2], -0.08F),
+            Near((*calibratedRight)[2], -0.15F),
         "accepted right-hand calibration changed");
     const auto calibratedLeft =
         bfvr::stereo::ApplyArmVrHandPositionCalibration(
             {0.25F, 0.50F, -0.10F},
-            bfvr::stereo::kLeftHandPositionCalibrationCentimeters);
+            {-2, 6, -2});
     passed &= Check(
         calibratedLeft.has_value() &&
-            Near((*calibratedLeft)[0], 0.24F) &&
-            Near((*calibratedLeft)[1], 0.58F) &&
-            Near((*calibratedLeft)[2], -0.18F),
+            Near((*calibratedLeft)[0], 0.23F) &&
+            Near((*calibratedLeft)[1], 0.56F) &&
+            Near((*calibratedLeft)[2], -0.12F),
         "accepted left-hand calibration changed");
 
     if (passed)

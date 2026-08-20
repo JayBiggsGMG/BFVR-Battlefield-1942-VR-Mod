@@ -26,6 +26,15 @@ constexpr std::int32_t kMinimumVrHeightAdjustmentCentimeters = -30;
 constexpr std::int32_t kMaximumVrHeightAdjustmentCentimeters = 30;
 constexpr std::int32_t kVrHeightAdjustmentStepCentimeters = 1;
 constexpr std::int32_t kDefaultVrHeightAdjustmentCentimeters = 0;
+constexpr std::int32_t kMinimumHandPositionCentimeters = -20;
+constexpr std::int32_t kMaximumHandPositionCentimeters = 20;
+constexpr std::int32_t kHandPositionStepCentimeters = 1;
+constexpr std::int32_t kDefaultRightHandPositionXCentimeters = -7;
+constexpr std::int32_t kDefaultRightHandPositionYCentimeters = 4;
+constexpr std::int32_t kDefaultRightHandPositionZCentimeters = -5;
+constexpr std::int32_t kDefaultLeftHandPositionXCentimeters = -2;
+constexpr std::int32_t kDefaultLeftHandPositionYCentimeters = 6;
+constexpr std::int32_t kDefaultLeftHandPositionZCentimeters = -2;
 constexpr std::uint32_t kMinimumStandingEyeHeightCentimeters = 50;
 constexpr std::uint32_t kMaximumStandingEyeHeightCentimeters = 250;
 constexpr std::uint32_t kDefaultStandingEyeHeightCentimeters = 170;
@@ -134,6 +143,18 @@ struct UserSettingsValues
     MovementDirection movementDirection = MovementDirection::Head;
     std::int32_t vrHeightAdjustmentCentimeters =
         kDefaultVrHeightAdjustmentCentimeters;
+    std::int32_t rightHandPositionXCentimeters =
+        kDefaultRightHandPositionXCentimeters;
+    std::int32_t rightHandPositionYCentimeters =
+        kDefaultRightHandPositionYCentimeters;
+    std::int32_t rightHandPositionZCentimeters =
+        kDefaultRightHandPositionZCentimeters;
+    std::int32_t leftHandPositionXCentimeters =
+        kDefaultLeftHandPositionXCentimeters;
+    std::int32_t leftHandPositionYCentimeters =
+        kDefaultLeftHandPositionYCentimeters;
+    std::int32_t leftHandPositionZCentimeters =
+        kDefaultLeftHandPositionZCentimeters;
     std::uint32_t standingEyeHeightCentimeters =
         kDefaultStandingEyeHeightCentimeters;
     bool comfortVignetteEnabled = false;

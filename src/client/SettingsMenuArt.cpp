@@ -768,6 +768,9 @@ bool SettingsMenuArt::DrawStatusField(
     case stereo::SettingsMenuStatus::ForwardRecenterFailed:
         message = L"Recenter unavailable - tracking not ready";
         break;
+    case stereo::SettingsMenuStatus::HandPositionsReset:
+        message = L"Hand defaults restored - not saved";
+        break;
     case stereo::SettingsMenuStatus::ColorSettingsReset:
         message = L"Color settings reset - not saved";
         break;
@@ -951,43 +954,91 @@ bool SettingsMenuArt::ComposeSettingsBody(
                     state.values.menuPointerSmoothingEnabled,
                     L"Stabilizes controller-pointer tremor in all Battlefield and BFVR menus.");
         }
-        const int heightY = static_cast<int>(
-            stereo::kSettingsMenuVrPageThreeRowCentersPixels[0]);
-        const float normalizedHeight = static_cast<float>(
-            state.values.vrHeightAdjustmentCentimeters -
-            settings::kMinimumVrHeightAdjustmentCentimeters) /
-            static_cast<float>(settings::kMaximumVrHeightAdjustmentCentimeters -
-                settings::kMinimumVrHeightAdjustmentCentimeters);
-        const std::wstring height =
-            (state.values.vrHeightAdjustmentCentimeters > 0 ? L"+" : L"") +
-            std::to_wstring(state.values.vrHeightAdjustmentCentimeters) + L" cm";
-        const auto drawAction = [&](int centerY,
-                                    const wchar_t* label,
-                                    stereo::SettingsMenuSelection selection) {
-            // NumberBox.png intentionally carries transparent padding on its
-            // right edge. Centre its visible 91/128-wide frame on the panel,
-            // then centre text inside that visible frame rather than inside
-            // the padded source rectangle.
-            return CompositeLayerAt(numberBox_, destination, 306, centerY - 42,
-                       580, 84) &&
-                DrawWhiteText(destination, label, 316, centerY - 42, 392, 84,
-                    state.hovered == selection ? 27 : 24,
-                    DT_CENTER | DT_SINGLELINE | DT_VCENTER);
-        };
-        return drawSliderAt(heightY, L"Manual Height Adjustment",
-                   normalizedHeight, height) &&
-            DrawWhiteText(destination,
-                L"Infantry only; vehicles and mounted seats use independent neutral poses.",
-                82, heightY + 42, 860, 46, 18,
-                DT_LEFT | DT_SINGLELINE | DT_VCENTER) &&
-            drawAction(static_cast<int>(
-                    stereo::kSettingsMenuVrPageThreeRowCentersPixels[1]),
-                L"CALIBRATE STANDING",
-                stereo::SettingsMenuSelection::AutoCalibrateStandingHeight) &&
-            drawAction(static_cast<int>(
-                    stereo::kSettingsMenuVrPageThreeRowCentersPixels[2]),
-                L"RECENTER FORWARD",
-                stereo::SettingsMenuSelection::RecenterForward);
+        if (state.page == 2)
+        {
+            const int heightY = static_cast<int>(
+                stereo::kSettingsMenuVrPageThreeRowCentersPixels[0]);
+            const float normalizedHeight = static_cast<float>(
+                state.values.vrHeightAdjustmentCentimeters -
+                settings::kMinimumVrHeightAdjustmentCentimeters) /
+                static_cast<float>(
+                    settings::kMaximumVrHeightAdjustmentCentimeters -
+                    settings::kMinimumVrHeightAdjustmentCentimeters);
+            const std::wstring height =
+                (state.values.vrHeightAdjustmentCentimeters > 0 ? L"+" : L"") +
+                std::to_wstring(
+                    state.values.vrHeightAdjustmentCentimeters) + L" cm";
+            const auto drawAction = [&](int centerY,
+                                        const wchar_t* label,
+                                        stereo::SettingsMenuSelection selection) {
+                // NumberBox.png intentionally carries transparent padding on its
+                // right edge. Centre its visible 91/128-wide frame on the panel,
+                // then centre text inside that visible frame rather than inside
+                // the padded source rectangle.
+                return CompositeLayerAt(numberBox_, destination, 306,
+                           centerY - 42, 580, 84) &&
+                    DrawWhiteText(destination, label, 316, centerY - 42,
+                        392, 84, state.hovered == selection ? 27 : 24,
+                        DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+            };
+            return drawSliderAt(heightY, L"Manual Height Adjustment",
+                       normalizedHeight, height) &&
+                DrawWhiteText(destination,
+                    L"Infantry only; vehicles and mounted seats use independent neutral poses.",
+                    82, heightY + 42, 860, 46, 18,
+                    DT_LEFT | DT_SINGLELINE | DT_VCENTER) &&
+                drawAction(static_cast<int>(
+                        stereo::kSettingsMenuVrPageThreeRowCentersPixels[1]),
+                    L"CALIBRATE STANDING",
+                    stereo::SettingsMenuSelection::AutoCalibrateStandingHeight) &&
+                drawAction(static_cast<int>(
+                        stereo::kSettingsMenuVrPageThreeRowCentersPixels[2]),
+                    L"RECENTER FORWARD",
+                    stereo::SettingsMenuSelection::RecenterForward);
+        }
+        const wchar_t* labels[] = {
+            L"Right Hand: Left / Right",
+            L"Right Hand: Down / Up",
+            L"Right Hand: Back / Forward",
+            L"Left Hand: Left / Right",
+            L"Left Hand: Down / Up",
+            L"Left Hand: Back / Forward"};
+        const std::int32_t positions[] = {
+            state.values.rightHandPositionXCentimeters,
+            state.values.rightHandPositionYCentimeters,
+            state.values.rightHandPositionZCentimeters,
+            state.values.leftHandPositionXCentimeters,
+            state.values.leftHandPositionYCentimeters,
+            state.values.leftHandPositionZCentimeters};
+        bool drawn = true;
+        for (std::size_t index = 0;
+             drawn && index < stereo::kSettingsMenuVrPageFourRowCentersPixels.size();
+             ++index)
+        {
+            const float normalized = static_cast<float>(
+                positions[index] - settings::kMinimumHandPositionCentimeters) /
+                static_cast<float>(settings::kMaximumHandPositionCentimeters -
+                    settings::kMinimumHandPositionCentimeters);
+            const std::wstring display =
+                (positions[index] > 0 ? L"+" : L"") +
+                std::to_wstring(positions[index]) + L" cm";
+            drawn = drawSliderAt(
+                static_cast<int>(
+                    stereo::kSettingsMenuVrPageFourRowCentersPixels[index]),
+                labels[index], normalized, display);
+        }
+        const int resetY = static_cast<int>(
+            stereo::kSettingsMenuHandResetCenterPixels);
+        return drawn &&
+            CompositeLayerAt(numberBox_, destination, 306, resetY - 42,
+                580, 84) &&
+            DrawWhiteText(destination, L"RESET HANDS TO DEFAULTS", 316,
+                resetY - 42, 392, 84,
+                state.hovered ==
+                        stereo::SettingsMenuSelection::ResetHandPositions
+                    ? 27
+                    : 24,
+                DT_CENTER | DT_SINGLELINE | DT_VCENTER);
     }
     if (state.tab == stereo::SettingsMenuTab::GraphicsAudio)
     {

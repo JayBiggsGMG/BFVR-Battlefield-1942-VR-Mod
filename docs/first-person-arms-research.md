@@ -1262,10 +1262,11 @@ right-hand result is consumed by the selected-item attachment.
 - Hand/finger poses, item-relative placement, recoil, reload and other native
   animation state remain native. The existing controller target and gun/fire
   paths remain separate from shoulder reconstruction.
-- A captured neutral grip has zero added hand displacement. Controller
-  rotation contributes only the delta of the previously measured 8-cm
-  grip-local wristward lever arm, improving wrist-vs-controller motion without
-  adding a new OpenXR pose/action space.
+- Controller translation places the visible wrist and controller rotation
+  turns the hand without adding position. The previously measured 8-cm
+  grip-local wristward lever is retained only as injectable math coverage; its
+  production default is zero after headset feedback exposed visible
+  remote-pivot motion. No new OpenXR pose/action space is added.
 - Elbow intent is derived from hand position in the stable shoulder/body frame,
   reused for the full accepted XR generation, bounded between generations, and
   left for Maya to project into the solve plane.
@@ -1286,18 +1287,26 @@ The owner reports that the VR-owned arm behavior works excellently and accepts
 the shoulder/elbow reconstruction as the solution to the prior wild-elbow
 problem. Do not reopen the shared-root or flat-animation shoulder approaches.
 
-### Accepted two-hand position calibration
+### Restored two-hand position alignment controls
 
-The owner measured and accepted the visible-wrist corrections in-headset:
-right `(-5, +4, +2)` cm and left `(-1, +8, -8)` cm in body-local X/Y/Z, where
-positive X is right, positive Y is up, and positive Z is forward. These values
-are baked into the arm pose math; the temporary fourth VR Settings page and
-all six `UserConfig.txt` keys were removed.
+After accepting the zero-lever pivot correction as substantially better, the
+owner restored the six alignment sliders, tuned them again in-headset, and
+accepted right `(-7, +4, -5)` cm and left `(-2, +6, -2)` cm in body-local
+X/Y/Z. These are now the seeded player defaults. VR Settings page 4 exposes
+the same range from -20 through +20 cm in 1-cm steps, but labels each direction
+directly as Left/Right, Down/Up, or Back/Forward instead of exposing X/Y/Z.
+
+The compact single-page layout also provides `RESET HANDS TO DEFAULTS`. This
+restores only the six hand-alignment values to the accepted defaults in the
+menu's working copy. Save commits the reset; Cancel discards it. The existing
+bottom `RESET TO DEFAULTS` remains the separate whole-settings action.
 
 Right calibration moves the controller-owned wrist target and its attached
 item together, preserving the hand/item relation and aim direction. Left
 calibration moves only the free-hand target; an acquired rifle or sidearm
 support pose continues to own the visual hand-to-weapon relation and bypasses
-the baked left correction. Neither path changes the tracked shoulders, elbow
-intent, native hand/finger rotation, support acquisition/steering, startup,
-OpenXR bootstrap, runtime selection, Oasis, or Steam launch behavior.
+the saved left correction. The settings apply live after Save and do not
+require a restart. Neither path changes the tracked shoulders, zero wrist
+lever, elbow intent, native hand/finger rotation, support acquisition/
+steering, aim/fire/crosshair paths, startup, OpenXR bootstrap, runtime
+selection, Oasis, or Steam launch behavior.

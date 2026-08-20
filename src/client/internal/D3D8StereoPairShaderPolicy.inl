@@ -29,11 +29,9 @@ void ApplyFrameSemanticPolicy(
     snapshot.semanticClass =
         bfvr::stereo::ClassifyBF1942Win32SemanticDraw(signature);
 
-    // The statically matched PatchTerrain::drawShadowCells return remains the
-    // zero-overhead fast path. Some live terrain submissions have a different
-    // outer return, so a bounded discovery window also observes BF1942's exact
-    // native projected-texture state. It can promote only the already-profiled
-    // shared PatchCellBlock indexed draw; all other draws are audit-only.
+    // Both proven PatchTerrain::drawShadowCells returns take the static fast
+    // path. A bounded fallback can still learn an unfamiliar outer return, but
+    // it inspects only the already-profiled shared PatchCellBlock indexed draw.
     const bool sharedPatchCellCandidate =
         signature.wrapperReturnAddress == kGameDrawIndexedPrimitiveReturn &&
         signature.rendererReturnAddress == kPatchCellBlockDrawReturn &&
@@ -41,10 +39,23 @@ void ApplyFrameSemanticPolicy(
         signature.perspective &&
         signature.primitiveType == 4 &&
         signature.primitiveCount != 0;
-    const LONG dynamicProducer = InterlockedCompareExchange(
+    LONG dynamicProducer = InterlockedCompareExchange(
         &g_projectedShadowDynamicProducerReturn,
         0,
         0);
+    if (dynamicProducer == 0 &&
+        snapshot.semanticClass ==
+            bfvr::stereo::D3D8SemanticDrawClass::ProjectedTerrainShadow)
+    {
+        InterlockedCompareExchange(
+            &g_projectedShadowDynamicProducerReturn,
+            static_cast<LONG>(signature.producerReturnAddress),
+            0);
+        dynamicProducer = InterlockedCompareExchange(
+            &g_projectedShadowDynamicProducerReturn,
+            0,
+            0);
+    }
     const bool cachedDynamicCandidate =
         dynamicProducer != 0 &&
         sharedPatchCellCandidate &&
@@ -59,11 +70,10 @@ void ApplyFrameSemanticPolicy(
         IsPresentationMode() &&
         dynamicProducer == 0 &&
         discoveryBudget > 0 &&
-        signature.perspective &&
+        sharedPatchCellCandidate &&
         signature.alphaBlendEnable == 1 &&
-        signature.primitiveType >= 4 &&
-        signature.primitiveType <= 6 &&
-        signature.primitiveCount != 0;
+        snapshot.semanticClass !=
+            bfvr::stereo::D3D8SemanticDrawClass::ProjectedTerrainShadow;
     if (boundedDiscoveryShape)
     {
         discoveryTicket =
@@ -146,7 +156,7 @@ void ApplyFrameSemanticPolicy(
         (InterlockedOr(&g_projectedShadowAuditMask, 0x400) & 0x400) == 0)
     {
         AppendLog(
-            L"PROJECTED_SHADOW_AUDIT discoveryExhausted alphaPerspectiveTriangleCandidates=65536 lastWrapper=0x%08lX lastRenderer=0x%08lX lastProducer=0x%08lX.",
+            L"PROJECTED_SHADOW_AUDIT discoveryExhausted sharedPatchCellCandidates=65536 lastWrapper=0x%08lX lastRenderer=0x%08lX lastProducer=0x%08lX.",
             static_cast<unsigned long>(signature.wrapperReturnAddress),
             static_cast<unsigned long>(signature.rendererReturnAddress),
             static_cast<unsigned long>(signature.producerReturnAddress));

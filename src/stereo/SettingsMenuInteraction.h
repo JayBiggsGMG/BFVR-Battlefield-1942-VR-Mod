@@ -42,6 +42,13 @@ enum class SettingsMenuSelection : std::uint32_t
     MovementDirectionNext,
     InfantryTurnSpeed,
     VrHeightAdjustment,
+    RightHandPositionX,
+    RightHandPositionY,
+    RightHandPositionZ,
+    LeftHandPositionX,
+    LeftHandPositionY,
+    LeftHandPositionZ,
+    ResetHandPositions,
     AutoCalibrateStandingHeight,
     RecenterForward,
     ComfortVignetteEnabled,
@@ -111,6 +118,7 @@ enum class SettingsMenuStatus : std::uint32_t
     StandingModeRequired,
     ForwardRecentered,
     ForwardRecenterFailed,
+    HandPositionsReset,
     ColorSettingsReset
 };
 
@@ -135,6 +143,9 @@ constexpr std::array<float, 4> kSettingsMenuVrPageTwoRowCentersPixels = {
     135.0F, 300.0F, 515.0F, 700.0F};
 constexpr std::array<float, 3> kSettingsMenuVrPageThreeRowCentersPixels = {
     180.0F, 370.0F, 610.0F};
+constexpr std::array<float, 6> kSettingsMenuVrPageFourRowCentersPixels = {
+    125.0F, 230.0F, 335.0F, 440.0F, 545.0F, 650.0F};
+constexpr float kSettingsMenuHandResetCenterPixels = 770.0F;
 constexpr float kSettingsMenuControlsGripRowCenterPixels = 150.0F;
 constexpr std::array<float, 3>
     kSettingsMenuControlsCrosshairRowCentersPixels = {
@@ -154,7 +165,7 @@ constexpr std::array<float, 5> kSettingsMenuColorRowCentersPixels = {
 constexpr float kSettingsMenuAudioRowCenterPixels = 310.0F;
 constexpr std::array<std::uint32_t,
     static_cast<std::size_t>(SettingsMenuTab::Count)>
-    kSettingsMenuPageCounts = {3, 3, 3};
+    kSettingsMenuPageCounts = {4, 3, 3};
 
 struct SettingsMenuSnapshot
 {
@@ -203,6 +214,9 @@ private:
     void SetTurnSpeedFromPointer(float pointerU) noexcept;
     void SetVehicleMotionAimSensitivityFromPointer(float pointerU) noexcept;
     void SetHeightAdjustmentFromPointer(float pointerU) noexcept;
+    void SetHandPositionFromPointer(
+        SettingsMenuSelection selection,
+        float pointerU) noexcept;
     void SetCrosshairOpacityFromPointer(float pointerU) noexcept;
     void SetGraphicsSliderFromPointer(
         SettingsMenuSelection selection,

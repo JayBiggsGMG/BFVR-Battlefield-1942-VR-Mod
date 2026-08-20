@@ -1915,11 +1915,17 @@ void TestBF1942SemanticDrawPolicy()
         1,
         1,
         0,
-        0x00683ADD};
+        0x00682E95};
     if (bfvr::stereo::ClassifyBF1942Win32SemanticDraw(signature) !=
         D3D8SemanticDrawClass::ProjectedTerrainShadow)
     {
-        Fail(test, "exact projected terrain-shadow draw boundary was rejected");
+        Fail(test, "live vector terrain-shadow draw boundary was rejected");
+    }
+    signature.producerReturnAddress = 0x00683ADD;
+    if (bfvr::stereo::ClassifyBF1942Win32SemanticDraw(signature) !=
+        D3D8SemanticDrawClass::ProjectedTerrainShadow)
+    {
+        Fail(test, "alternate linked terrain-shadow boundary was rejected");
     }
     signature.producerReturnAddress = 0x00683ADE;
     if (bfvr::stereo::ClassifyBF1942Win32SemanticDraw(signature) !=
@@ -1927,7 +1933,7 @@ void TestBF1942SemanticDrawPolicy()
     {
         Fail(test, "ordinary PatchCellBlock caller did not fail closed");
     }
-    signature.producerReturnAddress = 0x00683ADD;
+    signature.producerReturnAddress = 0x00682E95;
     signature.rendererReturnAddress = 0x0069922F;
     if (bfvr::stereo::ClassifyBF1942Win32SemanticDraw(signature) !=
         D3D8SemanticDrawClass::Unclassified)

@@ -262,6 +262,12 @@ These are established behaviors, not cleanup opportunities.
 - UI capture policies distinguish full replacement frames from accumulating
   HUD draws. Combining them blindly can create trails or repeated translucent
   elements.
+- Retail projected terrain shadows have two proven outer producer returns,
+  `0x00682E95` and `0x00683ADD`, under wrapper `0x0066800A` and shared
+  `PatchCellBlock::draw` return `0x0069922E`. Keep both in the fail-closed
+  static classifier. Runtime state discovery is fallback-only and may inspect
+  only that shared indexed terrain-cell submission; do not spend its budget on
+  unrelated alpha-blended perspective draws.
 
 ### Frame limiter
 

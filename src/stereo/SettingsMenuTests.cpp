@@ -89,6 +89,34 @@ bool TestBounds()
             SettingsMenuTab::VrSettings, false, 2) ==
             SettingsMenuSelection::VrHeightAdjustment &&
         SettingsMenuSelectionAt(
+            0.70F, 0.122F, true, false,
+            SettingsMenuTab::VrSettings, false, 3) ==
+            SettingsMenuSelection::RightHandPositionX &&
+        SettingsMenuSelectionAt(
+            0.70F, 0.225F, true, false,
+            SettingsMenuTab::VrSettings, false, 3) ==
+            SettingsMenuSelection::RightHandPositionY &&
+        SettingsMenuSelectionAt(
+            0.70F, 0.327F, true, false,
+            SettingsMenuTab::VrSettings, false, 3) ==
+            SettingsMenuSelection::RightHandPositionZ &&
+        SettingsMenuSelectionAt(
+            0.70F, 0.430F, true, false,
+            SettingsMenuTab::VrSettings, false, 3) ==
+            SettingsMenuSelection::LeftHandPositionX &&
+        SettingsMenuSelectionAt(
+            0.70F, 0.532F, true, false,
+            SettingsMenuTab::VrSettings, false, 3) ==
+            SettingsMenuSelection::LeftHandPositionY &&
+        SettingsMenuSelectionAt(
+            0.70F, 0.635F, true, false,
+            SettingsMenuTab::VrSettings, false, 3) ==
+            SettingsMenuSelection::LeftHandPositionZ &&
+        SettingsMenuSelectionAt(
+            0.60F, 0.752F, true, false,
+            SettingsMenuTab::VrSettings, false, 3) ==
+            SettingsMenuSelection::ResetHandPositions &&
+        SettingsMenuSelectionAt(
             0.57F, 0.132F, true, false,
             SettingsMenuTab::VrSettings, false, 1) ==
             SettingsMenuSelection::ComfortVignetteEnabled &&
@@ -469,7 +497,7 @@ bool TestInteractionAndPlacement()
     AimAt(input, state.panelPose, state.widthMeters, 0.66F, 0.87F);
     Click(interaction, input);
     state = interaction.Snapshot();
-    if (state.page != 2 || !state.arrowLeftVisible || state.arrowRightVisible)
+    if (state.page != 2 || !state.arrowLeftVisible || !state.arrowRightVisible)
     {
         return false;
     }
@@ -494,6 +522,62 @@ bool TestInteractionAndPlacement()
     {
         return false;
     }
+
+    // Page 4 restores independent body-local XYZ alignment for both hands.
+    state = interaction.Snapshot();
+    AimAt(input, state.panelPose, state.widthMeters, 0.66F, 0.87F);
+    Click(interaction, input);
+    state = interaction.Snapshot();
+    if (state.page != 3 || !state.arrowLeftVisible || state.arrowRightVisible)
+    {
+        return false;
+    }
+    for (float row : bfvr::stereo::kSettingsMenuVrPageFourRowCentersPixels)
+    {
+        AimAt(
+            input,
+            state.panelPose,
+            state.widthMeters,
+            0.705F,
+            row / static_cast<float>(
+                bfvr::stereo::kSettingsMenuTextureSize));
+        Click(interaction, input);
+    }
+    state = interaction.Snapshot();
+    if (state.values.rightHandPositionXCentimeters != 5 ||
+        state.values.rightHandPositionYCentimeters != 5 ||
+        state.values.rightHandPositionZCentimeters != 5 ||
+        state.values.leftHandPositionXCentimeters != 5 ||
+        state.values.leftHandPositionYCentimeters != 5 ||
+        state.values.leftHandPositionZCentimeters != 5 ||
+        !interaction.TakeValuesChanged())
+    {
+        return false;
+    }
+    AimAt(
+        input,
+        state.panelPose,
+        state.widthMeters,
+        0.60F,
+        bfvr::stereo::kSettingsMenuHandResetCenterPixels /
+            static_cast<float>(bfvr::stereo::kSettingsMenuTextureSize));
+    Click(interaction, input);
+    state = interaction.Snapshot();
+    if (state.values.rightHandPositionXCentimeters != -7 ||
+        state.values.rightHandPositionYCentimeters != 4 ||
+        state.values.rightHandPositionZCentimeters != -5 ||
+        state.values.leftHandPositionXCentimeters != -2 ||
+        state.values.leftHandPositionYCentimeters != 6 ||
+        state.values.leftHandPositionZCentimeters != -2 ||
+        state.status !=
+            bfvr::stereo::SettingsMenuStatus::HandPositionsReset ||
+        !interaction.TakeValuesChanged())
+    {
+        return false;
+    }
+    state = interaction.Snapshot();
+    AimAt(input, state.panelPose, state.widthMeters, 0.59F, 0.87F);
+    Click(interaction, input);
     state = interaction.Snapshot();
     AimAt(input, state.panelPose, state.widthMeters, 0.59F, 0.87F);
     Click(interaction, input);
@@ -897,6 +981,14 @@ bool TestArt(const wchar_t* directory)
         return false;
     }
     variant = state;
+    variant.page = 3;
+    variant.values.rightHandPositionXCentimeters = 20;
+    variant.values.leftHandPositionZCentimeters = -20;
+    if (!differs(variant))
+    {
+        return false;
+    }
+    variant = state;
     variant.tab = SettingsMenuTab::Controls;
     variant.values.offHandGripStyle =
         bfvr::settings::OffHandGripStyle::Toggle;
@@ -989,6 +1081,12 @@ bool TestArt(const wchar_t* directory)
     }
     variant = state;
     variant.status = bfvr::stereo::SettingsMenuStatus::DefaultsRestored;
+    if (!differs(variant))
+    {
+        return false;
+    }
+    variant = state;
+    variant.status = bfvr::stereo::SettingsMenuStatus::HandPositionsReset;
     if (!differs(variant))
     {
         return false;
@@ -1157,6 +1255,12 @@ bool CaptureArt(const wchar_t* assetDirectory, const wchar_t* outputDirectory)
             false,
             false,
             2) &&
+        capture(
+            SettingsMenuTab::VrSettings,
+            L"Settings-VR-Hand-Alignment.bmp",
+            false,
+            false,
+            3) &&
         capture(
             SettingsMenuTab::Controls,
             L"Settings-Controls.bmp",

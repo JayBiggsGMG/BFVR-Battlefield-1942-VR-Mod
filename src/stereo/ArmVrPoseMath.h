@@ -9,13 +9,6 @@
 namespace bfvr::stereo
 {
 
-// Owner-accepted body-local visible-wrist calibration. These values were
-// measured in-headset after the VR-owned shoulder/elbow solve was accepted.
-constexpr std::array<std::int32_t, 3>
-    kRightHandPositionCalibrationCentimeters = {-5, 4, 2};
-constexpr std::array<std::int32_t, 3>
-    kLeftHandPositionCalibrationCentimeters = {-1, 8, -8};
-
 struct ArmVrShoulderAnchorInput
 {
     // All positions are already in BF1942's local Skeleton component frame.
@@ -42,14 +35,16 @@ struct ArmVrWristOffsetInput
 {
     Quaternion referenceGripOrientation = {};
     Quaternion currentGripOrientation = {};
-    // OpenXR grip-local coordinates. +Z is wristward for the recorded
-    // palm-to-wrist calibration experiment.
-    Vec3 gripLocalWristOffset = {0.0F, 0.0F, 0.08F};
+    // Keep the production visual wrist at the tracked grip position. A
+    // nonzero controller-local lever makes rotation translate the hand and
+    // attached item around a remote pivot. The field remains injectable for
+    // focused math coverage and any future controller-specific experiment.
+    Vec3 gripLocalWristOffset = {};
 };
 
-// Returns only the rotation-dependent change of a controller-local wrist
-// lever arm. The reference pose therefore produces zero displacement and
-// cannot introduce a spawn/item-switch jump. The result is in D3D8/Skeleton
+// Returns only the rotation-dependent change of an explicitly supplied
+// controller-local wrist lever. Production leaves the lever at zero so hand
+// rotation cannot translate the wrist. The result is in D3D8/Skeleton
 // coordinates and is visual-arm-only.
 [[nodiscard]] std::optional<std::array<float, 3>>
 ComputeArmVrWristOffsetDelta(

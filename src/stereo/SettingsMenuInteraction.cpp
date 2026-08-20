@@ -64,6 +64,8 @@ bool IsSliderSelection(
     return selection == SettingsMenuSelection::InfantryTurnSpeed ||
         selection == SettingsMenuSelection::VehicleMotionAimSensitivity ||
         selection == SettingsMenuSelection::VrHeightAdjustment ||
+        (selection >= SettingsMenuSelection::RightHandPositionX &&
+         selection <= SettingsMenuSelection::LeftHandPositionZ) ||
         selection == SettingsMenuSelection::CrosshairOpacity ||
         selection == SettingsMenuSelection::FxaaSharpening ||
         selection == SettingsMenuSelection::AmbientOcclusionRadius ||
@@ -73,6 +75,14 @@ bool IsSliderSelection(
         selection == SettingsMenuSelection::ColorExposure ||
         selection == SettingsMenuSelection::ColorContrast ||
         selection == SettingsMenuSelection::ColorSaturation;
+}
+
+bool IsHandPositionSelection(
+    bfvr::stereo::SettingsMenuSelection selection) noexcept
+{
+    using bfvr::stereo::SettingsMenuSelection;
+    return selection >= SettingsMenuSelection::RightHandPositionX &&
+        selection <= SettingsMenuSelection::LeftHandPositionZ;
 }
 } // namespace
 
@@ -336,6 +346,32 @@ SettingsMenuSelection SettingsMenuSelectionAt(
             return SettingsMenuSelection::CrosshairOpacity;
         }
     }
+    if (tab == SettingsMenuTab::VrSettings && page == 3 &&
+        pixelX >= kSettingsMenuControlColumnPixels &&
+        pixelX <= kSettingsMenuSliderRightPixels)
+    {
+        for (std::size_t index = 0;
+             index < kSettingsMenuVrPageFourRowCentersPixels.size();
+             ++index)
+        {
+            const float centerY =
+                kSettingsMenuVrPageFourRowCentersPixels[index];
+            if (pixelY >= centerY - 38.0F && pixelY <= centerY + 38.0F)
+            {
+                return static_cast<SettingsMenuSelection>(
+                    static_cast<std::uint32_t>(
+                        SettingsMenuSelection::RightHandPositionX) +
+                    static_cast<std::uint32_t>(index));
+            }
+        }
+    }
+    if (tab == SettingsMenuTab::VrSettings && page == 3 &&
+        pixelX >= 350.0F && pixelX <= 930.0F &&
+        pixelY >= kSettingsMenuHandResetCenterPixels - 42.0F &&
+        pixelY <= kSettingsMenuHandResetCenterPixels + 42.0F)
+    {
+        return SettingsMenuSelection::ResetHandPositions;
+    }
     if (tab == SettingsMenuTab::Controls && page == 2)
     {
         const float centerY =
@@ -454,6 +490,20 @@ const wchar_t* SettingsMenuSelectionName(
         return L"next Movement Direction";
     case SettingsMenuSelection::VrHeightAdjustment:
         return L"Manual Height Adjustment slider";
+    case SettingsMenuSelection::RightHandPositionX:
+        return L"Right Hand Left / Right slider";
+    case SettingsMenuSelection::RightHandPositionY:
+        return L"Right Hand Down / Up slider";
+    case SettingsMenuSelection::RightHandPositionZ:
+        return L"Right Hand Back / Forward slider";
+    case SettingsMenuSelection::LeftHandPositionX:
+        return L"Left Hand Left / Right slider";
+    case SettingsMenuSelection::LeftHandPositionY:
+        return L"Left Hand Down / Up slider";
+    case SettingsMenuSelection::LeftHandPositionZ:
+        return L"Left Hand Back / Forward slider";
+    case SettingsMenuSelection::ResetHandPositions:
+        return L"Reset Hands to Defaults";
     case SettingsMenuSelection::AutoCalibrateStandingHeight:
         return L"Auto-Calibrate Standing Height";
     case SettingsMenuSelection::RecenterForward: return L"Recenter Forward";
@@ -742,6 +792,10 @@ void SettingsMenuInteraction::Update(
             {
                 SetHeightAdjustmentFromPointer(pointerU_);
             }
+            else if (IsHandPositionSelection(pressed_))
+            {
+                SetHandPositionFromPointer(pressed_, pointerU_);
+            }
             else if (pressed_ == SettingsMenuSelection::CrosshairOpacity)
             {
                 SetCrosshairOpacityFromPointer(pointerU_);
@@ -766,6 +820,10 @@ void SettingsMenuInteraction::Update(
         else if (pressed_ == SettingsMenuSelection::VrHeightAdjustment)
         {
             SetHeightAdjustmentFromPointer(pointerU_);
+        }
+        else if (IsHandPositionSelection(pressed_))
+        {
+            SetHandPositionFromPointer(pressed_, pointerU_);
         }
         else if (pressed_ == SettingsMenuSelection::CrosshairOpacity)
         {
@@ -1182,9 +1240,31 @@ void SettingsMenuInteraction::Activate(
         valuesChanged_ = true;
         status_ = SettingsMenuStatus::ColorSettingsReset;
         break;
+    case SettingsMenuSelection::ResetHandPositions:
+        values_.rightHandPositionXCentimeters =
+            settings::kDefaultRightHandPositionXCentimeters;
+        values_.rightHandPositionYCentimeters =
+            settings::kDefaultRightHandPositionYCentimeters;
+        values_.rightHandPositionZCentimeters =
+            settings::kDefaultRightHandPositionZCentimeters;
+        values_.leftHandPositionXCentimeters =
+            settings::kDefaultLeftHandPositionXCentimeters;
+        values_.leftHandPositionYCentimeters =
+            settings::kDefaultLeftHandPositionYCentimeters;
+        values_.leftHandPositionZCentimeters =
+            settings::kDefaultLeftHandPositionZCentimeters;
+        valuesChanged_ = true;
+        status_ = SettingsMenuStatus::HandPositionsReset;
+        break;
     case SettingsMenuSelection::InfantryTurnSpeed:
     case SettingsMenuSelection::VehicleMotionAimSensitivity:
     case SettingsMenuSelection::VrHeightAdjustment:
+    case SettingsMenuSelection::RightHandPositionX:
+    case SettingsMenuSelection::RightHandPositionY:
+    case SettingsMenuSelection::RightHandPositionZ:
+    case SettingsMenuSelection::LeftHandPositionX:
+    case SettingsMenuSelection::LeftHandPositionY:
+    case SettingsMenuSelection::LeftHandPositionZ:
     case SettingsMenuSelection::CrosshairOpacity:
     case SettingsMenuSelection::FxaaSharpening:
     case SettingsMenuSelection::AmbientOcclusionRadius:
@@ -1287,6 +1367,50 @@ void SettingsMenuInteraction::SetHeightAdjustmentFromPointer(
     if (selected != values_.vrHeightAdjustmentCentimeters)
     {
         values_.vrHeightAdjustmentCentimeters = selected;
+        valuesChanged_ = true;
+        status_ = SettingsMenuStatus::SettingsNotSaved;
+    }
+}
+
+void SettingsMenuInteraction::SetHandPositionFromPointer(
+    SettingsMenuSelection selection,
+    float pointerU) noexcept
+{
+    if (!IsHandPositionSelection(selection))
+    {
+        return;
+    }
+    const float pixelX = std::clamp(pointerU, 0.0F, 1.0F) *
+        kSettingsMenuTextureSize;
+    const float normalized = std::clamp(
+        (pixelX - kSettingsMenuControlColumnPixels) /
+            (kSettingsMenuSliderRightPixels -
+             kSettingsMenuControlColumnPixels),
+        0.0F,
+        1.0F);
+    const float unsnapped = static_cast<float>(
+        settings::kMinimumHandPositionCentimeters) +
+        normalized * static_cast<float>(
+            settings::kMaximumHandPositionCentimeters -
+            settings::kMinimumHandPositionCentimeters);
+    const std::int32_t selected = std::clamp(
+        static_cast<std::int32_t>(std::lround(unsnapped)),
+        settings::kMinimumHandPositionCentimeters,
+        settings::kMaximumHandPositionCentimeters);
+    std::int32_t* positions[] = {
+        &values_.rightHandPositionXCentimeters,
+        &values_.rightHandPositionYCentimeters,
+        &values_.rightHandPositionZCentimeters,
+        &values_.leftHandPositionXCentimeters,
+        &values_.leftHandPositionYCentimeters,
+        &values_.leftHandPositionZCentimeters};
+    const std::size_t index = static_cast<std::size_t>(
+        static_cast<std::uint32_t>(selection) -
+        static_cast<std::uint32_t>(
+            SettingsMenuSelection::RightHandPositionX));
+    if (selected != *positions[index])
+    {
+        *positions[index] = selected;
         valuesChanged_ = true;
         status_ = SettingsMenuStatus::SettingsNotSaved;
     }

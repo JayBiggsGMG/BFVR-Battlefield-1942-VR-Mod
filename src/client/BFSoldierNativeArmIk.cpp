@@ -192,8 +192,7 @@ struct RightHandFrameContext
     Matrix4 controllerRightHandWorld = {};
     Matrix4 inverseSoldierWorld = {};
     bfvr::stereo::ArmVrShoulderAnchors shoulderAnchors = {};
-    bfvr::settings::OffHandGripStyle offHandGripStyle =
-        bfvr::settings::OffHandGripStyle::Hold;
+    bfvr::settings::UserSettingsValues armSettings = {};
     LONG controllerGeneration = 0;
     LONG activeItemIndex = -1;
     bool shoulderAnchorsValid = false;
@@ -353,10 +352,10 @@ public:
         enabled_ = true;
         (void)armPole_.Start(gameImage_, appendLog_);
         WriteLog(
-            L"Native 1P right-arm IK armed at Skeleton::transform and the exact active-item attachment callback. OpenXR grip/aim retains gun and fire authority; BF1942 retains hand/finger pose, selected-item relation, and animation state. The neutral hand location is unchanged, while an 8-cm grip-local anatomical-wrist lever arm contributes only its rotation-dependent visual delta. At the exact consumed first-person pass, a second native evaluation temporarily places the upper-arm origin from tracked head/body shoulders instead of flat weapon animation. The established whole-arm root shift remains %.2f metres. Existing authored IK targets bypass unchanged.",
+            L"Native 1P right-arm IK armed at Skeleton::transform and the exact active-item attachment callback. OpenXR grip/aim retains gun and fire authority; BF1942 retains hand/finger pose, selected-item relation, and animation state. The visual wrist rotates in place with no grip-local lever, while saved body-local XYZ alignment moves the visible hand and attached item together. At the exact consumed first-person pass, a second native evaluation temporarily places the upper-arm origin from tracked head/body shoulders instead of flat weapon animation. The established whole-arm root shift remains %.2f metres. Existing authored IK targets bypass unchanged.",
             kFirstPersonArmRootForwardOffset);
         WriteLog(
-            L"Native 1P left-hand IK retains tracked free-hand and authored rifle/sidearm support behavior. Its wrist lever arm and shoulder foundation follow the same visual-only policy as the right arm. Elbow intent is computed in the stable shoulder/body frame once per accepted XR generation, with position response, singularity fallback, and bounded continuity; Maya remains the sole two-bone projector. No third-person body, gameplay input, item, reload, projectile, startup, or runtime-selection state is changed.");
+            L"Native 1P left-hand IK retains tracked free-hand and authored rifle/sidearm support behavior. Its zero wrist lever, free-hand XYZ alignment, and shoulder foundation follow the same visual-only policy as the right arm; item-owned support poses remain unchanged. Elbow intent is computed in the stable shoulder/body frame once per accepted XR generation, with position response, singularity fallback, and bounded continuity; Maya remains the sole two-bone projector. No third-person body, gameplay input, item, reload, projectile, startup, or runtime-selection state is changed.");
         return true;
     }
 
@@ -1216,8 +1215,9 @@ private:
             const auto calibratedWrist =
                 bfvr::stereo::ApplyArmVrHandPositionCalibration(
                     visualWristPosition,
-                    bfvr::stereo::
-                        kRightHandPositionCalibrationCentimeters);
+                    {armSettings.rightHandPositionXCentimeters,
+                     armSettings.rightHandPositionYCentimeters,
+                     armSettings.rightHandPositionZCentimeters});
             if (calibratedWrist.has_value())
             {
                 visualWristPosition = *calibratedWrist;
@@ -1519,7 +1519,7 @@ private:
             frame.controllerRightHandWorld = targetWorld;
             frame.inverseSoldierWorld =
                 *inverseSoldierTransform;
-            frame.offHandGripStyle = armSettings.offHandGripStyle;
+            frame.armSettings = armSettings;
             if (shoulderAnchors.has_value())
             {
                 frame.shoulderAnchors = *shoulderAnchors;
@@ -1760,7 +1760,7 @@ private:
                      bfvr::shared::
                          kControllerHandFlagSqueezeActive) != 0;
                 supportInput.toggleGripStyle =
-                    rightFrame.offHandGripStyle ==
+                    rightFrame.armSettings.offHandGripStyle ==
                     bfvr::settings::OffHandGripStyle::Toggle;
                 supportInput.nativeLeftHandTargetActive = false;
                 supportInput.mode =
@@ -1844,8 +1844,9 @@ private:
                 const auto calibrated =
                     bfvr::stereo::ApplyArmVrHandPositionCalibration(
                         position,
-                        bfvr::stereo::
-                            kLeftHandPositionCalibrationCentimeters);
+                        {rightFrame.armSettings.leftHandPositionXCentimeters,
+                         rightFrame.armSettings.leftHandPositionYCentimeters,
+                         rightFrame.armSettings.leftHandPositionZCentimeters});
                 if (calibrated.has_value())
                 {
                     target.values[3][0] = (*calibrated)[0];

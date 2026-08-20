@@ -50,6 +50,10 @@ a shorter version of the same information.
 
 ### Changed
 
+- VR Settings now keeps separate Right and Left hand Left/Right, Down/Up, and
+  Back/Forward alignment sliders as permanent player options. The accepted
+  defaults are right `(-7,+4,-5)` cm and left `(-2,+6,-2)` cm, and a same-page
+  hand-only reset restores them without resetting unrelated settings.
 - Consolidated the three 3D crosshair mode selectors, color, and opacity onto
   one Controls page. The vacated VR Settings row now owns Menu Pointer
   Smoothing.
@@ -87,6 +91,15 @@ a shorter version of the same information.
 
 ### Fixed
 
+- Fixed controller twisting making the visible hand and attached gun swing
+  around a point outside the wrist. Hand rotation now turns the wrist in place;
+  the saved alignment sliders retain deliberate resting-position adjustment
+  without changing aim, firing, projectiles, or the crosshair.
+- Fixed projected soldier and vehicle shadows sometimes losing their stereo
+  correction for an entire launch. Both proven Battlefield terrain-shadow
+  routes are now recognized immediately; the retained compatibility search is
+  restricted to the shared terrain-cell path instead of scanning unrelated
+  blended draws.
 - Reduced animated-soldier CPU overhead from the Hands Only classifier. Mesh
   template names are now inspected lazily only for proven first-person
   arm/hand candidates, and repeated classifications are cached. Ordinary world

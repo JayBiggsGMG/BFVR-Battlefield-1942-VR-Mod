@@ -973,8 +973,10 @@ receiver path. The shared WinPC `PatchCellBlock::draw` submission returns at
 `0x0069922E`. Retail contains a vector-based `PatchTerrain::drawShadowCells`
 at `0x00682D70` (direct-call return `0x00682E95`) and an alternate linked-list
 traversal whose direct call returns at `0x00683ADD`; the tested live path uses
-`0x00682E95`. Generation into the auxiliary shadow texture remains outside the
-full-backbuffer replay. At the hooked D3D submission, the renderer wrapper
+`0x00682E95`. Both returns are permanent members of the static classifier, so
+the tested live path no longer depends on runtime discovery finding it before
+a budget expires. Generation into the auxiliary shadow texture remains outside
+the full-backbuffer replay. At the hooked D3D submission, the renderer wrapper
 return is stack slot 10, its three caller-owned arguments are slots 11-13,
 `PatchCellBlock::draw`'s saved `ESI` is slot 14, and the outer return is slot
 15. For only that three-address indexed conjunction, BFVR verifies
@@ -998,29 +1000,39 @@ The diagnostics-off filter evaluates the final formatted callback text so the
 observer adapter cannot hide these records behind its outer `%s` format. This
 does not enable continuous tracing or change render policy.
 
-Because a live terrain session proved that the first shared cell submission
-used outer return `0x0068379E` and did not execute the statically matched
-`0x00683ADD` path, BFVR also has a bounded runtime discovery window. It reads
-the two stage-0 values only on alpha-blended perspective triangle draws until
-it finds the exact native `CAMERASPACEPOSITION + COUNT2` pair. This matches the
-blend state installed by `ShadowManager::apply` and avoids spending the window
-on opaque terrain during the first second of world rendering. A draw is promoted
-for correction only when that state coincides with the already-profiled
-`PatchCellBlock::draw` wrapper/submission; every other match is audit-only.
-After promotion, the actual outer producer is cached and unrelated draws no
-longer participate in discovery. No launcher, configuration, injection, or
-OpenXR lifecycle behavior depends on this fallback.
+Earlier builds depended on a bounded runtime discovery window for the tested
+`0x00682E95` route. Historical runs prove that its 65,536-draw budget could be
+spent before a visible shadow appeared, leaving the correction inactive for
+the rest of that process. Discovery remains as compatibility fallback for an
+unfamiliar outer return, but it now reads the two stage-0 values only on the
+already-profiled shared `PatchCellBlock::draw` indexed submission with the
+expected perspective, triangle-list, and alpha-blend shape. It can promote
+only that same terrain-cell boundary under the exact native
+`CAMERASPACEPOSITION + COUNT2` pair. Observing either proven static producer
+caches it and ends fallback discovery for the process. No launcher,
+configuration, injection, or OpenXR lifecycle behavior depends on this
+fallback.
 
-The accepted 1.0.2 candidate is the exact normally launched `BFVRClient.dll`
-tested in PID `15796`: 2,159,616 bytes, SHA-256
+The visual correction baseline is the exact normally launched
+`BFVRClient.dll` tested in PID `15796`: 2,159,616 bytes, SHA-256
 `B94A64951FCC1E8D523825E8292F5A17CC8E2895D761BC7CE862F88B1EB8DBE3`.
 That local run retained the launch sequence used by the externally validated
 Oasis/WMR build: inject bf42++ before BFVRClient while BF1942 is suspended,
 initialize the observer, translator, and OpenXR path before resume, then enter
 run-until-stopped presentation. It does not itself validate Oasis because the
-local machine does not have Oasis. The launcher, loader, translator, and
-presenter were not rebuilt for the shadow fix, and this accepted client was not
-rebuilt after the visual test.
+local machine does not have Oasis.
+
+The reliability correction builds in the normal Win32 RelWithDebInfo tree and
+all 36 registered deterministic suites pass, including both proven static
+producer returns, nearby-producer rejection, projected-texture state/matrix
+coverage, and the existing startup compatibility tests. The x64 Release
+presenter also builds, and the launcher's non-starting `--dry-run` resolves the
+client, translator, game, and BF42++ paths. The resulting 2,212,864-byte client
+SHA-256 is
+`F49BC6C393A14AB78F0FF812F3BA903C10A051CD14596282A2301F5A344CCBA8`.
+No loader, launcher, OpenXR bootstrap/runtime-selection, presenter, Oasis, or
+Steam-launch source changed. A headset run is still required to confirm the
+new client reproduces the already accepted shadow appearance every launch.
 
 The x64 conversion stage follows OpenXR's linear-composition contract. It
 prefers a BGRA8 sRGB swapchain and converts BF1942's legacy encoded R10/R16 RGB
