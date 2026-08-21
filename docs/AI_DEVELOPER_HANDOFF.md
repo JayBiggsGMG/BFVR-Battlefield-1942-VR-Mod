@@ -303,6 +303,14 @@ The default aircraft layout is:
 The two aircraft options apply only to the recovered `VCAir` category. They do
 not change infantry, ground vehicles, boats, turrets, or mounted weapons.
 
+Surface/sea physical controller-motion aim is proof-gated by the occupied
+`PlayerControlObject` weapon vector used by BF1942's native vehicle HUD.
+Only a valid non-empty vector enables motion aim. Empty, malformed, unreadable,
+or unavailable vectors fail closed with controller motion disabled; head look,
+right-stick `mouseLookX/Y`, keyboard, and mouse remain independent and active.
+Every current-control-object identity change resets motion history, so moving
+between unarmed and armed seats cannot submit a stale controller delta.
+
 SteamVR binding changes are runtime-local. Meta OpenXR and VDXR use BFVR's
 suggested OpenXR bindings, not a user's SteamVR-only customization.
 

@@ -190,11 +190,15 @@ buttons above:
 
 - Land, sea, AA, and mounted guns: left Y is proportional gas/throttle or
   reverse, left X is proportional steering, and the right stick continuously
-  aims turret/station traverse and elevation. Tracked right-controller movement
-  adds fine relative aim on the same axes: hand-left moves the barrel right and
-  hand-down moves it up, as though the gun pivot were between the controller
-  and barrel. Holding the hand still holds aim still; the stick remains the
-  unrestricted control for continuous/360-degree traverse. Controls now
+  supplies native camera or turret/station traverse and elevation. For an
+  occupied PCO with a valid non-empty native weapon vector, tracked
+  right-controller movement adds fine relative aim on the same axes: hand-left
+  moves the barrel right and hand-down moves it up, as though the gun pivot
+  were between the controller and barrel. Empty or unreadable weapon vectors
+  disable only that physical-motion contribution, so unarmed driver/passenger
+  freelook remains head- and stick-controlled. Holding the hand still holds aim
+  still; the stick remains the unrestricted control for continuous/360-degree
+  traverse. Controls now
   exposes a saved **Turret Motion Sensitivity** slider from 50% to 300% in 10%
   steps. The 200% default produces 96.0 native input units per metre and halves
   the initial headset build's physical travel; 100% preserves that original
@@ -215,9 +219,10 @@ null pointer or configurable key binding. A soldier is the default
 `PlayerControlObject`; vehicles and stationary weapons are non-default control
 objects. The controlled template's native `VCAir` category selects the aircraft
 axes, while land/sea and unreadable mod categories never acquire aircraft-only
-roll/yaw mapping. Entering or leaving a vehicle clears crouch/directional stick
-state and captures a fresh zero-input motion reference so neither infantry state
-nor a stale hand position can leak across the transition.
+roll/yaw mapping. Entering, leaving, or changing the exact occupied control
+object clears crouch/directional stick state and captures a fresh zero-input
+motion reference so neither infantry state nor a stale hand position can leak
+across a seat transition.
 
 While the Quick Menu is open, controller fire, alt-fire, infantry stick-up/down
 actions, and face-button gameplay actions are suppressed; stick locomotion and
@@ -240,8 +245,10 @@ actions in the same temporary input frame.
 
 Controller pose does not write infantry look or aircraft flight axes; deliberate
 right-stick turn and ordinary keyboard/mouse look remain live. Only surface,
-sea, and mounted control objects translate newly timestamped right-grip position
-deltas into bounded native turret/station `mouseLookX/Y` input. The opt-in weapon
+sea, and mounted control objects with a proven non-empty native weapon vector
+translate newly timestamped right-grip position deltas into bounded native
+turret/station `mouseLookX/Y` input. Unarmed and unresolved seats fail closed
+without affecting stick look. The opt-in weapon
 path separately uses the tracked right grip for the classified first-person
 viewmodel and feeds the same fresh grip-driven rendered orientation into ordinary
 alive-local-infantry fire. This follows the virtual weapon geometry instead of

@@ -187,6 +187,32 @@ bool TestLiveCalibratedStickAndMotionSigns()
         NearlyEqual(inverted.stickPitch, -1.0F) &&
         NearlyEqual(inverted.motionPitch, -1.0F);
 }
+
+bool TestOnlyArmedSurfaceSeatsEnableControllerMotion()
+{
+    using bfvr::stereo::ShouldEnableVehicleMotionAim;
+    using bfvr::stereo::VehicleMotionAimWeaponStatus;
+    return ShouldEnableVehicleMotionAim(
+               true,
+               VehicleMotionAimWeaponStatus::Armed,
+               false) &&
+        !ShouldEnableVehicleMotionAim(
+            true,
+            VehicleMotionAimWeaponStatus::Unarmed,
+            false) &&
+        !ShouldEnableVehicleMotionAim(
+            true,
+            VehicleMotionAimWeaponStatus::Unknown,
+            false) &&
+        !ShouldEnableVehicleMotionAim(
+            true,
+            VehicleMotionAimWeaponStatus::Armed,
+            true) &&
+        !ShouldEnableVehicleMotionAim(
+            false,
+            VehicleMotionAimWeaponStatus::Armed,
+            false);
+}
 } // namespace
 
 int main()
@@ -197,7 +223,8 @@ int main()
         TestSlowMovementAccumulatesAcrossDeadzone() &&
         TestTrackingLossAndModePauseRebaseline() &&
         TestTrackingJumpBecomesZeroInputReference() &&
-        TestLiveCalibratedStickAndMotionSigns();
+        TestLiveCalibratedStickAndMotionSigns() &&
+        TestOnlyArmedSurfaceSeatsEnableControllerMotion();
     if (!passed)
     {
         std::fprintf(stderr, "Vehicle motion-aim math tests failed.\n");

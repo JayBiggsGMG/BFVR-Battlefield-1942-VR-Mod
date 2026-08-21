@@ -50,6 +50,10 @@ a shorter version of the same information.
 
 ### Changed
 
+- Physical right-controller movement now aims only an occupied land/sea or
+  mounted station that exposes a native weapon. Unarmed driver and passenger
+  freelook positions ignore controller movement while retaining head look,
+  right-stick turning, mouse look, and their normal vehicle controls.
 - VR Settings now keeps separate Right and Left hand Left/Right, Down/Up, and
   Back/Forward alignment sliders as permanent player options. The accepted
   defaults are right `(-7,+4,-5)` cm and left `(-2,+6,-2)` cm, and a same-page

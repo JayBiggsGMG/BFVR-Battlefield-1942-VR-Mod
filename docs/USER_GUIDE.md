@@ -29,6 +29,12 @@ Mouse and keyboard remain available, including in menus.
 Keyboard controls continue to work. Vehicle, aircraft, turret, and mounted-gun
 stick behavior follows the vehicle being controlled.
 
+Physical right-controller movement aims armed tank, vehicle, naval, AA, and
+mounted-weapon positions. It does not turn the view in unarmed driver or
+passenger freelook positions; use normal head movement or the right stick
+there instead. Changing seats establishes a fresh controller reference so an
+old hand movement cannot jerk a newly occupied weapon.
+
 ## Valve Index and Vive controllers
 
 BFVR includes OpenXR bindings for Meta/Oculus Touch, Valve Index, HTC Vive

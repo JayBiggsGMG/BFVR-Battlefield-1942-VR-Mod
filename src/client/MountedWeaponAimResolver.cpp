@@ -121,6 +121,98 @@ bool ReadObjectTransformation(
     }
 }
 
+bfvr::stereo::VehicleMotionAimWeaponStatus ReadFirstVehicleWeapon(
+    const void* currentControlObject,
+    void*& firstWeapon) noexcept
+{
+    firstWeapon = nullptr;
+    if (g_gameImage == nullptr || currentControlObject == nullptr)
+    {
+        return bfvr::stereo::VehicleMotionAimWeaponStatus::Unknown;
+    }
+
+    __try
+    {
+        void* const mutableControlObject =
+            const_cast<void*>(currentControlObject);
+        void** const objectVtable =
+            *reinterpret_cast<void***>(mutableControlObject);
+        if (objectVtable == nullptr)
+        {
+            return bfvr::stereo::VehicleMotionAimWeaponStatus::Unknown;
+        }
+        const auto queryInterface = reinterpret_cast<QueryInterfaceFn>(
+            objectVtable[kQueryInterfaceVtableOffset / sizeof(void*)]);
+        if (queryInterface == nullptr)
+        {
+            return bfvr::stereo::VehicleMotionAimWeaponStatus::Unknown;
+        }
+        void* const playerControlObject = queryInterface(
+            mutableControlObject,
+            kPlayerControlObjectInterfaceId);
+        if (playerControlObject == nullptr)
+        {
+            return bfvr::stereo::VehicleMotionAimWeaponStatus::Unknown;
+        }
+
+        void** const playerControlVtable =
+            *reinterpret_cast<void***>(playerControlObject);
+        if (playerControlVtable == nullptr)
+        {
+            return bfvr::stereo::VehicleMotionAimWeaponStatus::Unknown;
+        }
+        const auto getWeapons = reinterpret_cast<GetWeaponsFn>(
+            playerControlVtable[kGetWeaponsVtableOffset / sizeof(void*)]);
+        if (getWeapons == nullptr)
+        {
+            return bfvr::stereo::VehicleMotionAimWeaponStatus::Unknown;
+        }
+        const auto* const weapons = static_cast<const NativeWeaponVector*>(
+            getWeapons(playerControlObject));
+        if (weapons == nullptr)
+        {
+            return bfvr::stereo::VehicleMotionAimWeaponStatus::Unknown;
+        }
+        if (weapons->begin == nullptr && weapons->end == nullptr)
+        {
+            return bfvr::stereo::VehicleMotionAimWeaponStatus::Unarmed;
+        }
+        if (weapons->begin == nullptr || weapons->end == nullptr)
+        {
+            return bfvr::stereo::VehicleMotionAimWeaponStatus::Unknown;
+        }
+
+        const std::uintptr_t begin =
+            reinterpret_cast<std::uintptr_t>(weapons->begin);
+        const std::uintptr_t end =
+            reinterpret_cast<std::uintptr_t>(weapons->end);
+        if (end < begin || (end - begin) % sizeof(void*) != 0)
+        {
+            return bfvr::stereo::VehicleMotionAimWeaponStatus::Unknown;
+        }
+        const std::uintptr_t weaponCount =
+            (end - begin) / sizeof(void*);
+        if (weaponCount == 0)
+        {
+            return bfvr::stereo::VehicleMotionAimWeaponStatus::Unarmed;
+        }
+        if (weaponCount > kMaximumPlausibleWeaponCount)
+        {
+            return bfvr::stereo::VehicleMotionAimWeaponStatus::Unknown;
+        }
+
+        firstWeapon = weapons->begin[0];
+        return firstWeapon == nullptr
+            ? bfvr::stereo::VehicleMotionAimWeaponStatus::Unknown
+            : bfvr::stereo::VehicleMotionAimWeaponStatus::Armed;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        firstWeapon = nullptr;
+        return bfvr::stereo::VehicleMotionAimWeaponStatus::Unknown;
+    }
+}
+
 } // namespace
 
 namespace bfvr
@@ -282,74 +374,20 @@ bool ReadMountedWeaponFirePose(
     stereo::Matrix4& firePose) noexcept
 {
     firePose = {};
-    if (g_gameImage == nullptr || g_getFireArmsTransformation == nullptr ||
-        currentControlObject == nullptr)
+    if (g_getFireArmsTransformation == nullptr)
+    {
+        return false;
+    }
+
+    void* weapon = nullptr;
+    if (ReadFirstVehicleWeapon(currentControlObject, weapon) !=
+        stereo::VehicleMotionAimWeaponStatus::Armed)
     {
         return false;
     }
 
     __try
     {
-        void** const objectVtable =
-            *reinterpret_cast<void***>(currentControlObject);
-        if (objectVtable == nullptr)
-        {
-            return false;
-        }
-        const auto queryInterface = reinterpret_cast<QueryInterfaceFn>(
-            objectVtable[kQueryInterfaceVtableOffset / sizeof(void*)]);
-        if (queryInterface == nullptr)
-        {
-            return false;
-        }
-        void* const playerControlObject = queryInterface(
-            currentControlObject,
-            kPlayerControlObjectInterfaceId);
-        if (playerControlObject == nullptr)
-        {
-            return false;
-        }
-
-        void** const playerControlVtable =
-            *reinterpret_cast<void***>(playerControlObject);
-        if (playerControlVtable == nullptr)
-        {
-            return false;
-        }
-        const auto getWeapons = reinterpret_cast<GetWeaponsFn>(
-            playerControlVtable[kGetWeaponsVtableOffset / sizeof(void*)]);
-        if (getWeapons == nullptr)
-        {
-            return false;
-        }
-        const auto* const weapons = static_cast<const NativeWeaponVector*>(
-            getWeapons(playerControlObject));
-        if (weapons == nullptr || weapons->begin == nullptr ||
-            weapons->end == nullptr)
-        {
-            return false;
-        }
-
-        const std::uintptr_t begin =
-            reinterpret_cast<std::uintptr_t>(weapons->begin);
-        const std::uintptr_t end =
-            reinterpret_cast<std::uintptr_t>(weapons->end);
-        if (end <= begin || (end - begin) % sizeof(void*) != 0)
-        {
-            return false;
-        }
-        const std::uintptr_t weaponCount =
-            (end - begin) / sizeof(void*);
-        if (weaponCount > kMaximumPlausibleWeaponCount)
-        {
-            return false;
-        }
-
-        void* const weapon = weapons->begin[0];
-        if (weapon == nullptr)
-        {
-            return false;
-        }
         const stereo::Matrix4* const resolved =
             g_getFireArmsTransformation(weapon);
         if (resolved == nullptr)
@@ -364,6 +402,13 @@ bool ReadMountedWeaponFirePose(
         firePose = {};
         return false;
     }
+}
+
+stereo::VehicleMotionAimWeaponStatus ReadOccupiedVehicleWeaponStatus(
+    const void* currentControlObject) noexcept
+{
+    void* firstWeapon = nullptr;
+    return ReadFirstVehicleWeapon(currentControlObject, firstWeapon);
 }
 
 bool ReadOccupiedMountedWeaponStationPose(

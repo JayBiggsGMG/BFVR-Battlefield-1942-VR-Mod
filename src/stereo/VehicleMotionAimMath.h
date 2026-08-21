@@ -37,6 +37,27 @@ struct VehicleMotionAimOutput
     bool sampleAdvanced = false;
 };
 
+enum class VehicleMotionAimWeaponStatus : std::uint8_t
+{
+    Unknown,
+    Unarmed,
+    Armed,
+};
+
+// Physical controller movement is a weapon-aiming aid, not a general vehicle
+// camera control. An occupied surface/sea station must positively expose a
+// native weapon before motion aim is enabled. Unknown and unarmed stations
+// fail closed while their independent right-stick mouse-look remains native.
+[[nodiscard]] constexpr bool ShouldEnableVehicleMotionAim(
+    bool surfaceVehicle,
+    VehicleMotionAimWeaponStatus weaponStatus,
+    bool quickMenuHeld) noexcept
+{
+    return surfaceVehicle &&
+        weaponStatus == VehicleMotionAimWeaponStatus::Armed &&
+        !quickMenuHeld;
+}
+
 struct VehicleAimInputSigns
 {
     float stickYaw = 1.0F;
