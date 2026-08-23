@@ -13,6 +13,7 @@
 #include <intrin.h>
 #include <windows.h>
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cmath>
@@ -20,6 +21,7 @@
 #include <cstddef>
 #include <cstdio>
 #include <cstring>
+#include <cwchar>
 #include <optional>
 
 namespace
@@ -39,6 +41,8 @@ constexpr std::size_t kFireArmsTemplateZoomFovOffset = 0x3DC;
 constexpr DWORD kNativeArmPoseMaximumAgeMs = 125;
 constexpr DWORD kScopeIntentMaximumAgeMs = 250;
 constexpr float kBf1942WorldUnitsPerMetre = 1.0F;
+constexpr wchar_t kScopeSmoothingAuditLogEnvironment[] =
+    L"BFVR_SCOPE_SMOOTHING_AUDIT_LOG";
 constexpr std::array<BYTE, 30> kFireArmsSetZoomExpectedPrefix = {
     0x55, 0x56, 0x8B, 0xF1, 0x8B, 0x6E, 0x4C, 0xD9,
     0x85, 0xDC, 0x03, 0x00, 0x00, 0xD8, 0x1D, 0xAC,
@@ -82,6 +86,69 @@ struct RuntimeZoomFields
     float targetFov = -1.0F;
     bool zoomed = false;
 };
+
+struct ScopeSmoothingAuditCounters
+{
+    std::uint64_t samples = 0;
+    std::uint64_t invalidMatrix = 0;
+    std::uint64_t disabled = 0;
+    std::uint64_t invalidLifetime = 0;
+    std::uint64_t invalidControllerGeneration = 0;
+    std::uint64_t invalidPredictedDisplayTime = 0;
+    std::uint64_t firstSample = 0;
+    std::uint64_t duplicateGeneration = 0;
+    std::uint64_t nonIncreasingTime = 0;
+    std::uint64_t overMaximumInterval = 0;
+    std::uint64_t smoothed = 0;
+    std::uint64_t angularBoundaryBypass = 0;
+    std::uint64_t rotationFailure = 0;
+    std::int64_t maximumElapsedNanoseconds = 0;
+    float maximumAngularErrorRadians = 0.0F;
+};
+
+void AppendScopeSmoothingAuditFile(
+    const wchar_t* auditPath,
+    const wchar_t* message) noexcept
+{
+    if (auditPath == nullptr || auditPath[0] == L'\0' || message == nullptr)
+    {
+        return;
+    }
+    SYSTEMTIME now = {};
+    GetLocalTime(&now);
+    std::array<wchar_t, 2304> line = {};
+    if (_snwprintf_s(
+            line.data(), line.size(), _TRUNCATE,
+            L"%04u-%02u-%02u %02u:%02u:%02u.%03u [pid:%lu] %ls\r\n",
+            now.wYear, now.wMonth, now.wDay, now.wHour, now.wMinute,
+            now.wSecond, now.wMilliseconds, GetCurrentProcessId(),
+            message) < 0)
+    {
+        return;
+    }
+    HANDLE file = CreateFileW(
+        auditPath,
+        FILE_APPEND_DATA,
+        FILE_SHARE_READ | FILE_SHARE_WRITE,
+        nullptr,
+        OPEN_ALWAYS,
+        FILE_ATTRIBUTE_NORMAL,
+        nullptr);
+    if (file == INVALID_HANDLE_VALUE)
+    {
+        return;
+    }
+    const DWORD byteCount = static_cast<DWORD>(
+        wcslen(line.data()) * sizeof(wchar_t));
+    DWORD written = 0;
+    const BOOL writeSucceeded = WriteFile(
+        file, line.data(), byteCount, &written, nullptr);
+    if (writeSucceeded && written == byteCount)
+    {
+        FlushFileBuffers(file);
+    }
+    CloseHandle(file);
+}
 
 bool ReadRuntimeZoomFields(
     const void* weapon,
@@ -165,6 +232,16 @@ public:
             return;
         }
         appendLog_ = log;
+        scopeSmoothingAuditPath_.fill(L'\0');
+        const DWORD scopeAuditPathLength = GetEnvironmentVariableW(
+            kScopeSmoothingAuditLogEnvironment,
+            scopeSmoothingAuditPath_.data(),
+            static_cast<DWORD>(scopeSmoothingAuditPath_.size()));
+        if (scopeAuditPathLength == 0 ||
+            scopeAuditPathLength >= scopeSmoothingAuditPath_.size())
+        {
+            scopeSmoothingAuditPath_.fill(L'\0');
+        }
         gameImage_ = static_cast<std::byte*>(gameImage);
         setZoomTarget_ = gameImage == nullptr
             ? nullptr
@@ -288,6 +365,12 @@ public:
         while (InterlockedCompareExchange(&callbackEntrants_, 0, 0) != 0)
         {
             Sleep(0);
+        }
+        const void* const activeScope = requestedWeapon_.load(
+            std::memory_order_acquire);
+        if (activeScope != nullptr)
+        {
+            WriteSmoothingAuditAndReset(activeScope, L"client-stop");
         }
         ClearAll();
         WriteLog(
@@ -1362,6 +1445,10 @@ private:
                 ? &*offHandSupportFromGun
                 : nullptr,
             true);
+        if (newlyActive)
+        {
+            ResetSmoothingAudit();
+        }
         requestedWeapon_.store(weapon, std::memory_order_release);
         if (newlyActive)
         {
@@ -1388,6 +1475,7 @@ private:
         {
             return false;
         }
+        WriteSmoothingAuditAndReset(weapon, L"scope-exit");
         ClearCachedAim(weapon);
         normalFov_.store(-1.0F, std::memory_order_release);
         projectionScale_.store(1.0F, std::memory_order_release);
@@ -1449,6 +1537,8 @@ private:
         std::int64_t predictedDisplayTime) noexcept
     {
         AcquireSRWLockExclusive(&aimLock_);
+        bfvr::stereo::ScopeAimSmoothingDiagnostics diagnostics = {};
+        const bool auditEnabled = scopeSmoothingAuditPath_[0] != L'\0';
         const auto result = bfvr::stereo::UpdateD3D8ScopeAimSmoothing(
             aimSmoothingState_,
             controllerGunWorld,
@@ -1456,9 +1546,138 @@ private:
             soldier,
             static_cast<std::int32_t>(controllerGeneration),
             predictedDisplayTime,
-            aimSmoothingEnabled_.load(std::memory_order_acquire));
+            aimSmoothingEnabled_.load(std::memory_order_acquire),
+            auditEnabled ? &diagnostics : nullptr);
+        if (auditEnabled)
+        {
+            RecordSmoothingAudit(diagnostics);
+        }
         ReleaseSRWLockExclusive(&aimLock_);
         return result;
+    }
+
+    void RecordSmoothingAudit(
+        const bfvr::stereo::ScopeAimSmoothingDiagnostics& diagnostics) noexcept
+    {
+        ++smoothingAudit_.samples;
+        smoothingAudit_.maximumElapsedNanoseconds = std::max(
+            smoothingAudit_.maximumElapsedNanoseconds,
+            diagnostics.elapsedNanoseconds);
+        smoothingAudit_.maximumAngularErrorRadians = std::max(
+            smoothingAudit_.maximumAngularErrorRadians,
+            diagnostics.angularErrorRadians);
+        using Outcome = bfvr::stereo::ScopeAimSmoothingOutcome;
+        switch (diagnostics.outcome)
+        {
+        case Outcome::InvalidMatrix:
+            ++smoothingAudit_.invalidMatrix;
+            break;
+        case Outcome::Disabled:
+            ++smoothingAudit_.disabled;
+            break;
+        case Outcome::InvalidLifetime:
+            ++smoothingAudit_.invalidLifetime;
+            break;
+        case Outcome::InvalidControllerGeneration:
+            ++smoothingAudit_.invalidControllerGeneration;
+            break;
+        case Outcome::InvalidPredictedDisplayTime:
+            ++smoothingAudit_.invalidPredictedDisplayTime;
+            break;
+        case Outcome::FirstSample:
+            ++smoothingAudit_.firstSample;
+            break;
+        case Outcome::DuplicateGeneration:
+            ++smoothingAudit_.duplicateGeneration;
+            break;
+        case Outcome::NonContinuousTime:
+            if (diagnostics.elapsedNanoseconds <= 0)
+            {
+                ++smoothingAudit_.nonIncreasingTime;
+            }
+            else
+            {
+                ++smoothingAudit_.overMaximumInterval;
+            }
+            break;
+        case Outcome::Smoothed:
+            ++smoothingAudit_.smoothed;
+            break;
+        case Outcome::AngularBoundaryBypass:
+            ++smoothingAudit_.angularBoundaryBypass;
+            break;
+        case Outcome::RotationFailure:
+            ++smoothingAudit_.rotationFailure;
+            break;
+        }
+    }
+
+    void ResetSmoothingAudit() noexcept
+    {
+        if (scopeSmoothingAuditPath_[0] == L'\0')
+        {
+            return;
+        }
+        AcquireSRWLockExclusive(&aimLock_);
+        smoothingAudit_ = {};
+        ReleaseSRWLockExclusive(&aimLock_);
+    }
+
+    void WriteSmoothingAuditAndReset(
+        const void* weapon,
+        const wchar_t* reason) noexcept
+    {
+        if (scopeSmoothingAuditPath_[0] == L'\0')
+        {
+            return;
+        }
+        ScopeSmoothingAuditCounters counters = {};
+        const void* soldier = nullptr;
+        AcquireSRWLockExclusive(&aimLock_);
+        counters = smoothingAudit_;
+        soldier = cachedAimSoldier_;
+        smoothingAudit_ = {};
+        ReleaseSRWLockExclusive(&aimLock_);
+        if (counters.samples == 0 || scopeSmoothingAuditPath_[0] == L'\0')
+        {
+            return;
+        }
+        constexpr double kRadiansToDegrees =
+            180.0 / 3.14159265358979323846;
+        std::array<wchar_t, 1800> message = {};
+        _snwprintf_s(
+            message.data(), message.size(), _TRUNCATE,
+            L"SCOPE_SMOOTHING_AUDIT reason=%ls weapon=%p soldier=%p "
+            L"enabled=%d samples=%llu smoothed=%llu boundaryBypass=%llu "
+            L"first=%llu duplicate=%llu nonIncreasingTime=%llu "
+            L"over50ms=%llu invalidTime=%llu invalidGeneration=%llu "
+            L"invalidLifetime=%llu disabled=%llu invalidMatrix=%llu "
+            L"rotationFailure=%llu maxElapsedMs=%.6f maxAngularErrorDeg=%.6f.",
+            reason == nullptr ? L"unknown" : reason,
+            weapon,
+            soldier,
+            aimSmoothingEnabled_.load(std::memory_order_acquire) ? 1 : 0,
+            static_cast<unsigned long long>(counters.samples),
+            static_cast<unsigned long long>(counters.smoothed),
+            static_cast<unsigned long long>(counters.angularBoundaryBypass),
+            static_cast<unsigned long long>(counters.firstSample),
+            static_cast<unsigned long long>(counters.duplicateGeneration),
+            static_cast<unsigned long long>(counters.nonIncreasingTime),
+            static_cast<unsigned long long>(counters.overMaximumInterval),
+            static_cast<unsigned long long>(
+                counters.invalidPredictedDisplayTime),
+            static_cast<unsigned long long>(
+                counters.invalidControllerGeneration),
+            static_cast<unsigned long long>(counters.invalidLifetime),
+            static_cast<unsigned long long>(counters.disabled),
+            static_cast<unsigned long long>(counters.invalidMatrix),
+            static_cast<unsigned long long>(counters.rotationFailure),
+            static_cast<double>(counters.maximumElapsedNanoseconds) * 1.0e-6,
+            static_cast<double>(counters.maximumAngularErrorRadians) *
+                kRadiansToDegrees);
+        AppendScopeSmoothingAuditFile(
+            scopeSmoothingAuditPath_.data(),
+            message.data());
     }
 
     bool ReadCachedAim(
@@ -1672,6 +1891,8 @@ private:
     bool cachedTrackedAimCorrectionValid_ = false;
     bool cachedOffHandSupportValid_ = false;
     bfvr::stereo::ScopeAimSmoothingState aimSmoothingState_ = {};
+    ScopeSmoothingAuditCounters smoothingAudit_ = {};
+    std::array<wchar_t, MAX_PATH> scopeSmoothingAuditPath_ = {};
     void* setZoomTarget_ = nullptr;
     void* setStateBitsTarget_ = nullptr;
     SetZoomFn originalSetZoom_ = nullptr;

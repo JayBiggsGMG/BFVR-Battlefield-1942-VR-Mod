@@ -32,6 +32,18 @@ Matrix4 Yaw(float radians) noexcept
     return result;
 }
 
+Matrix4 Roll(float radians) noexcept
+{
+    Matrix4 result = Identity();
+    const float cosine = std::cos(radians);
+    const float sine = std::sin(radians);
+    result.values[0][0] = cosine;
+    result.values[0][1] = sine;
+    result.values[1][0] = -sine;
+    result.values[1][1] = cosine;
+    return result;
+}
+
 Matrix4 Multiply(const Matrix4& left, const Matrix4& right) noexcept
 {
     Matrix4 result = {};
@@ -220,38 +232,78 @@ bool TestInvalidFovFailsClosed() noexcept
                 0.7F).has_value();
 }
 
-bool TestScopeCameraUsesGunRotationAndHeadPosition() noexcept
+bool TestScopeCameraSeparatesHeadAndWeaponRoll() noexcept
 {
-    Matrix4 headCamera = Yaw(-0.3F);
+    constexpr float headRoll = 0.35F;
+    constexpr float weaponRoll = -0.55F;
+    Matrix4 headCamera = Multiply(Roll(-0.72F), Yaw(-0.3F));
     headCamera.values[3][0] = 12.0F;
     headCamera.values[3][1] = 3.5F;
     headCamera.values[3][2] = -8.0F;
-    Matrix4 gun = Yaw(0.85F);
+    Matrix4 gun = Multiply(Roll(weaponRoll), Yaw(0.85F));
     gun.values[3][0] = 90.0F;
     gun.values[3][1] = 80.0F;
     gun.values[3][2] = 70.0F;
 
     const auto scoped =
-        bfvr::stereo::MakeD3D8WeaponDirectedScopeCamera(headCamera, gun);
+        bfvr::stereo::MakeD3D8IndependentRollScopeCamera(
+            headCamera,
+            Roll(headRoll),
+            gun);
     if (!scoped.has_value())
     {
         return false;
     }
+    const Matrix4 expectedWorld = Multiply(Roll(headRoll), Yaw(0.85F));
     for (std::size_t row = 0; row < 3; ++row)
     {
         for (std::size_t column = 0; column < 3; ++column)
         {
             if (!NearlyEqual(
-                    scoped->values[row][column],
-                    gun.values[row][column]))
+                    scoped->cameraWorld.values[row][column],
+                    expectedWorld.values[row][column]))
             {
                 return false;
             }
         }
     }
-    return NearlyEqual(scoped->values[3][0], 12.0F) &&
-        NearlyEqual(scoped->values[3][1], 3.5F) &&
-        NearlyEqual(scoped->values[3][2], -8.0F);
+    return NearlyEqual(scoped->cameraWorld.values[3][0], 12.0F) &&
+        NearlyEqual(scoped->cameraWorld.values[3][1], 3.5F) &&
+        NearlyEqual(scoped->cameraWorld.values[3][2], -8.0F) &&
+        NearlyEqual(
+            scoped->overlayRollRadians,
+            weaponRoll - headRoll);
+}
+
+bool TestScopeRollSourcesRemainIndependent() noexcept
+{
+    constexpr float headRoll = 0.42F;
+    constexpr float weaponRoll = -0.31F;
+    const auto headOnly =
+        bfvr::stereo::MakeD3D8IndependentRollScopeCamera(
+            Roll(headRoll),
+            Roll(headRoll),
+            Identity());
+    const auto weaponOnly =
+        bfvr::stereo::MakeD3D8IndependentRollScopeCamera(
+            Identity(),
+            Identity(),
+            Roll(weaponRoll));
+    const auto matched =
+        bfvr::stereo::MakeD3D8IndependentRollScopeCamera(
+            Roll(headRoll),
+            Roll(headRoll),
+            Roll(headRoll));
+    return headOnly.has_value() && weaponOnly.has_value() &&
+        matched.has_value() &&
+        NearlyEqual(
+            headOnly->cameraWorld.values[0][1],
+            std::sin(headRoll)) &&
+        NearlyEqual(headOnly->overlayRollRadians, -headRoll) &&
+        NearlyEqual(weaponOnly->cameraWorld.values[0][1], 0.0F) &&
+        NearlyEqual(weaponOnly->overlayRollRadians, weaponRoll) &&
+        NearlyEqual(matched->cameraWorld.values[0][1], std::sin(headRoll)) &&
+        NearlyEqual(matched->overlayRollRadians, 0.0F);
 }
 
 bool TestProjectionScalePreservesCentreAndDepth() noexcept
@@ -314,7 +366,7 @@ bool TestScopeAimSmoothingAttenuatesMicroMotionAndTranslation() noexcept
         stabilized->values[2][0],
         stabilized->values[2][2]);
     return NearlyEqual(first->values[2][2], 1.0F) &&
-        stabilizedYaw > 0.00020F && stabilizedYaw < 0.00026F &&
+        stabilizedYaw > 0.00003F && stabilizedYaw < 0.00005F &&
         NearlyEqual(stabilized->values[3][0], 4.0F) &&
         NearlyEqual(stabilized->values[3][1], 5.0F) &&
         NearlyEqual(stabilized->values[3][2], 6.0F) &&
@@ -357,7 +409,7 @@ bool TestScopeAimSmoothingHandlesSustainedMotionAndBypassesAtBound() noexcept
         4,
         firstTime + 3 * frameTime,
         true);
-    const Matrix4 deliberateMove = Yaw(0.010F);
+    const Matrix4 deliberateMove = Yaw(0.030F);
     const auto bypassed = bfvr::stereo::UpdateD3D8ScopeAimSmoothing(
         state,
         deliberateMove,
@@ -466,6 +518,91 @@ bool TestScopeAimSmoothingResetsAtEveryDiscontinuity() noexcept
         NearlyEqual(gapReset->values[2][0], gapMove.values[2][0]);
 }
 
+bool TestScopeAimSmoothingDiagnosticsClassifyRawBoundaries() noexcept
+{
+    using bfvr::stereo::ScopeAimSmoothingDiagnostics;
+    using bfvr::stereo::ScopeAimSmoothingOutcome;
+    bfvr::stereo::ScopeAimSmoothingState state = {};
+    ScopeAimSmoothingDiagnostics diagnostics = {};
+    const void* const weapon = reinterpret_cast<const void*>(0x1000);
+    const void* const soldier = reinterpret_cast<const void*>(0x2000);
+    constexpr std::int64_t firstTime = 1'000'000'000;
+    constexpr std::int64_t frameTime = 11'111'111;
+    const auto first = bfvr::stereo::UpdateD3D8ScopeAimSmoothing(
+        state,
+        Yaw(0.0F),
+        weapon,
+        soldier,
+        1,
+        firstTime,
+        true,
+        &diagnostics);
+    if (!first.has_value() ||
+        diagnostics.outcome != ScopeAimSmoothingOutcome::FirstSample)
+    {
+        return false;
+    }
+    const auto smoothed = bfvr::stereo::UpdateD3D8ScopeAimSmoothing(
+        state,
+        Yaw(0.001F),
+        weapon,
+        soldier,
+        2,
+        firstTime + frameTime,
+        true,
+        &diagnostics);
+    if (!smoothed.has_value() ||
+        diagnostics.outcome != ScopeAimSmoothingOutcome::Smoothed ||
+        diagnostics.elapsedNanoseconds != frameTime ||
+        diagnostics.angularErrorRadians <= 0.0F)
+    {
+        return false;
+    }
+    const auto duplicate = bfvr::stereo::UpdateD3D8ScopeAimSmoothing(
+        state,
+        Yaw(0.002F),
+        weapon,
+        soldier,
+        2,
+        firstTime + frameTime,
+        true,
+        &diagnostics);
+    if (!duplicate.has_value() ||
+        diagnostics.outcome !=
+            ScopeAimSmoothingOutcome::DuplicateGeneration)
+    {
+        return false;
+    }
+    const auto gap = bfvr::stereo::UpdateD3D8ScopeAimSmoothing(
+        state,
+        Yaw(0.003F),
+        weapon,
+        soldier,
+        3,
+        firstTime + 100'000'000,
+        true,
+        &diagnostics);
+    if (!gap.has_value() ||
+        diagnostics.outcome != ScopeAimSmoothingOutcome::NonContinuousTime ||
+        diagnostics.elapsedNanoseconds <=
+            bfvr::stereo::kScopeAimSmoothingMaximumSampleIntervalNanoseconds)
+    {
+        return false;
+    }
+    const auto invalidTime = bfvr::stereo::UpdateD3D8ScopeAimSmoothing(
+        state,
+        Yaw(0.004F),
+        weapon,
+        soldier,
+        4,
+        0,
+        true,
+        &diagnostics);
+    return invalidTime.has_value() &&
+        diagnostics.outcome ==
+            ScopeAimSmoothingOutcome::InvalidPredictedDisplayTime;
+}
+
 bool TestScopeAimSmoothingIsFrameRateAware() noexcept
 {
     bfvr::stereo::ScopeAimSmoothingState ninetyHertz = {};
@@ -556,7 +693,8 @@ bool TestInvalidCameraAndProjectionFailClosed() noexcept
     invalidCamera.values[0][0] = 0.0F;
     Matrix4 projection = Identity();
     const Matrix4 original = projection;
-    return !bfvr::stereo::MakeD3D8WeaponDirectedScopeCamera(
+    return !bfvr::stereo::MakeD3D8IndependentRollScopeCamera(
+                Identity(),
                 Identity(),
                 invalidCamera).has_value() &&
         !bfvr::stereo::ApplyD3D8ScopeProjectionScale(
@@ -632,10 +770,12 @@ int main()
         !TestTrackedScopeAimRetainsAuthoritativeLocalCorrection() ||
         !TestScopedOffHandSupportRemainsHeldRegardlessOfDistance() ||
         !TestInvalidFovFailsClosed() ||
-        !TestScopeCameraUsesGunRotationAndHeadPosition() ||
+        !TestScopeCameraSeparatesHeadAndWeaponRoll() ||
+        !TestScopeRollSourcesRemainIndependent() ||
         !TestScopeAimSmoothingAttenuatesMicroMotionAndTranslation() ||
         !TestScopeAimSmoothingHandlesSustainedMotionAndBypassesAtBound() ||
         !TestScopeAimSmoothingResetsAtEveryDiscontinuity() ||
+        !TestScopeAimSmoothingDiagnosticsClassifyRawBoundaries() ||
         !TestScopeAimSmoothingIsFrameRateAware() ||
         !TestAcceptedShotAwaitsOnlyExactOwnedScopeDecision() ||
         !TestPostShotScopeDecisionPreservesOrReleasesNativePolicy() ||

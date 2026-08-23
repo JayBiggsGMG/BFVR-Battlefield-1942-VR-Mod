@@ -17,3 +17,12 @@ Example:
 The setup and uninstaller are intentionally unsigned. Do not configure a
 signing tool. The exact final installer must be installed, launched, and
 uninstalled on a clean supported Battlefield 1942 copy before publication.
+
+BFVR versions use one stable Inno Setup `AppId`. When Setup finds an older
+registered BFVR installation, it selects that exact directory and shows a
+dedicated update page before continuing. When the current version is already
+installed, Setup instead offers Repair/reinstall and Uninstall maintenance
+choices. Updating or repairing replaces program files and player guides while
+preserving the existing `UserConfig.txt`. Release validation must cover a fresh
+install, an upgrade from the prior public installer, and a same-version repair
+before the final setup executable is published.

@@ -131,10 +131,38 @@ void PrepareRuntimeRenderRequestPose()
         trackingContext.token = reinterpret_cast<std::uintptr_t>(
             playerContext.currentControlObject);
     }
-    float infantryBodyYawRadians = 0.0F;
+    bfvr::LocalInfantryPresentationContext infantryContext = {};
+    const bool infantryContextValid =
+        bfvr::ReadLocalInfantryPresentationContext(
+            bfvr::ReadCurrentBFSoldierVrCameraSoldier(),
+            infantryContext);
+    if (infantryContextValid && infantryContext.parachuteOverride)
+    {
+        trackingContext.kind = bfvr::D3D8TrackingContextKind::Infantry;
+        trackingContext.token = reinterpret_cast<std::uintptr_t>(
+            infantryContext.soldier);
+        if (!g_loggedParachutePresentationOverrideActive)
+        {
+            g_loggedParachutePresentationOverrideActive = true;
+            AppendLog(
+                L"Local parachute presentation retained the camera soldier as the infantry turn/anchor lifetime. This is read-only VR presentation: native input, parachute physics, body state, packets, and server authority remain unchanged. soldier=%p bodyYawValid=%d.",
+                infantryContext.soldier,
+                infantryContext.bodyYawValid ? 1 : 0);
+        }
+    }
+    else if (g_loggedParachutePresentationOverrideActive)
+    {
+        g_loggedParachutePresentationOverrideActive = false;
+        AppendLog(
+            L"Local parachute presentation override ended; the ordinary BF1942 control-object classification resumed without changing the retained soldier presentation lifetime.");
+    }
+    const float infantryBodyYawRadians =
+        infantryContext.bodyYawRadians;
     const bool infantryBodyYawValid =
+        infantryContextValid && infantryContext.bodyYawValid &&
         trackingContext.kind == bfvr::D3D8TrackingContextKind::Infantry &&
-        bfvr::ReadLocalInfantryBodyYaw(infantryBodyYawRadians);
+        trackingContext.token == reinterpret_cast<std::uintptr_t>(
+            infantryContext.soldier);
     const bfvr::D3D8RuntimeControllerHand& rightController =
         g_runtimeRenderRequest.controllerInput.hands[1];
     const bool controllerInputAvailable =

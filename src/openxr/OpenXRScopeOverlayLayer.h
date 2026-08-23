@@ -25,6 +25,7 @@ namespace bfvr
     std::uint32_t uiHeight,
     const XrPosef& headInLocalSpace,
     const std::array<XrView, 2>& viewsInLocalSpace,
+    const XrQuaternionf& scopeRollInViewSpace,
     std::array<XrCompositionLayerQuad, 2>& layers) noexcept;
 
 } // namespace bfvr

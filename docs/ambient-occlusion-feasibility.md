@@ -1,6 +1,6 @@
 # BFVR Ambient-Occlusion Feasibility and Opt-In Prototype
 
-Research snapshot: 2026-08-03; prototype and hardware proofs updated 2026-08-03
+Research snapshot: 2026-08-03; prototype and hardware proofs updated 2026-08-22
 
 ## Conclusion
 
@@ -459,6 +459,65 @@ control and all 15 CTest suites pass. Both presenter copies have SHA-256
 `53BBA3A9568D950A20A4C56A92B4B266C7574371DC79D2224C9F5B6AA092F209`.
 This intentionally restores the known rectangle together with the useful AO;
 no later cutoff experiment is retained.
+
+The 2026-08-22 revisit found a separate distance-dependent branch that every
+earlier radius and denoise experiment had retained. AO constructed its normal
+from `cross(dx, dy)`, compared that unnormalized squared magnitude with
+`1e-8`, and substituted `(0,0,-1)` below the threshold. One-pixel view-space
+derivatives change length with depth and resolution, so this was not a
+degeneracy test: at the native 1872x2016 probe projection, a flat front wall
+crosses it at about 10.3 m. A receding 1.70-m-below-camera floor crosses it much
+nearer because its vertical derivative grows cubically with depth, matching the
+reported room-scale dark volume. The fixed fallback is also the wrong normal
+for floors, ceilings, and side walls, creating broad false occlusion on the
+near side before real reconstructed normals abruptly take over.
+
+The correction follows XeGTAO's scale-independent construction: normalize the
+selected one-pixel derivatives before taking their cross product, normalize the
+result, and orient it against the actual surface-to-camera vector. A genuinely
+degenerate result returns neutral local AO instead of inventing a camera-axis
+surface. The owner prefers the former near-side darker appearance, so that
+look is now represented explicitly rather than preserved as a normal bug:
+every depth-valid world pixel has a 0.88 maximum ambient visibility, local AO
+may darken below it, and clear-depth sky plus Ref2 UI remain at 1.0. The value
+continues through the existing AO-strength composite control.
+
+The native GPU probe now includes a receding planar floor on both sides of the
+old cutoff and a clear-depth strip. At 1872x2016 its near/far floor visibility
+is exactly 0.8799/0.8799, geometry maximum is 224/255, clear depth remains 255,
+and contact AO remains non-trivial down to 128. The 64-iteration run measured
+0.6707 ms median stereo evaluation plus denoise and a 0.0201 ms p95 composite
+increment; isolated GPU outliers make its short 3.3738-ms p95 unsuitable for a
+live acceptance claim. The 1404x1512 cross-process INTZ/AO control verifies the
+two exact attenuated world pixels and byte-exact unchanged Ref2 UI; its no-AO
+control still reproduces all three original pixels exactly. Headset validation
+remains the visual authority. The optimized x64 presenter and all 37 current
+deterministic suites pass; the launcher-source presenter SHA-256 is
+`FDFCE3B6B67B92C000FDB4675E363E74914BA99FF9A76E9B62C0AE6E4D7ECDA0`.
+
+The owner confirmed that correction removed the original nearby AO rectangle,
+then identified a separate straight distant boundary crossing water, terrain,
+and meshes near the onset of fog. Source inspection found that AO classified
+every decoded device depth at or above 0.9999 as clear. Perspective device depth
+is nonlinear, so 0.9999 is still valid geometry before the far plane; this made
+the 0.88 depth-valid grade switch abruptly to 1.0 on a camera-distance plane.
+The packed-depth exporter already provides a stronger contract: source depth
+1.0 is clamped into the single highest base-255 RGB sentinel. AO now recognizes
+only that exact code as clear, preserving valid distant geometry. The requested
+0.88 darker baseline also continues through true clear depth, making it a
+full-world grade so a genuine geometry/fog coverage transition cannot reveal
+another bright strip. Local AO still requires valid geometry, and separately
+composited Ref2 UI remains unchanged.
+
+The expanded 1872x2016 GPU probe places a recessed surface at device depths
+above 0.9999 and retains the clear-depth strip. It passes with non-trivial far-
+depth AO at 212/255 against the 224/255 baseline, clear-depth visibility
+0.8799, near/far floor visibility 0.8799/0.8799, and total output 162..224. The
+complete cross-process D3D8 -> packed D3D9Ex depth -> x64 AO control retains its
+exact attenuated world pixels and byte-exact Ref2 UI. This candidate changes no
+water draw, BF1942 fog state, launcher, OpenXR bootstrap, or runtime-selection
+path. The owner's headset comparison confirms that it removes the reported
+distant water/terrain/mesh edge, visually accepting this AO correction.
 
 ## Performance and acceptance gates
 

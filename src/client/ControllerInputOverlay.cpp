@@ -3,6 +3,7 @@
 #include "client/ControllerInputCache.h"
 #include "client/HandWeaponRecoilRuntime.h"
 #include "client/InfantryAuthoritativeAimRuntime.h"
+#include "client/MountedWeaponAimResolver.h"
 #include "stereo/AircraftControlMath.h"
 #include "client/ScopeViewOverlay.h"
 #include "presenter/SharedPresentationProtocol.h"
@@ -81,7 +82,11 @@ constexpr float kWalkStickMagnitudeThreshold = 0.60F;
 constexpr ULONGLONG kUserSettingsPollIntervalMs = 250;
 constexpr float kVehicleAimStickResponseExponent = 1.35F;
 constexpr bfvr::stereo::VehicleMotionAimConfiguration
-    kSurfaceVehicleMotionAimConfiguration = {};
+    kOriginalSurfaceVehicleMotionAimConfiguration = {
+        48.0F,
+        0.0005F,
+        0.35F,
+        0.15F};
 
 constexpr DWORD kVehicleCategoryAir = 2;
 
@@ -842,10 +847,12 @@ private:
         SetHeldInput(destination, input, pressed);
     }
 
-    void UpdateControllerControlMode(
-        ControllerControlMode controlMode) noexcept
+    void UpdateControllerControlContext(
+        ControllerControlMode controlMode,
+        const void* currentControlObject) noexcept
     {
-        if (controlMode == activeControlMode)
+        if (controlMode == activeControlMode &&
+            currentControlObject == activeControlObject)
         {
             return;
         }
@@ -857,6 +864,7 @@ private:
         bfvr::stereo::ResetDigitalLocomotion(infantryMovementDirection);
         bfvr::stereo::ResetVehicleMotionAim(surfaceVehicleMotionAim);
         activeControlMode = controlMode;
+        activeControlObject = currentControlObject;
 
         if ((controlMode == ControllerControlMode::SurfaceVehicle ||
              controlMode == ControllerControlMode::AirVehicle) &&
@@ -905,18 +913,46 @@ private:
             bfvr::shared::kControllerHandFlagGripPositionTracked;
         const bool motionAimTracked =
             (right.flags & requiredMotionAimFlags) == requiredMotionAimFlags;
+        const bfvr::stereo::VehicleMotionAimWeaponStatus weaponStatus =
+            controlMode == ControllerControlMode::SurfaceVehicle
+                ? bfvr::ReadOccupiedVehicleWeaponStatus(currentControlObject)
+                : bfvr::stereo::VehicleMotionAimWeaponStatus::Unknown;
+        const bool motionAimEnabled =
+            bfvr::stereo::ShouldEnableVehicleMotionAim(
+                controlMode == ControllerControlMode::SurfaceVehicle,
+                weaponStatus,
+                quickMenuHeld);
+        bfvr::stereo::VehicleMotionAimConfiguration motionAimConfiguration =
+            kOriginalSurfaceVehicleMotionAimConfiguration;
+        const float motionAimSensitivityScale = static_cast<float>(
+            userSettings.vehicleMotionAimSensitivityPercent) * 0.01F;
+        motionAimConfiguration.inputPerMetre *= motionAimSensitivityScale;
+        motionAimConfiguration.maximumInputPerSample = std::min(
+            1.0F,
+            motionAimConfiguration.maximumInputPerSample *
+                motionAimSensitivityScale);
         const bfvr::stereo::VehicleMotionAimOutput motionAim =
             bfvr::stereo::UpdateVehicleMotionAim(
                 surfaceVehicleMotionAim,
-                controlMode == ControllerControlMode::SurfaceVehicle &&
-                    !quickMenuHeld,
+                motionAimEnabled,
                 motionAimTracked,
                 {
                     right.gripPose.positionX,
                     right.gripPose.positionY,
                     right.gripPose.positionZ},
                 predictedDisplayTime,
-                kSurfaceVehicleMotionAimConfiguration);
+                motionAimConfiguration);
+        if (controlMode == ControllerControlMode::SurfaceVehicle &&
+            weaponStatus !=
+                bfvr::stereo::VehicleMotionAimWeaponStatus::Armed &&
+            InterlockedCompareExchange(
+                &firstFreelookMotionAimSuppressedLogged,
+                1,
+                0) == 0)
+        {
+            WriteLog(
+                L"Controller-motion aim is disabled for an occupied surface/sea seat that does not expose a readable native weapon. Head look and right-stick mouse-look remain active; entering an armed station establishes a fresh zero-input controller reference.");
+        }
         const bfvr::stereo::VehicleAimInputSigns vehicleAimSigns =
             bfvr::stereo::CalibratedVehicleAimInputSigns(
                 userSettings.invertTurretPitch,
@@ -928,8 +964,10 @@ private:
                 0) == 0)
         {
             WriteLog(
-                L"Surface/sea/mounted right-grip motion aim acquired a tracked zero-input reference at %.1f native-input units/metre. Relative hand movement now complements right-stick traverse/elevation with matching physical directions on both axes. Quick Menu hold, tracking loss, and control-mode changes rebaseline without a turret jump.",
-                kSurfaceVehicleMotionAimConfiguration.inputPerMetre);
+                L"Surface/sea/mounted right-grip motion aim acquired a tracked zero-input reference at %lu%% sensitivity (%.1f native-input units/metre). Relative hand movement now complements right-stick traverse/elevation with matching physical directions on both axes. Quick Menu hold, tracking loss, and control-mode changes rebaseline without a turret jump.",
+                static_cast<unsigned long>(
+                    userSettings.vehicleMotionAimSensitivityPercent),
+                motionAimConfiguration.inputPerMetre);
         }
 
         if (controlMode == ControllerControlMode::Infantry)
@@ -1189,8 +1227,10 @@ private:
                 if ((right.flags &
                         bfvr::shared::kControllerHandFlagThumbstickActive) != 0)
                 {
-                    // Stock tank, AA, naval-station, and mounted-gun object
-                    // templates bind traverse/elevation to mouse-look X/Y.
+                    // Surface PCOs bind mouse-look X/Y either to an unarmed
+                    // freelook camera or to turret/station traverse/elevation.
+                    // This stick route deliberately remains independent of
+                    // the weapon-proof gate applied only to grip movement.
                     AddAxisInput(
                         destination,
                         kLogicalInputMouseLookX,
@@ -1473,7 +1513,7 @@ private:
             candidatePlayer,
             multiplayerRoute,
             currentControlObject);
-        UpdateControllerControlMode(controlMode);
+        UpdateControllerControlContext(controlMode, currentControlObject);
         __try
         {
             ApplyControllerControls(
@@ -1577,6 +1617,7 @@ private:
         bfvr::stereo::ResetInfantryAuthoritativeAim(
             infantryAuthoritativeAim);
         activeControlMode = ControllerControlMode::Unknown;
+        activeControlObject = nullptr;
     }
 
     void RemoveHooks()
@@ -1663,9 +1704,14 @@ private:
             bfvr::stereo::ResetDigitalLocomotion(
                 infantryMovementDirection);
         }
+        if (updated.vehicleMotionAimSensitivityPercent !=
+            userSettings.vehicleMotionAimSensitivityPercent)
+        {
+            bfvr::stereo::ResetVehicleMotionAim(surfaceVehicleMotionAim);
+        }
         userSettings = updated;
         WriteLog(
-            L"Controller input applied updated UserConfig values: turnMode=%ls infantryTurnSpeed=%lu%% movementDirection=%lu invertFlightPitch=%d aircraftPitchWithRoll=%d swapAircraftSticks=%d invertTurretPitch=%d invertTurretYaw=%d.",
+            L"Controller input applied updated UserConfig values: turnMode=%ls infantryTurnSpeed=%lu%% movementDirection=%lu vehicleMotionAimSensitivity=%lu%% invertFlightPitch=%d aircraftPitchWithRoll=%d swapAircraftSticks=%d invertTurretPitch=%d invertTurretYaw=%d.",
             userSettings.artificialTurnMode ==
                     bfvr::settings::ArtificialTurnMode::Snap
                 ? L"snap"
@@ -1673,6 +1719,8 @@ private:
             static_cast<unsigned long>(
                 userSettings.infantryTurnSpeedPercent),
             static_cast<unsigned long>(userSettings.movementDirection),
+            static_cast<unsigned long>(
+                userSettings.vehicleMotionAimSensitivityPercent),
             userSettings.invertFlightPitch ? 1 : 0,
             userSettings.aircraftPitchWithRoll ? 1 : 0,
             userSettings.swapAircraftSticks ? 1 : 0,
@@ -1727,6 +1775,7 @@ private:
     volatile LONG firstVehicleModeLogged = 0;
     volatile LONG firstAirModeLogged = 0;
     volatile LONG firstSurfaceMotionAimLogged = 0;
+    volatile LONG firstFreelookMotionAimSuppressedLogged = 0;
     volatile LONG lastGateDiagnosticsAt = 0;
     volatile LONG frameBuilderCalls = 0;
     volatile LONG normalizerCalls = 0;
@@ -1759,6 +1808,7 @@ private:
     bfvr::stereo::InfantryAuthoritativeAimState
         infantryAuthoritativeAim = {};
     ControllerControlMode activeControlMode = ControllerControlMode::Unknown;
+    const void* activeControlObject = nullptr;
     bool controllerScoreboardWasHeld = false;
     bfvr::settings::UserSettingsValues userSettings = {};
     ULONGLONG nextUserSettingsPollAt = 0;

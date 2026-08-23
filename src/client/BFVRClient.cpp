@@ -5,6 +5,7 @@
 #include "client/DSoundListenerProbe.h"
 #include "client/D3D8RuntimeRedirect.h"
 #include "client/D3D8RuntimeDiagnostics.h"
+#include "diagnostics/PerformanceSummary.h"
 #include "client/D3D8StateCensus.h"
 #include "client/D3D8WeaponTransformOwnershipProbe.h"
 #include "client/D3D8WeaponViewModelProbe.h"
@@ -315,7 +316,33 @@ void AppendLog(const wchar_t* format, ...)
     static const bool diagnosticsEnabled =
         bfvr::IsD3D8RuntimeDiagnosticsEnabled(
             bfvr::ReadD3D8RuntimeDiagnosticLevel());
-    if (g_module == nullptr || !diagnosticsEnabled)
+    static const bool performanceSummaryEnabled =
+        bfvr::diagnostics::ReadTargetedPerformanceSummaryEnabled();
+
+    wchar_t message[1024] = {};
+    va_list arguments;
+    va_start(arguments, format);
+    _vsnwprintf_s(
+        message,
+        std::size(message),
+        _TRUNCATE,
+        format == nullptr ? L"" : format,
+        arguments);
+    va_end(arguments);
+
+    // Observer callbacks pass their already-formatted text through
+    // AppendLog(L"%s", message). Apply the explicitly requested calibration
+    // allowlist to the final text, not the outer format string. Ordinary
+    // runtime and feature-audit messages remain suppressed when diagnostics
+    // are disabled.
+    const bool calibrationAudit =
+        bfvr::IsOffHandCalibrationAuditMessage(message);
+    const bool performanceSummary = performanceSummaryEnabled &&
+        bfvr::diagnostics::IsPerformanceSummaryMessage(message);
+    if (g_module == nullptr ||
+        (!diagnosticsEnabled &&
+         !calibrationAudit &&
+         !performanceSummary))
     {
         return;
     }
@@ -345,12 +372,6 @@ void AppendLog(const wchar_t* format, ...)
     {
         return;
     }
-
-    wchar_t message[1024] = {};
-    va_list arguments;
-    va_start(arguments, format);
-    _vsnwprintf_s(message, std::size(message), _TRUNCATE, format, arguments);
-    va_end(arguments);
 
     SYSTEMTIME now = {};
     GetLocalTime(&now);

@@ -67,6 +67,10 @@ bool FinalizeFrameTargets(void* device)
         }
         g_frameUiPlacement.mountedCameraDecoupled =
             g_renderViewPoseHook.IsMountedCameraDecoupled();
+        g_frameUiPlacement.scopeOverlayRollValid =
+            g_renderViewPoseHook.TryGetScopeOverlayRoll(
+                g_runtimeRenderRequest.sequence,
+                g_frameUiPlacement.scopeOverlayRollRadians);
         bfvr::D3D8RuntimeMovementFrame movementFrame = {};
         bfvr::LocalPlayerMotionPose localMotion = {};
         if (bfvr::ReadLocalPlayerMotionPose(localMotion))

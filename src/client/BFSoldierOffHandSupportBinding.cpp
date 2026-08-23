@@ -12,7 +12,8 @@ namespace
 
 constexpr float kSqueezePressThreshold = 0.60F;
 constexpr float kSqueezeReleaseThreshold = 0.45F;
-constexpr float kAuthoredAcquireDistanceMetres = 0.12F;
+constexpr float kAuthoredAcquireDistanceMetres = 0.18F;
+constexpr float kCapturedCloseAcquireDistanceMetres = 0.12F;
 constexpr DWORD kBlockedReportIntervalMs = 500;
 constexpr LONG kMaximumBlockedReports = 12;
 
@@ -120,7 +121,13 @@ BFSoldierOffHandSupportBinding::Update(
     sample.supportPoseValid = pose.has_value();
     sample.nativeLeftHandTargetActive =
         input.nativeLeftHandTargetActive;
-    auto state = policy_.Update(sample);
+    const float acquireDistanceMetres =
+        input.mode == BFSoldierOffHandSupportMode::AuthoredHandSpan
+        ? kAuthoredAcquireDistanceMetres
+        : input.mode == BFSoldierOffHandSupportMode::CapturedClose
+        ? kCapturedCloseAcquireDistanceMetres
+        : 0.0F;
+    auto state = policy_.Update(sample, acquireDistanceMetres);
     if (input.mode == BFSoldierOffHandSupportMode::AuthoredHandSpan &&
         pose.has_value() && squeezeHeld_ &&
         pose->controllerDistanceMetres > kAuthoredAcquireDistanceMetres &&

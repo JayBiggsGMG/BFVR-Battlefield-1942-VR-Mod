@@ -62,6 +62,10 @@ const wchar_t* DescribeSemanticClass(
     {
         return L"animated-mesh-skinning";
     }
+    if (semanticClass == stereo::D3D8SemanticDrawClass::ProjectedTerrainShadow)
+    {
+        return L"projected-terrain-shadow";
+    }
     if (semanticClass == stereo::D3D8SemanticDrawClass::WaterSurface)
     {
         return L"water-surface";
@@ -188,7 +192,7 @@ void ReportStereoFrameResult(
         InterlockedCompareExchange(&frame.excludedByKind[2], 0, 0),
         InterlockedCompareExchange(&frame.excludedByKind[3], 0, 0));
     appendLog(
-        L"D3D8 full-draw-frame transform policy: stereoPerspective=%ld monoPretransformed=%ld monoNonPerspective=%ld skyboxCubeFaces=%ld billboardBatches=%ld treeMeshAlphaBlocks=%ld treeMeshProgrammableSprites=%ld animatedMeshSkinning=%ld waterSurfaces=%ld stereoStableWaterReflections=%ld waterReflectionStateFailures=%ld waterTextureBasisEyes=%ld waterTextureBasisFailures=%ld translucentSprites=%ld ref2FontGlyphBatches=%ld ref2MenuQuads=%ld vertexShaderReadFailures=%ld skinningPrepareFailures=%ld skinningSourceMismatches=%ld skinningApplyFailures=%ld spritePrepareFailures=%ld spriteSourceMismatches=%ld spriteApplyFailures=%ld treeSpritePrepareFailures=%ld treeSpriteSourceMismatches=%ld treeSpriteApplyFailures=%ld renderStateReadFailures=%ld provenanceSites=%ld/%zu provenanceOverflow=%ld. The exact WinPC additive water pass keeps Battlefield's native normal-map, generated-light, SpecularColor, SpecularStreakFactor, and LOCALVIEWER response. It uses the current head-centre material View in both eyes and folds each residual eye View into Projection, which preserves the original per-eye clip geometry exactly while removing eye-dependent reflection coordinates. Set BFVR_STEREO_WATER_REFLECTION=1 to restore the fully legacy per-eye camera-relative reflection path; exact SkinningShader2Bones draws receive per-eye c0-c3 world-view-projection constants, exact translated TranslucentBucketDB sprites receive per-eye c0-c7 plus c9 camera constants, and exact TreeMesh programmable sprites receive per-eye c0-c7 constants. All receive required restoration; deep diagnostics additionally reads the restored registers back for exact verification.",
+        L"D3D8 full-draw-frame transform policy: stereoPerspective=%ld monoPretransformed=%ld monoNonPerspective=%ld skyboxCubeFaces=%ld billboardBatches=%ld treeMeshAlphaBlocks=%ld treeMeshProgrammableSprites=%ld animatedMeshSkinning=%ld projectedTerrainShadows=%ld projectedShadowTextureEyes=%ld projectedShadowTextureFailures=%ld waterSurfaces=%ld stereoStableWaterReflections=%ld waterReflectionStateFailures=%ld waterTextureBasisEyes=%ld waterTextureBasisFailures=%ld translucentSprites=%ld ref2FontGlyphBatches=%ld ref2MenuQuads=%ld vertexShaderReadFailures=%ld skinningPrepareFailures=%ld skinningSourceMismatches=%ld skinningApplyFailures=%ld spritePrepareFailures=%ld spriteSourceMismatches=%ld spriteApplyFailures=%ld treeSpritePrepareFailures=%ld treeSpriteSourceMismatches=%ld treeSpriteApplyFailures=%ld renderStateReadFailures=%ld provenanceSites=%ld/%zu provenanceOverflow=%ld. Exact PatchCellBlock shadow applications receive a per-eye stage-0 texture transform that preserves BF1942's authored world-space projection under the replay View. The exact WinPC additive water pass keeps Battlefield's native normal map, generated-light lookup, SpecularColor, SpecularStreakFactor, and LOCALVIEWER response. It uses the current head-centre material View in both eyes and folds each residual eye View into Projection, which preserves the original per-eye clip geometry exactly while removing eye-dependent reflection coordinates. Set BFVR_STEREO_WATER_REFLECTION=1 to restore the fully legacy per-eye camera-relative reflection path; exact SkinningShader2Bones draws receive per-eye c0-c3 world-view-projection constants, exact translated TranslucentBucketDB sprites receive per-eye c0-c7 plus c9 camera constants, and exact TreeMesh programmable sprites receive per-eye c0-c7 constants. All receive required restoration; deep diagnostics additionally reads the restored registers back for exact verification.",
         InterlockedCompareExchange(&frame.stereoPerspectiveDraws, 0, 0),
         InterlockedCompareExchange(&frame.monoPretransformedDraws, 0, 0),
         InterlockedCompareExchange(&frame.monoNonPerspectiveDraws, 0, 0),
@@ -200,6 +204,15 @@ void ReportStereoFrameResult(
             0,
             0),
         InterlockedCompareExchange(&frame.animatedMeshSkinningDraws, 0, 0),
+        InterlockedCompareExchange(&frame.projectedTerrainShadowDraws, 0, 0),
+        InterlockedCompareExchange(
+            &frame.projectedShadowTextureEyeApplications,
+            0,
+            0),
+        InterlockedCompareExchange(
+            &frame.projectedShadowTextureFailures,
+            0,
+            0),
         InterlockedCompareExchange(&frame.waterSurfaceDraws, 0, 0),
         InterlockedCompareExchange(&frame.stereoStableWaterReflectionDraws, 0, 0),
         InterlockedCompareExchange(&frame.waterReflectionStateFailures, 0, 0),
@@ -388,7 +401,7 @@ void ReportContinuousPresentationResult(
     UINT worldHeight)
 {
     appendLog(
-        L"D3D8 OpenXR continuous handoff: sequences=%ld..%ld nativeWorld=%ux%u published=%ld presented=%ld failed=%ld draws=%ld world=%ld UI=%ld restorationWrites=%ld/%ld deepVerifications=%ld. Runtime centre-head pose drives RenderView while residual eye poses and asymmetric FOV drive D3D8 replay.",
+        L"BFVR_PERFORMANCE_SUMMARY D3D8 OpenXR continuous handoff: sequences=%ld..%ld nativeWorld=%ux%u published=%ld presented=%ld failed=%ld draws=%ld world=%ld UI=%ld restorationWrites=%ld/%ld deepVerifications=%ld. Runtime centre-head pose drives RenderView while residual eye poses and asymmetric FOV drive D3D8 replay.",
         run.firstSequence,
         run.lastSequence,
         worldWidth,
@@ -403,11 +416,12 @@ void ReportContinuousPresentationResult(
         run.totalRestoreChecks,
         run.totalRestoreVerifications);
     appendLog(
-        L"D3D8 OpenXR session geometry families: treeRendererBillboards=%ld treeMeshAlphaBlocks=%ld treeMeshProgrammableSprites=%ld animatedMeshSkinning=%ld firstPersonArmsSuppressed=%ld translucentSprites=%ld. These are accumulated across every presented world frame, including frames before a menu exit.",
+        L"BFVR_PERFORMANCE_SUMMARY D3D8 OpenXR session geometry families: treeRendererBillboards=%ld treeMeshAlphaBlocks=%ld treeMeshProgrammableSprites=%ld animatedMeshSkinning=%ld projectedTerrainShadows=%ld firstPersonArmsSuppressed=%ld translucentSprites=%ld. These are accumulated across every presented world frame, including frames before a menu exit.",
         run.totalTreeRendererBillboardDraws,
         run.totalTreeMeshAlphaBlockDraws,
         run.totalTreeMeshProgrammableSpriteDraws,
         run.totalAnimatedMeshSkinningDraws,
+        run.totalProjectedTerrainShadowDraws,
         run.totalSuppressedFirstPersonArmDraws,
         run.totalTranslucentSpriteDraws);
 
@@ -426,8 +440,8 @@ void ReportContinuousPresentationResult(
         originalPresentCalls > 0 ? originalPresentCalls : 1);
     appendLog(
         run.gpuResidentTransport
-            ? L"D3D8 OpenXR GPU-resident stage timing: replay=%.3f ms/frame readback=%.3f ms/frame gpuSyncPublish=%.3f ms/frame consumeWait=%.3f ms/frame nextRequestWait=%.3f ms/frame."
-            : L"D3D8 OpenXR stage timing: replay=%.3f ms/frame readback=%.3f ms/frame upload=%.3f ms/frame consumeWait=%.3f ms/frame nextRequestWait=%.3f ms/frame.",
+            ? L"BFVR_PERFORMANCE_SUMMARY D3D8 OpenXR GPU-resident stage timing: replay=%.3f ms/frame readback=%.3f ms/frame gpuSyncPublish=%.3f ms/frame consumeWait=%.3f ms/frame nextRequestWait=%.3f ms/frame."
+            : L"BFVR_PERFORMANCE_SUMMARY D3D8 OpenXR stage timing: replay=%.3f ms/frame readback=%.3f ms/frame upload=%.3f ms/frame consumeWait=%.3f ms/frame nextRequestWait=%.3f ms/frame.",
         static_cast<double>(run.totalReplayQpcTicks) *
             millisecondsPerTick / frameCount,
         static_cast<double>(run.totalReadbackQpcTicks) *
@@ -438,21 +452,36 @@ void ReportContinuousPresentationResult(
             millisecondsPerTick / frameCount,
         static_cast<double>(run.totalRequestWaitQpcTicks) *
             millisecondsPerTick / frameCount);
-    appendLog(
-        L"D3D8 OpenXR replay detail: prepare=%.3f ms/frame eyeOrUiDraw=%.3f ms/frame restoreWrites=%.3f ms/frame deepRestoreReadback=%.3f ms/frame deepProvenance=%.3f ms/frame nativePresent=%.3f ms/call (%ld calls). Normal diagnostics always restores state but skips the two deep proof-readback stages.",
-        static_cast<double>(run.totalPreparationQpcTicks) *
-            millisecondsPerTick / frameCount,
-        static_cast<double>(run.totalEyeOrLayerDrawQpcTicks) *
-            millisecondsPerTick / frameCount,
-        static_cast<double>(run.totalRestoreWriteQpcTicks) *
-            millisecondsPerTick / frameCount,
-        static_cast<double>(run.totalRestoreVerifyQpcTicks) *
-            millisecondsPerTick / frameCount,
-        static_cast<double>(run.totalProvenanceQpcTicks) *
-            millisecondsPerTick / frameCount,
-        static_cast<double>(run.totalOriginalPresentQpcTicks) *
-            millisecondsPerTick / presentCallCount,
-        originalPresentCalls);
+    const bool detailedReplayTimersActive =
+        run.totalPreparationQpcTicks != 0 ||
+        run.totalEyeOrLayerDrawQpcTicks != 0 ||
+        run.totalRestoreWriteQpcTicks != 0;
+    if (detailedReplayTimersActive)
+    {
+        appendLog(
+            L"BFVR_PERFORMANCE_SUMMARY D3D8 OpenXR replay detail: prepare=%.3f ms/frame eyeOrUiDraw=%.3f ms/frame restoreWrites=%.3f ms/frame deepRestoreReadback=%.3f ms/frame deepProvenance=%.3f ms/frame nativePresent=%.3f ms/call (%ld calls). Normal diagnostics always restores state but skips the two deep proof-readback stages.",
+            static_cast<double>(run.totalPreparationQpcTicks) *
+                millisecondsPerTick / frameCount,
+            static_cast<double>(run.totalEyeOrLayerDrawQpcTicks) *
+                millisecondsPerTick / frameCount,
+            static_cast<double>(run.totalRestoreWriteQpcTicks) *
+                millisecondsPerTick / frameCount,
+            static_cast<double>(run.totalRestoreVerifyQpcTicks) *
+                millisecondsPerTick / frameCount,
+            static_cast<double>(run.totalProvenanceQpcTicks) *
+                millisecondsPerTick / frameCount,
+            static_cast<double>(run.totalOriginalPresentQpcTicks) *
+                millisecondsPerTick / presentCallCount,
+            originalPresentCalls);
+    }
+    else
+    {
+        appendLog(
+            L"BFVR_PERFORMANCE_SUMMARY D3D8 OpenXR replay detail: targeted mode leaves per-draw prepare/draw/restore timers disabled to avoid adding clock reads in the soldier-heavy hot path; total replay and geometry-family counters remain active. nativePresent=%.3f ms/call (%ld calls).",
+            static_cast<double>(run.totalOriginalPresentQpcTicks) *
+                millisecondsPerTick / presentCallCount,
+            originalPresentCalls);
+    }
 
     if (run.framePacingSamplesStored != 0)
     {
@@ -471,7 +500,7 @@ void ReportContinuousPresentationResult(
             return samples[index];
         };
         appendLog(
-            L"D3D8 OpenXR new-frame pacing over the latest %zu intervals: median=%.3f ms p95=%.3f ms p99=%.3f ms worst=%.3f ms. These intervals measure completed new BFVR stereo frames, not vanilla BF1942's frame rate.",
+            L"BFVR_PERFORMANCE_SUMMARY D3D8 OpenXR new-frame pacing over the latest %zu intervals: median=%.3f ms p95=%.3f ms p99=%.3f ms worst=%.3f ms. These intervals measure completed new BFVR stereo frames, not vanilla BF1942's frame rate.",
             run.framePacingSamplesStored,
             static_cast<double>(percentile(0.50)) * millisecondsPerTick,
             static_cast<double>(percentile(0.95)) * millisecondsPerTick,

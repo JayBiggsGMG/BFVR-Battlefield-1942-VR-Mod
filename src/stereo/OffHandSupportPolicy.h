@@ -96,6 +96,12 @@ public:
 
     [[nodiscard]] OffHandSupportResult Update(
         const OffHandSupportSample& sample) noexcept;
+    // Allows an item mode to select only its acquisition radius. The default
+    // overload retains the configured radius; support pose and held-state
+    // behavior are identical in both paths.
+    [[nodiscard]] OffHandSupportResult Update(
+        const OffHandSupportSample& sample,
+        float acquireDistanceMetres) noexcept;
     void Reset() noexcept;
 
     [[nodiscard]] OffHandSupportState State() const noexcept;

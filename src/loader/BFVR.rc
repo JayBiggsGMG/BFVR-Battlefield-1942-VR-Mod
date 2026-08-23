@@ -1,12 +1,13 @@
 #include <winver.h>
+#include "../../BFVRVersion.inc"
 
 #define IDI_BFVR 101
 
 IDI_BFVR ICON "../../assets/BFVR.ico"
 
 VS_VERSION_INFO VERSIONINFO
- FILEVERSION 1,0,1,0
- PRODUCTVERSION 1,0,1,0
+ FILEVERSION BFVR_VERSION_MAJOR,BFVR_VERSION_MINOR,BFVR_VERSION_PATCH,BFVR_VERSION_BUILD
+ PRODUCTVERSION BFVR_VERSION_MAJOR,BFVR_VERSION_MINOR,BFVR_VERSION_PATCH,BFVR_VERSION_BUILD
  FILEFLAGSMASK 0x3fL
 #ifdef _DEBUG
  FILEFLAGS VS_FF_DEBUG
@@ -22,11 +23,11 @@ BEGIN
         BLOCK "040904B0"
         BEGIN
             VALUE "FileDescription", "Battlefield 1942 VR Mod\0"
-            VALUE "FileVersion", "1.0.1\0"
+            VALUE "FileVersion", BFVR_VERSION_STRING "\0"
             VALUE "InternalName", "BFVR\0"
             VALUE "OriginalFilename", "BFVR.exe\0"
             VALUE "ProductName", "BFVR\0"
-            VALUE "ProductVersion", "1.0.1\0"
+            VALUE "ProductVersion", BFVR_VERSION_STRING "\0"
         END
     END
     BLOCK "VarFileInfo"

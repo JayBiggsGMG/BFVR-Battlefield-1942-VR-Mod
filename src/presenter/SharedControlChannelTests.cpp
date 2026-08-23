@@ -61,6 +61,7 @@ int main()
     bfvr::shared::ControlBlock* const producerBlock = producer.Get();
     bfvr::shared::ControlBlock* const presenterBlock = presenter.Get();
     presenterBlock->controllerSample.mountedCameraToggleSequence = 7;
+    presenterBlock->controllerSample.hudToggleSequence = 9;
     MemoryBarrier();
     InterlockedExchange(&presenterBlock->controllerSampleSequence, 11);
     passed = Check(
@@ -70,8 +71,9 @@ int main()
                 &producerBlock->controllerSampleSequence,
                 0,
                 0) == 11 &&
-            producerBlock->controllerSample.mountedCameraToggleSequence == 7,
-        L"presenter-to-producer mounted-camera toggle payload failed") &&
+            producerBlock->controllerSample.mountedCameraToggleSequence == 7 &&
+            producerBlock->controllerSample.hudToggleSequence == 9,
+        L"presenter-to-producer Quick Menu toggle payload failed") &&
         passed;
 
     presenterBlock->renderRequest.recenterForwardSequence = 19;
@@ -106,7 +108,11 @@ int main()
     InterlockedIncrement(&producerBlock->hapticShotRightSequence);
     InterlockedIncrement(&producerBlock->hapticShotBothSequence);
     InterlockedIncrement(&producerBlock->hapticDeathSequence);
+    InterlockedExchange(
+        &producerBlock->localPlayerLifeState,
+        static_cast<LONG>(bfvr::shared::LocalPlayerLifeState::Dead));
     InterlockedIncrement(&producerBlock->hapticNativeMenuHoverSequence);
+    InterlockedIncrement(&producerBlock->killSoundSequence);
     passed = Check(
         producer.SignalProducerUpdate() &&
             presenter.WaitForProducerUpdate(1000) == WAIT_OBJECT_0 &&
@@ -117,10 +123,16 @@ int main()
             InterlockedCompareExchange(
                 &presenterBlock->hapticDeathSequence, 0, 0) == 1 &&
             InterlockedCompareExchange(
+                &presenterBlock->localPlayerLifeState, 0, 0) ==
+                static_cast<LONG>(
+                    bfvr::shared::LocalPlayerLifeState::Dead) &&
+            InterlockedCompareExchange(
                 &presenterBlock->hapticNativeMenuHoverSequence,
                 0,
-                0) == 1,
-        L"producer-to-presenter haptic event counters failed") && passed;
+                0) == 1 &&
+            InterlockedCompareExchange(
+                &presenterBlock->killSoundSequence, 0, 0) == 1,
+        L"producer-to-presenter haptic and kill-sound event counters failed") && passed;
 
     bfvr::RegisterControllerHapticTransport(producerBlock);
     const LONG initialHoverSequence = InterlockedCompareExchange(
@@ -128,18 +140,33 @@ int main()
         0,
         0);
     bfvr::NotifyControllerNativeMenuHover();
+    const LONG initialKillSequence = InterlockedCompareExchange(
+        &producerBlock->killSoundSequence, 0, 0);
+    bfvr::NotifyLocalPlayerKillSound();
+    InterlockedIncrement(&presenterBlock->nativeMenuSoundHighlightSequence);
+    InterlockedIncrement(&presenterBlock->nativeMenuSoundOkSequence);
+    InterlockedIncrement(&presenterBlock->nativeMenuSoundCancelSequence);
+    const bfvr::NativeMenuSoundRequests menuSounds =
+        bfvr::ConsumeNativeMenuSoundRequests();
     bfvr::RegisterControllerHapticTransport(nullptr);
     bfvr::NotifyControllerNativeMenuHover();
+    bfvr::NotifyLocalPlayerKillSound();
     passed = Check(
         InterlockedCompareExchange(
             &producerBlock->hapticNativeMenuHoverSequence,
             0,
-            0) == initialHoverSequence + 1,
-        L"direct native-menu hover event did not publish exactly once through the registered transport") && passed;
+            0) == initialHoverSequence + 1 &&
+        InterlockedCompareExchange(
+            &producerBlock->killSoundSequence,
+            0,
+            0) == initialKillSequence + 1 &&
+        menuSounds.highlight == 1 && menuSounds.ok == 1 &&
+        menuSounds.cancel == 1,
+        L"registered kill and bidirectional native-menu audio events did not publish exactly once") && passed;
 
     if (passed)
     {
-        wprintf(L"[PASS] Shared control events, haptic counters, context recenter/STAGE-height commands, and mounted-camera feedback are bidirectional.\n");
+        wprintf(L"[PASS] Shared control events, haptic counters, context recenter/STAGE-height commands, mounted-camera feedback, and native-HUD edges are bidirectional.\n");
     }
     return passed ? 0 : 1;
 }

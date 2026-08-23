@@ -76,6 +76,8 @@ public:
         std::size_t capacity);
     [[nodiscard]] stereo::QuickMenuSelection
     TakeReleasedSelection() noexcept;
+    [[nodiscard]] OpenXRNativeMenuSoundRequests
+    TakeNativeMenuSoundRequests() noexcept;
     [[nodiscard]] OpenXRTrackingAction TakeTrackingAction() noexcept;
     [[nodiscard]] bool GetMirrorState(
         OpenXRQuickMenuMirrorState& state) const noexcept;
@@ -113,6 +115,7 @@ private:
         ID3D11Texture2D* source,
         const wchar_t* label);
     void DestroySwapchain(Swapchain& swapchain) noexcept;
+    void TrackNativeMenuHover() noexcept;
     void WriteLog(const wchar_t* format, ...) const;
 
     OpenXRQuickMenuApi api_ = {};
@@ -125,21 +128,31 @@ private:
     std::array<
         ID3D11Texture2D*,
         stereo::kQuickMenuUtilityVisualCount> utilitySources_ = {};
+    std::array<
+        ID3D11Texture2D*,
+        stereo::kQuickMenuCommandVisualCount> commandSources_ = {};
     ID3D11Texture2D* cursorSource_ = nullptr;
     ID3D11Texture2D* settingsSource_ = nullptr;
+    ID3D11Texture2D* settingsVersionSource_ = nullptr;
     Swapchain menuSwapchain_ = {};
     Swapchain utilitySwapchain_ = {};
+    Swapchain commandSwapchain_ = {};
     Swapchain cursorSwapchain_ = {};
     Swapchain settingsSwapchain_ = {};
+    Swapchain settingsVersionSwapchain_ = {};
     XrCompositionLayerQuad menuLayer_{XR_TYPE_COMPOSITION_LAYER_QUAD};
     XrCompositionLayerQuad utilityLayer_{XR_TYPE_COMPOSITION_LAYER_QUAD};
+    XrCompositionLayerQuad commandLayer_{XR_TYPE_COMPOSITION_LAYER_QUAD};
     XrCompositionLayerQuad cursorLayer_{XR_TYPE_COMPOSITION_LAYER_QUAD};
+    XrCompositionLayerQuad settingsVersionLayer_{
+        XR_TYPE_COMPOSITION_LAYER_QUAD};
     stereo::QuickMenuInteraction interaction_ = {};
     stereo::SettingsMenuInteraction settingsInteraction_ = {};
     SettingsMenuArt settingsArt_ = {};
     settings::UserSettingsRuntime* userSettingsRuntime_ = nullptr;
     settings::UserSettingsSession userSettingsSession_ = {};
     settings::UserSettingsValues startupSettingsValues_ = {};
+    bool menuPointerSmoothingEnabled_ = true;
     stereo::SettingsMenuSnapshot renderedSettingsState_ = {};
     OpenXRLogCallback logCallback_ = nullptr;
     void* logContext_ = nullptr;
@@ -149,6 +162,8 @@ private:
     bool settingsVisualValid_ = false;
     bool mountedCameraDecoupled_ = false;
     OpenXRTrackingAction trackingAction_ = OpenXRTrackingAction::None;
+    OpenXRNativeMenuSoundRequests pendingNativeMenuSounds_ = {};
+    std::uint64_t lastNativeMenuSoundHoverTarget_ = 0;
 };
 
 } // namespace bfvr

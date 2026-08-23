@@ -140,16 +140,31 @@ struct OpenXRQuickMenuMirrorState
         stereo::QuickMenuSelection::None;
     OpenXRPresentationPose panelPose = {};
     OpenXRPresentationPose utilityPose = {};
+    OpenXRPresentationPose commandPose = {};
+    OpenXRPresentationPose versionPose = {};
     OpenXRPresentationPose cursorPose = {};
     float panelWidthMeters = 0.0F;
     float panelHeightMeters = 0.0F;
     float utilityWidthMeters = 0.0F;
     float utilityHeightMeters = 0.0F;
+    float commandWidthMeters = 0.0F;
+    float commandHeightMeters = 0.0F;
+    float versionWidthMeters = 0.0F;
+    float versionHeightMeters = 0.0F;
     float cursorWidthMeters = 0.0F;
     float cursorHeightMeters = 0.0F;
     ID3D11Texture2D* menuTexture = nullptr;
     ID3D11Texture2D* utilityTexture = nullptr;
+    ID3D11Texture2D* commandTexture = nullptr;
+    ID3D11Texture2D* versionTexture = nullptr;
     ID3D11Texture2D* cursorTexture = nullptr;
+};
+
+struct OpenXRNativeMenuSoundRequests
+{
+    std::uint32_t highlight = 0;
+    std::uint32_t ok = 0;
+    std::uint32_t cancel = 0;
 };
 
 struct OpenXRPresentationTextureRequirements
@@ -214,7 +229,8 @@ public:
             OpenXRUiReferenceMode::HeadLocked,
         const OpenXRPresentationPose* worldUiAnchor = nullptr,
         OpenXRUiPresentationMode uiPresentationMode =
-            OpenXRUiPresentationMode::Standard);
+            OpenXRUiPresentationMode::Standard,
+        bool keepHudUpright = true);
 
     // Two-phase form used by the cross-process presenter. BeginFrame waits for
     // runtime timing and locates both predicted eye views before the x86 game
@@ -231,12 +247,19 @@ public:
         OpenXRUiPresentationMode uiPresentationMode =
             OpenXRUiPresentationMode::Standard,
         OpenXRSwapchainContentMode swapchainContentMode =
-            OpenXRSwapchainContentMode::Update);
+            OpenXRSwapchainContentMode::Update,
+        bool keepHudUpright = true);
 
     // Returns and clears one selection produced by releasing the dedicated
     // right-controller A hold. Rendering never dispatches keyboard input.
     [[nodiscard]] stereo::QuickMenuSelection
     TakeQuickMenuSelection() noexcept;
+
+    // Returns BFVR-owned menu feedback events accumulated during the latest
+    // controller update. The presenter transports them to the x86 owner of
+    // Battlefield's verified BfMenu sound wrappers.
+    [[nodiscard]] OpenXRNativeMenuSoundRequests
+    TakeNativeMenuSoundRequests() noexcept;
 
     // Opens the persistent owner-authored VR Settings panel after the
     // presenter's Quick Menu command dispatcher accepts its release.
@@ -246,9 +269,12 @@ public:
     // only to render the left utility button's coupled/decoupled appearance.
     void SetMountedCameraDecoupled(bool decoupled) noexcept;
 
-    // Sets a normalized translation-derived target. The renderer eases at
-    // OpenXR frame cadence and inserts the effect below HUD/menu layers.
-    void SetComfortVignetteTarget(float strength) noexcept;
+    // Sets independent movement and death targets for the one vignette
+    // compositor. Death styling takes priority; the renderer eases both at
+    // OpenXR frame cadence below every HUD/menu layer.
+    void SetComfortVignetteTargets(
+        float movementStrength,
+        float deathBlend) noexcept;
 
     // Applies one controller pulse through the session's already-bound
     // vibration action. The single saved Controls toggle gates every event.

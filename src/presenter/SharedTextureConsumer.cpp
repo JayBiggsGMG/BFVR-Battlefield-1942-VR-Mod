@@ -1,4 +1,5 @@
 #include "presenter/SharedTextureConsumer.h"
+#include "diagnostics/PerformanceSummary.h"
 #include "settings/UserSettings.h"
 
 #include <dxgi1_2.h>
@@ -17,13 +18,7 @@ namespace
 {
 bool ReadPerformanceDiagnosticsEnabled()
 {
-    wchar_t value[16] = {};
-    const DWORD length = GetEnvironmentVariableW(
-        L"BFVR_DIAGNOSTICS",
-        value,
-        static_cast<DWORD>(std::size(value)));
-    return !((length == 3 && _wcsicmp(value, L"off") == 0) ||
-        (length == 1 && value[0] == L'0'));
+    return bfvr::diagnostics::ReadAggregatePerformanceEnabled();
 }
 
 bool IsSrgbFormat(DXGI_FORMAT format)
@@ -187,6 +182,13 @@ bool SharedTextureConsumer::Initialize(
             static_cast<float>(values.bloomThresholdPercent) / 100.0F;
         worldBloomIntensity_ =
             static_cast<float>(values.bloomIntensityPercent) / 100.0F;
+        worldColorGrading_.profile = static_cast<float>(values.colorProfile);
+        worldColorGrading_.exposureEv = static_cast<float>(
+            values.colorExposureTenthsEv) / 10.0F;
+        worldColorGrading_.contrast = static_cast<float>(
+            values.colorContrastPercent) / 100.0F;
+        worldColorGrading_.saturation = static_cast<float>(
+            values.colorSaturationPercent) / 100.0F;
         ambientOcclusionRadiusMeters_ = static_cast<float>(
             values.ambientOcclusionRadiusCentimeters) / 100.0F;
         ambientOcclusionIntensity_ = static_cast<float>(
@@ -275,6 +277,16 @@ bool SharedTextureConsumer::Initialize(
         Shutdown();
         return false;
     }
+    // Color profiles are live settings, so both world eyes always retain the
+    // final scaler/composite pass even when source and destination dimensions
+    // happen to match. Ref2 remains eligible for the exact-size copy path.
+    const std::size_t ref2Index =
+        static_cast<std::size_t>(TextureSlot::Ref2Ui);
+    for (std::size_t index = 0; index < ref2Index; ++index)
+    {
+        textures_[index].requiresScaling = true;
+    }
+    scalerRequired_ = true;
     if (depthOpened && ambientOcclusionRequested && ambientOcclusion_.Initialize(
             device_,
             context_,
@@ -364,6 +376,12 @@ bool SharedTextureConsumer::Initialize(
         Shutdown();
         return false;
     }
+    WriteLog(
+        L"World-only color treatment is active in the existing final composite (profile=%.0f exposure=%+.1f EV contrast=%+.2f saturation=%+.2f); Ref2 UI uses neutral constants.",
+        worldColorGrading_.profile,
+        worldColorGrading_.exposureEv,
+        worldColorGrading_.contrast,
+        worldColorGrading_.saturation);
     if (waterReflectionsEnabled_)
     {
         WriteLog(
@@ -480,6 +498,7 @@ bool SharedTextureConsumer::ConsumeFrame(
 
     std::array<bool, kTextureCount> acquired = {};
     std::array<bool, kDepthTextureCount> depthAcquired = {};
+    const std::int64_t acquireStarted = performanceSummary_.BeginSample();
     const bool useDepth =
             (ambientOcclusionEnabled_ ||
              screenSpaceGlobalIlluminationEnabled_ ||
@@ -545,9 +564,13 @@ bool SharedTextureConsumer::ConsumeFrame(
             depthAcquired[index] = true;
         }
     }
+    performanceSummary_.EndSample(
+        SharedTexturePerformanceStage::SharedAcquire,
+        acquireStarted);
 
     bool ssgiFrameStarted = false;
     bool applyScreenSpaceGlobalIllumination = false;
+    const std::int64_t ssgiStarted = performanceSummary_.BeginSample();
     if (useDepth && screenSpaceGlobalIlluminationEnabled_)
     {
         ssgiFrameStarted = screenSpaceGlobalIllumination_.BeginFrame();
@@ -569,9 +592,13 @@ bool SharedTextureConsumer::ConsumeFrame(
         }
         screenSpaceGlobalIllumination_.EndFrame();
     }
+    performanceSummary_.EndSample(
+        SharedTexturePerformanceStage::ScreenSpaceGlobalIlluminationEnqueue,
+        ssgiStarted);
 
     bool applyWaterReflections =
         useDepth && waterReflectionsEnabled_ && waterMaskValid;
+    const std::int64_t waterStarted = performanceSummary_.BeginSample();
     for (std::size_t eye = 0;
          eye < depthTextures_.size() && applyWaterReflections;
          ++eye)
@@ -585,9 +612,13 @@ bool SharedTextureConsumer::ConsumeFrame(
             depthTextures_[eye].height,
             depthFrame->projections[eye]);
     }
+    performanceSummary_.EndSample(
+        SharedTexturePerformanceStage::WaterReflectionEnqueue,
+        waterStarted);
 
     bool aoFrameStarted = false;
     bool applyAmbientOcclusion = false;
+    const std::int64_t aoStarted = performanceSummary_.BeginSample();
     if (useDepth && ambientOcclusionEnabled_)
     {
         aoFrameStarted = ambientOcclusion_.BeginFrame();
@@ -604,7 +635,12 @@ bool SharedTextureConsumer::ConsumeFrame(
                 depthFrame->projections[eye]);
         }
     }
+    performanceSummary_.EndSample(
+        SharedTexturePerformanceStage::AmbientOcclusionEnqueue,
+        aoStarted);
 
+    const std::int64_t compositeStarted =
+        performanceSummary_.BeginSample();
     const bool bloomFrameStarted =
         worldBloomEnabled_ && scaler_.BeginBloomFrame();
     bool copied = true;
@@ -654,7 +690,10 @@ bool SharedTextureConsumer::ConsumeFrame(
                     : 0.0F,
                 texture.applyBloom,
                 worldBloomThreshold_,
-                worldBloomIntensity_) && copied;
+                worldBloomIntensity_,
+                index != static_cast<std::size_t>(TextureSlot::Ref2Ui)
+                    ? worldColorGrading_
+                    : D3D11ColorGradingConfiguration{}) && copied;
         }
         else
         {
@@ -668,6 +707,9 @@ bool SharedTextureConsumer::ConsumeFrame(
         if (bloomFrameStarted && index + 1 == kDepthTextureCount)
             scaler_.EndBloomFrame();
     }
+    performanceSummary_.EndSample(
+        SharedTexturePerformanceStage::CompositeEnqueue,
+        compositeStarted);
     if (aoFrameStarted)
         ambientOcclusion_.EndFrame();
     if (useDepth && screenSpaceGlobalIlluminationEnabled_ &&
@@ -708,6 +750,7 @@ bool SharedTextureConsumer::ConsumeFrame(
         (frameOverlayFlags & kFrameOverlayBackToGameVisible) != 0;
     const bool overlayHovered = overlayVisible &&
         (frameOverlayFlags & kFrameOverlayBackToGameHovered) != 0;
+    const std::int64_t overlayStarted = performanceSummary_.BeginSample();
     if (mainMenuOverlay_.IsReady() && !mainMenuOverlay_.Composite(
             uiTexture.localTarget,
             uiTexture.sourceWidth,
@@ -719,11 +762,18 @@ bool SharedTextureConsumer::ConsumeFrame(
     {
         copied = false;
     }
+    performanceSummary_.EndSample(
+        SharedTexturePerformanceStage::MenuOverlayEnqueue,
+        overlayStarted);
+    const std::int64_t flushStarted = performanceSummary_.BeginSample();
     if (legacyCompletionQuery_ != nullptr)
     {
         context_->End(legacyCompletionQuery_);
     }
     context_->Flush();
+    performanceSummary_.EndSample(
+        SharedTexturePerformanceStage::Flush,
+        flushStarted);
 
     const bool hasKeyedMutexAcquisition =
         std::any_of(acquired.begin(), acquired.end(), [](const bool value)
@@ -805,6 +855,10 @@ bool SharedTextureConsumer::ConsumeFrame(
                 SUCCEEDED(texture.keyedMutex->ReleaseSync(0)) && released;
         }
     }
+    performanceSummary_.ReportIfDue(
+        GetTickCount(),
+        logCallback_,
+        logContext_);
     return copied && completed && released;
 }
 
@@ -920,6 +974,24 @@ void SharedTextureConsumer::ApplySavedLiveSettings()
             bloomThreshold,
             bloomIntensity);
     }
+    const D3D11ColorGradingConfiguration colorGrading = {
+        static_cast<float>(values.colorProfile),
+        static_cast<float>(values.colorExposureTenthsEv) / 10.0F,
+        static_cast<float>(values.colorContrastPercent) / 100.0F,
+        static_cast<float>(values.colorSaturationPercent) / 100.0F};
+    if (worldColorGrading_.profile != colorGrading.profile ||
+        worldColorGrading_.exposureEv != colorGrading.exposureEv ||
+        worldColorGrading_.contrast != colorGrading.contrast ||
+        worldColorGrading_.saturation != colorGrading.saturation)
+    {
+        worldColorGrading_ = colorGrading;
+        WriteLog(
+            L"Saved Graphics settings applied world-only color profile %.0f, exposure %+.1f EV, contrast %+.2f, and saturation %+.2f; Ref2 UI remains neutral.",
+            colorGrading.profile,
+            colorGrading.exposureEv,
+            colorGrading.contrast,
+            colorGrading.saturation);
+    }
 }
 
 OpenXRPresentationTextures SharedTextureConsumer::GetLocalTextures() const noexcept
@@ -948,6 +1020,7 @@ bool SharedTextureConsumer::ReadCenterPixels(DWORD* pixels, std::size_t count)
 void SharedTextureConsumer::Shutdown()
 {
     (void)CompleteFrameConsumption();
+    performanceSummary_.ReportFinal(logCallback_, logContext_);
     mainMenuOverlay_.Shutdown();
     ambientOcclusion_.Shutdown();
     screenSpaceGlobalIllumination_.Shutdown();
@@ -976,6 +1049,8 @@ void SharedTextureConsumer::Shutdown()
     waterReflectionFrameFailures_ = 0;
     worldBloomThreshold_ = 0.55F;
     worldBloomIntensity_ = 0.35F;
+    worldColorGrading_ = {};
+    performanceSummary_.Reset();
     for (Texture& texture : textures_)
     {
         ReleaseTexture(texture);
@@ -1015,6 +1090,19 @@ bool SharedTextureConsumer::OpenTexture(
         destinationFormat == DXGI_FORMAT_UNKNOWN ||
         description.format == DXGI_FORMAT_UNKNOWN)
     {
+        WriteLog(
+            L"Shared texture consumer rejected slot %zu before opening it: device=%p transport=%lu source=%ux%u format=%lu handle=%p name='%s' destination=%ux%u format=%u.",
+            index,
+            device,
+            static_cast<unsigned long>(description.transport),
+            description.width,
+            description.height,
+            static_cast<unsigned long>(description.format),
+            LoadLegacySharedHandle(description),
+            description.name,
+            destinationWidth,
+            destinationHeight,
+            static_cast<unsigned int>(destinationFormat));
         return false;
     }
 
@@ -1022,9 +1110,11 @@ bool SharedTextureConsumer::OpenTexture(
     const SharedTextureTransport transport =
         static_cast<SharedTextureTransport>(description.transport);
     HRESULT result = E_INVALIDARG;
+    const wchar_t* failureStage = L"validate transport";
     if (transport == SharedTextureTransport::NamedNtHandle &&
         description.name[0] != L'\0')
     {
+        failureStage = L"ID3D11Device1::OpenSharedResourceByName";
         result = device->OpenSharedResourceByName(
             description.name,
             DXGI_SHARED_RESOURCE_READ | DXGI_SHARED_RESOURCE_WRITE,
@@ -1032,6 +1122,7 @@ bool SharedTextureConsumer::OpenTexture(
             reinterpret_cast<void**>(&texture.shared));
         if (SUCCEEDED(result))
         {
+            failureStage = L"shared texture IDXGIKeyedMutex query";
             result = texture.shared->QueryInterface(
                 __uuidof(IDXGIKeyedMutex),
                 reinterpret_cast<void**>(&texture.keyedMutex));
@@ -1040,6 +1131,9 @@ bool SharedTextureConsumer::OpenTexture(
     else if (transport == SharedTextureTransport::D3D9LegacyHandle)
     {
         const HANDLE sharedHandle = LoadLegacySharedHandle(description);
+        failureStage = sharedHandle == nullptr
+            ? L"validate legacy D3D9 shared handle"
+            : L"ID3D11Device::OpenSharedResource(legacy D3D9 handle)";
         result = sharedHandle == nullptr
             ? E_INVALIDARG
             : device_->OpenSharedResource(
@@ -1051,6 +1145,7 @@ bool SharedTextureConsumer::OpenTexture(
     D3D11_TEXTURE2D_DESC sourceDescription = {};
     if (SUCCEEDED(result))
     {
+        failureStage = L"validate opened shared texture description";
         texture.shared->GetDesc(&sourceDescription);
         if (sourceDescription.Width != description.width ||
             sourceDescription.Height != description.height ||
@@ -1064,6 +1159,7 @@ bool SharedTextureConsumer::OpenTexture(
     const DXGI_FORMAT sourceFormat = sourceDescription.Format;
     if (SUCCEEDED(result))
     {
+        failureStage = L"validate shared-to-destination format conversion";
         if (!IsConvertibleSharedFormat(
                 sourceFormat,
                 destinationFormat))
@@ -1073,6 +1169,7 @@ bool SharedTextureConsumer::OpenTexture(
     }
     if (SUCCEEDED(result))
     {
+        failureStage = L"ID3D11Device::CreateShaderResourceView(shared texture)";
         result = device_->CreateShaderResourceView(
             texture.shared,
             nullptr,
@@ -1080,6 +1177,7 @@ bool SharedTextureConsumer::OpenTexture(
     }
     if (SUCCEEDED(result))
     {
+        failureStage = L"ID3D11Device::CreateTexture2D(local destination)";
         sourceDescription.Usage = D3D11_USAGE_DEFAULT;
         sourceDescription.Width = destinationWidth;
         sourceDescription.Height = destinationHeight;
@@ -1096,6 +1194,7 @@ bool SharedTextureConsumer::OpenTexture(
     }
     if (SUCCEEDED(result))
     {
+        failureStage = L"ID3D11Device::CreateRenderTargetView(local destination)";
         result = device_->CreateRenderTargetView(
             texture.local,
             nullptr,
@@ -1104,9 +1203,24 @@ bool SharedTextureConsumer::OpenTexture(
     if (FAILED(result) || texture.local == nullptr)
     {
         WriteLog(
-            L"Shared texture consumer could not open slot %zu '%s' (HRESULT=0x%08lX).",
+            L"Shared texture consumer slot %zu failed at %s: transport=%lu source=%ux%u format=%lu handle=%p name='%s'; openedTexture=%p actual=%ux%u format=%u samples=%u array=%u; destination=%ux%u format=%u (HRESULT=0x%08lX).",
             index,
+            failureStage,
+            static_cast<unsigned long>(description.transport),
+            description.width,
+            description.height,
+            static_cast<unsigned long>(description.format),
+            LoadLegacySharedHandle(description),
             description.name,
+            texture.shared,
+            sourceDescription.Width,
+            sourceDescription.Height,
+            static_cast<unsigned int>(sourceDescription.Format),
+            sourceDescription.SampleDesc.Count,
+            sourceDescription.ArraySize,
+            destinationWidth,
+            destinationHeight,
+            static_cast<unsigned int>(destinationFormat),
             static_cast<unsigned long>(result));
         ReleaseTexture(texture);
         return false;

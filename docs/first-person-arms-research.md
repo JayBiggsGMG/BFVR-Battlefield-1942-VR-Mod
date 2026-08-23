@@ -279,7 +279,7 @@ The existing weapon-presentation research makes this requirement concrete:
 `soldierCameraPosition`, `.ske`, main-part, and child-pivot data. A firing
 `FireArms` instance exposes its template at `+0x4C`, and the profiled
 `HandFireArms` serializer reads its `soldierCameraPosition` at template
-`+0x3EC..+0x3F4`; however, BFVR has not yet safely associated every classified
+`+0x3F0..+0x3F8`; however, BFVR has not yet safely associated every classified
 draw with that live template. Thus a controller-to-wrist or controller-to-weapon
 offset must eventually come from the active native template/attachment chain,
 not a BFVR weapon/faction lookup table.
@@ -1246,3 +1246,67 @@ graded by the owner's concise report and remain open.
 5. Headset-validate rifle and pistol separately before claiming general
    two-hand support. Knives and grenades remain outside the claim while their
    existing right-wrist presentation is unresolved.
+
+### Current VR-owned arm candidate (2026-08-19)
+
+The current candidate deliberately stops using BF1942's flat weapon and
+locomotion animation as the shoulder foundation while retaining the parts of
+the native viewmodel that remain valuable. It is active only for BFVR-owned
+local hand IK at the exact `BFSoldier::updateAnimations` Skeleton pass whose
+right-hand result is consumed by the selected-item attachment.
+
+- BF1942 first evaluates its ordinary pose. BFVR then temporarily places each
+  validated upper-arm origin at an HMD/body-frame shoulder anchor and asks the
+  unchanged native Skeleton solver to evaluate once more. The authored local
+  translations are restored before the hook returns.
+- Hand/finger poses, item-relative placement, recoil, reload and other native
+  animation state remain native. The existing controller target and gun/fire
+  paths remain separate from shoulder reconstruction.
+- Controller translation places the visible wrist and controller rotation
+  turns the hand without adding position. The previously measured 8-cm
+  grip-local wristward lever is retained only as injectable math coverage; its
+  production default is zero after headset feedback exposed visible
+  remote-pivot motion. No new OpenXR pose/action space is added.
+- Elbow intent is derived from hand position in the stable shoulder/body frame,
+  reused for the full accepted XR generation, bounded between generations, and
+  left for Maya to project into the solve plane.
+- Stock bone names, contiguous upper-arm/forearm/hand layout, native segment
+  lengths, target reach, local IK ownership, controller/head generation, and
+  exact caller identity are all fail-closed gates.
+
+This keeps the implementation below the shared Skeleton root, whose earlier
+replacement moved hands and attached weapons. It also leaves startup,
+launcher, OpenXR bootstrap, runtime selection, Oasis-driver compatibility, and
+Steam launching untouched. Pure validation passes; rifle, pistol, free hands,
+knives, throwables, gadgets, reload/switching, extreme reaches, locomotion,
+stance changes, respawn, and non-stock rigs still require headset judgment.
+
+### First headset result
+
+The owner reports that the VR-owned arm behavior works excellently and accepts
+the shoulder/elbow reconstruction as the solution to the prior wild-elbow
+problem. Do not reopen the shared-root or flat-animation shoulder approaches.
+
+### Restored two-hand position alignment controls
+
+After accepting the zero-lever pivot correction as substantially better, the
+owner restored the six alignment sliders, tuned them again in-headset, and
+accepted right `(-7, +4, -5)` cm and left `(-2, +6, -2)` cm in body-local
+X/Y/Z. These are now the seeded player defaults. VR Settings page 4 exposes
+the same range from -20 through +20 cm in 1-cm steps, but labels each direction
+directly as Left/Right, Down/Up, or Back/Forward instead of exposing X/Y/Z.
+
+The compact single-page layout also provides `RESET HANDS TO DEFAULTS`. This
+restores only the six hand-alignment values to the accepted defaults in the
+menu's working copy. Save commits the reset; Cancel discards it. The existing
+bottom `RESET TO DEFAULTS` remains the separate whole-settings action.
+
+Right calibration moves the controller-owned wrist target and its attached
+item together, preserving the hand/item relation and aim direction. Left
+calibration moves only the free-hand target; an acquired rifle or sidearm
+support pose continues to own the visual hand-to-weapon relation and bypasses
+the saved left correction. The settings apply live after Save and do not
+require a restart. Neither path changes the tracked shoulders, zero wrist
+lever, elbow intent, native hand/finger rotation, support acquisition/
+steering, aim/fire/crosshair paths, startup, OpenXR bootstrap, runtime
+selection, Oasis, or Steam launch behavior.

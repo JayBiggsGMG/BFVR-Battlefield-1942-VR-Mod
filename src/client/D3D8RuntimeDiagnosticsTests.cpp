@@ -5,6 +5,7 @@
 int wmain()
 {
     using bfvr::D3D8RuntimeDiagnosticLevel;
+    using bfvr::IsOffHandCalibrationAuditMessage;
     using bfvr::ParseD3D8RuntimeDiagnosticLevel;
 
     const bool passed =
@@ -25,7 +26,14 @@ int wmain()
         ParseD3D8RuntimeDiagnosticLevel(L"DEEP") ==
             D3D8RuntimeDiagnosticLevel::Deep &&
         ParseD3D8RuntimeDiagnosticLevel(L"1") ==
-            D3D8RuntimeDiagnosticLevel::Deep;
+            D3D8RuntimeDiagnosticLevel::Deep &&
+        IsOffHandCalibrationAuditMessage(
+            L"OFFHAND_CALIBRATION_CAPTURE sequence=1") &&
+        IsOffHandCalibrationAuditMessage(
+            L"OFFHAND_CALIBRATION_REJECT reason=test") &&
+        !IsOffHandCalibrationAuditMessage(L"OFFHAND_CALIBRATION") &&
+        !IsOffHandCalibrationAuditMessage(
+            L"Native 1P off-hand support acquired");
     if (!passed)
     {
         std::fwprintf(stderr, L"BFVR diagnostics-level parsing failed.\n");

@@ -14,9 +14,9 @@ namespace bfvr::stereo
 // produces negative/up elevation in BF1942's mouse-look convention.
 struct VehicleMotionAimConfiguration
 {
-    float inputPerMetre = 48.0F;
+    float inputPerMetre = 96.0F;
     float movementDeadzoneMetres = 0.0005F;
-    float maximumInputPerSample = 0.35F;
+    float maximumInputPerSample = 0.70F;
     float maximumTrackedStepMetres = 0.15F;
 };
 
@@ -36,6 +36,27 @@ struct VehicleMotionAimOutput
     bool trackingAccepted = false;
     bool sampleAdvanced = false;
 };
+
+enum class VehicleMotionAimWeaponStatus : std::uint8_t
+{
+    Unknown,
+    Unarmed,
+    Armed,
+};
+
+// Physical controller movement is a weapon-aiming aid, not a general vehicle
+// camera control. An occupied surface/sea station must positively expose a
+// native weapon before motion aim is enabled. Unknown and unarmed stations
+// fail closed while their independent right-stick mouse-look remains native.
+[[nodiscard]] constexpr bool ShouldEnableVehicleMotionAim(
+    bool surfaceVehicle,
+    VehicleMotionAimWeaponStatus weaponStatus,
+    bool quickMenuHeld) noexcept
+{
+    return surfaceVehicle &&
+        weaponStatus == VehicleMotionAimWeaponStatus::Armed &&
+        !quickMenuHeld;
+}
 
 struct VehicleAimInputSigns
 {

@@ -2,6 +2,7 @@
 
 #include "client/ControllerInputCache.h"
 #include "client/ControllerHaptics.h"
+#include "client/D3D8To9InteropPrimer.h"
 #include "client/D3D8To9SharedTextureProducer.h"
 #include "client/D3D8StereoProbeRecords.h"
 #include "client/ScopeViewOverlay.h"
@@ -528,6 +529,13 @@ public:
                 shared::ProcessState::Failed);
             return false;
         }
+        // Best-effort compatibility initialization for graphics stacks that
+        // reject a legacy D3D9 allocation when its first D3D11 open occurs in
+        // the separate x64 presenter. The temporary local open is released
+        // before publication and does not alter the normal transport path.
+        (void)PrimeD3D8To9D3D11SharedTextureInterop(
+            gpuProducer.DeviceDiagnostics(),
+            shared::LoadLegacySharedHandle(descriptions[0]));
         for (std::size_t index = 0; index < descriptions.size(); ++index)
         {
             block->textures[index] = descriptions[index];
@@ -632,6 +640,7 @@ public:
         }
         destination.mountedCameraToggleSequence =
             source.mountedCameraToggleSequence;
+        destination.hudToggleSequence = source.hudToggleSequence;
         for (std::size_t hand = 0; hand < destination.hands.size(); ++hand)
         {
             const shared::SharedControllerHandSample& sourceHand = source.hands[hand];
@@ -1262,27 +1271,47 @@ public:
             return;
         }
 
-        shared::SharedPresentationPose anchor = {};
-        anchor.orientationX = placement.worldAnchor.orientationX;
-        anchor.orientationY = placement.worldAnchor.orientationY;
-        anchor.orientationZ = placement.worldAnchor.orientationZ;
-        anchor.orientationW = placement.worldAnchor.orientationW;
-        anchor.positionX = placement.worldAnchor.positionX;
-        anchor.positionY = placement.worldAnchor.positionY;
-        anchor.positionZ = placement.worldAnchor.positionZ;
-        const bool hasValidWorldAnchor =
-            !placement.headLocked &&
-            placement.worldAnchorValid &&
-            IsFinitePose(anchor) &&
-            IsFiniteUnitQuaternion(anchor);
-        if (hasValidWorldAnchor)
+        const bool eyeFillingScope = IsScopeViewActive();
+        shared::SharedPresentationPose auxiliaryUiPose = {};
+        bool auxiliaryUiPoseValid = false;
+        if (eyeFillingScope && placement.scopeOverlayRollValid &&
+            std::isfinite(placement.scopeOverlayRollRadians) &&
+            std::fabs(placement.scopeOverlayRollRadians) <=
+                3.141592654F + 0.001F)
         {
-            block->frameUiWorldAnchor = anchor;
+            const float halfRoll = placement.scopeOverlayRollRadians * 0.5F;
+            auxiliaryUiPose.orientationZ = std::sin(halfRoll);
+            auxiliaryUiPose.orientationW = std::cos(halfRoll);
+            auxiliaryUiPoseValid = true;
+        }
+        else if (!placement.headLocked && placement.worldAnchorValid)
+        {
+            auxiliaryUiPose.orientationX =
+                placement.worldAnchor.orientationX;
+            auxiliaryUiPose.orientationY =
+                placement.worldAnchor.orientationY;
+            auxiliaryUiPose.orientationZ =
+                placement.worldAnchor.orientationZ;
+            auxiliaryUiPose.orientationW =
+                placement.worldAnchor.orientationW;
+            auxiliaryUiPose.positionX = placement.worldAnchor.positionX;
+            auxiliaryUiPose.positionY = placement.worldAnchor.positionY;
+            auxiliaryUiPose.positionZ = placement.worldAnchor.positionZ;
+            auxiliaryUiPoseValid = IsFinitePose(auxiliaryUiPose) &&
+                IsFiniteUnitQuaternion(auxiliaryUiPose);
+        }
+        if (auxiliaryUiPoseValid)
+        {
+            // Protocol v23 already transports one auxiliary UI pose. Menus
+            // use it as a LOCAL anchor; an eye-filling scope uses only its
+            // orientation as a roll in VIEW. The control-block byte layout,
+            // version, handshake, and startup path remain unchanged.
+            block->frameUiWorldAnchor = auxiliaryUiPose;
             MemoryBarrier();
         }
         InterlockedExchange(
             &block->frameUiWorldAnchorValid,
-            hasValidWorldAnchor ? 1 : 0);
+            auxiliaryUiPoseValid ? 1 : 0);
         InterlockedExchange(
             &block->frameUiReferenceMode,
             static_cast<LONG>(
@@ -1302,7 +1331,7 @@ public:
             overlayFlags);
         InterlockedExchange(
             &block->framePresentationFlags,
-            IsScopeViewActive()
+            eyeFillingScope
                 ? shared::kFramePresentationEyeFillingScope
                 : 0);
         InterlockedExchange(

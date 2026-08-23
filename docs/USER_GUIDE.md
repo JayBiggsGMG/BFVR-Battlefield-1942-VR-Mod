@@ -29,6 +29,12 @@ Mouse and keyboard remain available, including in menus.
 Keyboard controls continue to work. Vehicle, aircraft, turret, and mounted-gun
 stick behavior follows the vehicle being controlled.
 
+Physical right-controller movement aims armed tank, vehicle, naval, AA, and
+mounted-weapon positions. It does not turn the view in unarmed driver or
+passenger freelook positions; use normal head movement or the right stick
+there instead. Changing seats establishes a fresh controller reference so an
+old hand movement cannot jerk a newly occupied weapon.
+
 ## Valve Index and Vive controllers
 
 BFVR includes OpenXR bindings for Meta/Oculus Touch, Valve Index, HTC Vive
@@ -52,10 +58,19 @@ Settings panel.
 
 VR Settings includes:
 
-- Seated/Standing play mode and manual height adjustment.
+- Seated/Standing play mode.
 - Snap/Smooth turning, turn speed, and movement direction.
-- Recenter Forward and standing-height calibration.
-- Comfort vignette.
+- A presentation page that places Comfort Vignette and the default-on dark-red
+  Death Camera Comfort effect together, followed by Show and 3D Crosshair
+  Color.
+- A physical-calibration page with manual height adjustment, standing-height
+  calibration, and Recenter Forward.
+- A live **Show** selector with Arms & Hands, Hands Only, and No Hands/Arms.
+  Hands Only retains explicitly named separate hand meshes while hiding arm,
+  combined, and unrecognized meshes. Mods that combine hands and arms cannot
+  be split, so their combined mesh is hidden in Hands Only. Animation,
+  controller hand/elbow placement, and weapon pose solving stay active in all
+  modes, and scoped world characters remain fully visible.
 - Vehicle/aircraft aim inversion.
 - Two aircraft layout options placed directly below Flight Pitch. `Aircraft
   Pitch + Roll on Same Stick` chooses whether pitch shares a stick with roll
@@ -66,8 +81,30 @@ VR Settings includes:
   aircraft axes after controller input is read, rather than depending on a
   Quest-specific button layout.
 - Controller vibration and two-hand grip style.
-- Hand-weapon and mounted-weapon crosshair choices.
+- Hand-weapon, mounted-weapon, and knives/throwables/gadgets crosshair choices,
+  each with On, Hit Marker Only, and Off modes.
+- White, green, blue, purple, red, pink, orange, and yellow 3D crosshair
+  colors. The same color is used for the hit marker, including BF1942's native
+  hit feedback while looking through an exact scope. The original flat-game
+  crosshair color is restored when the scope closes.
 - FXAA, sharpening, ambient occlusion, water reflections, and bloom.
+- A second Graphics page containing Original, Filmic, and Vibrant world color
+  profiles plus exposure, contrast, and saturation controls. Zero is neutral
+  at the center of each manual slider. These settings affect the stereo world
+  and its 3D crosshair, but not the native HUD, menus, scopes, Quick Menu, or
+  VR Settings panel.
+- A third Graphics / Audio page with a default-on **Kill Sound** toggle. It
+  plays only after Battlefield confirms that the local player killed another
+  player, in either single-player or multiplayer. Grenade-style kills confirmed
+  within 300 ms play once as one multi-kill burst; later kill sounds can still
+  overlap rather than cutting off the previous sound. Windows/headset output volume applies;
+  Battlefield's private master-volume slider does not currently scale this
+  custom WAV.
+
+The Quick Menu, VR Settings controls, and BFVR's Back-to-Game button use
+Battlefield's normal menu highlight, confirm, and cancel sounds. These sounds
+follow the active game or mod's native menu-audio setup and are always enabled
+in the same way as Battlefield's own menu feedback.
 
 Choose **Save** to apply changes. Settings involving startup graphics resources
 say that a BFVR restart is required. **Cancel** discards unsaved changes, and
@@ -89,7 +126,7 @@ one usable BF42++ loading path before loading BFVR into Battlefield 1942.
 
 Do not combine a bundled BF42++ `dsound.dll` with a second copied
 `bf42++.dll`. BFVR recognizes a bundled BF42++ proxy and uses that one directly
-to avoid loading BF42++ twice. If both are already present, BFVR 1.0.1 ignores
+to avoid loading BF42++ twice. If both are already present, BFVR 1.0.2 ignores
 the extra `bf42++.dll` for that launch, so the duplicate should not break BFVR.
 
 If BFVR reports obsolete BF42Plus 1.3.4, remove that old `dsound.dll` and
@@ -115,9 +152,50 @@ may differ at internal locations BFVR uses. If the build works, report that
 result so it can be recorded. If it fails, include where the executable came
 from and exactly what happened in a GitHub issue.
 
+For the easiest currently supported setup, the Moongamers Battlefield 1942
+versions are recommended. BFVR is planned to eventually be bundled with the
+Battlefield 1942 VKHD installers. Other retail, digital, and community-modified
+versions may work, but an unfamiliar executable can require additional
+compatibility work.
+
+### Low, uneven, or capped frame rate
+
+BFVR normally disables Battlefield 1942's internal frame limiter
+automatically, but this override may not work with every executable or
+installation. If performance remains low or uneven, open
+`Mods\bf1942\Settings\VideoDefault.con` inside the Battlefield 1942
+installation and add:
+
+```text
+renderer.lockFPS -1
+```
+
+Save the file and restart the game.
+
+If BFVR is unexpectedly capped near 60 or 30 FPS, add this separate line to
+the same `VideoDefault.con` file:
+
+```text
+renderer.setVSyncEnabled 0 0
+```
+
+Save the file and restart the game. Both values must be `0`. If the cap
+remains, also ensure that VSync is not being forced by the GPU driver or a
+graphics wrapper.
+
+If performance is still an issue, try running the headset at 80 Hz or 72 Hz
+in SteamVR or VDXR. A lower headset refresh rate gives BFVR more time to
+produce each frame.
+
+Some mod maps contain unusually large amounts of foliage, buildings, or other
+static objects and are not expected to maintain smooth VR performance in every
+scene. Large bot counts can also be substantially more demanding. Reduce the
+bot count or choose a less complex map when troubleshooting performance before
+assuming that the VR runtime or installation is broken.
+
 ### Windows or antivirus warns about BFVR
 
-The v1.0.1 installer is unsigned, and BFVR must load its DLL into an old game
+The v1.0.2 installer is unsigned, and BFVR must load its DLL into an old game
 process. Only use files from the official BFVR GitHub Release and compare the
 published checksum. Do not disable antivirus globally.
 

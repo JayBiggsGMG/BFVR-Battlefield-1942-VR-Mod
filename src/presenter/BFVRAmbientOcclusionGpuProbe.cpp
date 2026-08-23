@@ -241,17 +241,40 @@ int wmain(int argc, wchar_t** argv)
         0.0F, 0.0F, depthScale, 1.0F,
         0.0F, 0.0F, depthOffset, 0.0F};
 
+    constexpr float cameraHeight = 1.70F;
+    const UINT clearDepthRows = (std::max)(height / 12U, 1U);
+    const UINT nearFloorRow = height * 7U / 8U;
+    const UINT farFloorRow = height * 3U / 5U;
     std::vector<std::uint32_t> packedDepth(
         static_cast<std::size_t>(width) * height);
     for (UINT y = 0; y < height; ++y)
     {
         for (UINT x = 0; x < width; ++x)
         {
+            const float ndcY = 1.0F -
+                (static_cast<float>(y) + 0.5F) * 2.0F /
+                    static_cast<float>(height);
+            const bool floor = ndcY < -0.10F;
             const bool raisedPanel =
-                x < width / 2 &&
+                !floor && x < width / 2 &&
                 y > height / 5 && y < height * 4 / 5;
-            const float viewZ = raisedPanel ? 3.88F : 4.0F;
-            const float deviceDepth = depthScale + depthOffset / viewZ;
+            // This second panel deliberately lies beyond the former 0.9999
+            // clear-depth cutoff while remaining in front of the 100 m far
+            // plane. Its shallow inset must still generate local AO.
+            const bool farDepthPanel =
+                !floor && x >= width / 2 &&
+                y > height / 5 && y < height * 4 / 5;
+            const UINT farDepthRecessCenter = width * 3 / 4;
+            const bool farDepthRecess = farDepthPanel &&
+                x + 4 >= farDepthRecessCenter &&
+                x <= farDepthRecessCenter + 4;
+            const float viewZ = floor
+                ? -cameraHeight * yScale / ndcY
+                : farDepthPanel ? farDepthRecess ? 95.0F : 94.70F
+                : raisedPanel ? 3.88F : 4.0F;
+            const float deviceDepth = y < clearDepthRows
+                ? 1.0F
+                : depthScale + depthOffset / viewZ;
             packedDepth[static_cast<std::size_t>(y) * width + x] =
                 PackDeviceDepth(deviceDepth);
         }
@@ -443,6 +466,14 @@ int wmain(int argc, wchar_t** argv)
 
     std::uint8_t minimumAo = 255;
     std::uint8_t maximumAo = 0;
+    std::uint8_t maximumGeometryAo = 0;
+    std::uint8_t minimumFarDepthAo = 255;
+    double clearDepthAoSum = 0.0;
+    double nearFloorAoSum = 0.0;
+    double farFloorAoSum = 0.0;
+    UINT clearDepthAoCount = 0;
+    UINT nearFloorAoCount = 0;
+    UINT farFloorAoCount = 0;
     ID3D11ShaderResourceView* aoView = ao.GetEyeView(0);
     ID3D11Resource* aoResource = nullptr;
     if (passed && aoView != nullptr)
@@ -478,32 +509,76 @@ int wmain(int argc, wchar_t** argv)
                     mapped.pData) + static_cast<std::size_t>(y) * mapped.RowPitch;
                 for (UINT x = 0; x < aoDescription.Width; ++x)
                 {
-                    std::uint8_t aoByte = 0;
+                    float aoValue = 0.0F;
                     if (aoDescription.Format == DXGI_FORMAT_R8_UNORM)
                     {
-                        aoByte = row[x];
+                        aoValue = static_cast<float>(row[x]) / 255.0F;
                     }
                     else if (aoDescription.Format == DXGI_FORMAT_R16_FLOAT)
                     {
                         std::uint16_t encoded = 0;
                         std::memcpy(&encoded, row + x * sizeof(encoded), sizeof(encoded));
-                        aoByte = ToUnorm8(HalfToFloat(encoded));
+                        aoValue = HalfToFloat(encoded);
                     }
                     else
                     {
                         result = E_FAIL;
                         break;
                     }
+                    const std::uint8_t aoByte = ToUnorm8(aoValue);
                     minimumAo = (std::min)(minimumAo, aoByte);
                     maximumAo = (std::max)(maximumAo, aoByte);
+                    if (y >= clearDepthRows)
+                    {
+                        maximumGeometryAo =
+                            (std::max)(maximumGeometryAo, aoByte);
+                    }
+                    else
+                    {
+                        clearDepthAoSum += aoValue;
+                        ++clearDepthAoCount;
+                    }
+                    if (x >= width / 2 &&
+                        y > height / 5 && y < height / 2)
+                    {
+                        minimumFarDepthAo =
+                            (std::min)(minimumFarDepthAo, aoByte);
+                    }
+                    if (x >= width / 4U && x < width * 3U / 4U)
+                    {
+                        if (y == nearFloorRow)
+                        {
+                            nearFloorAoSum += aoValue;
+                            ++nearFloorAoCount;
+                        }
+                        else if (y == farFloorRow)
+                        {
+                            farFloorAoSum += aoValue;
+                            ++farFloorAoCount;
+                        }
+                    }
                 }
             }
             context->Unmap(staging, 0);
         }
     }
+    const double nearFloorAo = nearFloorAoCount != 0
+        ? nearFloorAoSum / static_cast<double>(nearFloorAoCount)
+        : 0.0;
+    const double farFloorAo = farFloorAoCount != 0
+        ? farFloorAoSum / static_cast<double>(farFloorAoCount)
+        : 0.0;
+    const double clearDepthAo = clearDepthAoCount != 0
+        ? clearDepthAoSum / static_cast<double>(clearDepthAoCount)
+        : 0.0;
     passed = passed && SUCCEEDED(result) &&
         aoDescription.Width == width && aoDescription.Height == height &&
-        minimumAo < 250 && maximumAo == 255;
+        minimumAo < 220 && maximumAo <= 226 &&
+        maximumGeometryAo <= 226 &&
+        minimumFarDepthAo < 224 &&
+        clearDepthAo >= 0.85 && clearDepthAo <= 0.90 &&
+        nearFloorAo >= 0.85 && farFloorAo >= 0.85 &&
+        std::fabs(nearFloorAo - farFloorAo) <= 0.02;
 
     scaler.Shutdown();
     ao.Shutdown();
@@ -531,13 +606,18 @@ int wmain(int argc, wchar_t** argv)
         aoComposite.p95 - baselineComposite.p95);
     wprintf(
         passed
-            ? L"[PASS] Spatial AO evaluated and denoised both eyes at %ux%u for %u iterations; output range=%u..%u, featureLevel=0x%X.\n"
-            : L"[FAIL] Spatial AO GPU probe failed at %ux%u; output range=%u..%u, featureLevel=0x%X.\n",
+            ? L"[PASS] Spatial AO evaluated and denoised both eyes at %ux%u for %u iterations; output range=%u..%u, geometry max=%u, depth>0.9999 min=%u, clear depth=%.4f, planar floor near/far=%.4f/%.4f, featureLevel=0x%X.\n"
+            : L"[FAIL] Spatial AO GPU probe failed at %ux%u for %u iterations; output range=%u..%u, geometry max=%u, depth>0.9999 min=%u, clear depth=%.4f, planar floor near/far=%.4f/%.4f, featureLevel=0x%X.\n",
         width,
         height,
         iterations,
         static_cast<unsigned int>(minimumAo),
         static_cast<unsigned int>(maximumAo),
+        static_cast<unsigned int>(maximumGeometryAo),
+        static_cast<unsigned int>(minimumFarDepthAo),
+        clearDepthAo,
+        nearFloorAo,
+        farFloorAo,
         static_cast<unsigned int>(featureLevel));
     return passed ? 0 : 1;
 }

@@ -233,9 +233,26 @@ void D3D8TrackingAnchor::UpdateArtificialTurn(
     if (!artificialTurn.infantryBodyYawValid ||
         !std::isfinite(artificialTurn.infantryBodyYawRadians))
     {
-        // A transient ownership/body read must not rotate the presentation.
-        // Request-local deltas are deliberately dropped rather than queued for
-        // replay when the same infantry lifetime resumes.
+        // Retain an initialized local presentation through a transient body
+        // basis failure (notably a steep parachute animation). Explicit
+        // request-local turn can still advance immediately; the next valid
+        // body sample removes native body catch-up from the same anchor.
+        if (infantryPresentationInitialized_ &&
+            std::isfinite(artificialTurn.requestedDeltaDegrees) &&
+            std::fabs(artificialTurn.requestedDeltaDegrees) <=
+                kMaximumArtificialTurnDeltaDegrees)
+        {
+            const float requestedDelta =
+                artificialTurn.requestedDeltaDegrees * (kPi / 180.0F);
+            infantryTrackingYawOffsetRadians_ = WrapYaw(
+                infantryTrackingYawOffsetRadians_ + requestedDelta);
+            infantryPresentationYawRadians_ = WrapYaw(
+                infantryPresentationYawRadians_ + requestedDelta);
+            SetYaw(
+                baseReference_,
+                physicalReferenceYawRadians_ +
+                    infantryTrackingYawOffsetRadians_);
+        }
         return;
     }
     if (!infantryPresentationInitialized_)

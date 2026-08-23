@@ -7,6 +7,7 @@
 #include "presenter/D3D11TextureScaler.h"
 #include "presenter/D3D11WaterReflection.h"
 #include "presenter/SharedPresentationProtocol.h"
+#include "presenter/SharedTexturePerformanceSummary.h"
 
 #include <d3d11_1.h>
 
@@ -102,6 +103,7 @@ private:
     D3D11ScreenSpaceGlobalIllumination screenSpaceGlobalIllumination_;
     D3D11WaterReflection waterReflection_;
     D3D11TextureScaler scaler_;
+    SharedTexturePerformanceSummary performanceSummary_;
     bool requiresLegacyCompletionWait_ = false;
     bool collectPerformanceDiagnostics_ = true;
     bool scalerRequired_ = false;
@@ -125,6 +127,7 @@ private:
     LONG waterReflectionFrameFailures_ = 0;
     float worldBloomThreshold_ = 0.55F;
     float worldBloomIntensity_ = 0.35F;
+    D3D11ColorGradingConfiguration worldColorGrading_ = {};
     std::array<Texture, kTextureCount> textures_ = {};
     std::array<DepthTexture, kDepthTextureCount> depthTextures_ = {};
     SharedTextureLogCallback logCallback_ = nullptr;

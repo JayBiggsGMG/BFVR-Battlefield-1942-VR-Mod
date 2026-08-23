@@ -43,12 +43,22 @@ cbuffer Configuration : register(b0)
     float4 projection0; // m00, m11, m20, m21
     float4 projection1; // m22, m32, 1/width, 1/height
     float4 aoParameters0; // viewRadius, radiusLimitPixels, minResolvedPixels, bias
-    float4 aoParameters1; // strength, power, blurSharpness, unused
+    float4 aoParameters1; // strength, power, blurSharpness, maxVisibility
 };
 
 float DecodeDepth(float4 packed)
 {
     return dot(packed.rgb, float3(1.0, 1.0 / 255.0, 1.0 / 65025.0));
+}
+
+bool IsClearDepth(float4 packed)
+{
+    // The D3D9 exporter reserves the highest base-255 RGB code for a source
+    // depth of 1.0. Do not use a loose decoded-depth threshold here: 0.9999
+    // is a valid perspective depth for distant world geometry and made AO
+    // switch off on a camera-distance plane across terrain, water, and meshes.
+    const float highestCode = 253.5 / 255.0;
+    return all(packed.rgb >= highestCode.xxx);
 }
 
 float3 ReconstructViewPosition(float2 uv, float depth)
@@ -100,10 +110,17 @@ float SmoothLimitRadius(float radiusPixels, float maximumPixels)
 
 float main(float4 position : SV_Position, float2 texcoord : TEXCOORD0) : SV_Target
 {
-    const float centerDepth = DecodeDepth(
-        packedDepthTexture.SampleLevel(pointSampler, texcoord, 0.0));
-    if (centerDepth >= 0.9999)
-        return 1.0;
+    const float4 centerPacked =
+        packedDepthTexture.SampleLevel(pointSampler, texcoord, 0.0);
+    if (IsClearDepth(centerPacked))
+    {
+        // The 0.88 ceiling represents the owner's requested full-world
+        // ambient grade, not geometry-local occlusion. Carry it through true
+        // clear depth so a depth/fog coverage boundary cannot expose a bright
+        // band. Ref2 UI is composited separately and remains untouched.
+        return aoParameters1.w;
+    }
+    const float centerDepth = DecodeDepth(centerPacked);
 
     const float2 texel = projection1.zw;
     const float3 center = ReconstructViewPosition(texcoord, centerDepth);
@@ -117,14 +134,25 @@ float main(float4 position : SV_Position, float2 texcoord : TEXCOORD0) : SV_Targ
     const float3 dy = abs(down.z - center.z) < abs(center.z - up.z)
         ? down - center
         : center - up;
-    const float3 unnormalizedNormal = cross(dx, dy);
+    // A fixed epsilon on cross(dx, dy) is invalid here: the lengths of both
+    // one-pixel derivatives vary with view depth and render resolution. It
+    // previously selected the fallback normal throughout a camera-centred
+    // volume, then switched abruptly to the reconstructed surface normal.
+    // Normalize the derivatives first so the remaining test measures only
+    // whether their directions are degenerate.
+    const float dxLengthSquared = dot(dx, dx);
+    const float dyLengthSquared = dot(dy, dy);
+    const float3 dxDirection = dx * rsqrt(max(dxLengthSquared, 0.0000000000000001));
+    const float3 dyDirection = dy * rsqrt(max(dyLengthSquared, 0.0000000000000001));
+    const float3 unnormalizedNormal = cross(dxDirection, dyDirection);
     const float normalLengthSquared = dot(
         unnormalizedNormal,
         unnormalizedNormal);
-    float3 normal = normalLengthSquared > 0.00000001
-        ? unnormalizedNormal * rsqrt(normalLengthSquared)
-        : float3(0.0, 0.0, -1.0);
-    if (normal.z > 0.0)
+    if (normalLengthSquared <= 0.00000001)
+        return aoParameters1.w;
+    float3 normal = unnormalizedNormal * rsqrt(normalLengthSquared);
+    const float3 surfaceToCamera = -normalize(center);
+    if (dot(normal, surfaceToCamera) < 0.0)
         normal = -normal;
 
     const float viewRadius = aoParameters0.x;
@@ -149,13 +177,13 @@ float main(float4 position : SV_Position, float2 texcoord : TEXCOORD0) : SV_Targ
             sin(sampleAngle));
         const float2 sampleUv = texcoord +
             sampleDirection * sampleRadius * radiusPixels * texel;
-        const float sampleDepth = DecodeDepth(
-            packedDepthTexture.SampleLevel(
-                pointSampler,
-                saturate(sampleUv),
-                0.0));
-        if (sampleDepth >= 0.9999)
+        const float4 samplePacked = packedDepthTexture.SampleLevel(
+            pointSampler,
+            saturate(sampleUv),
+            0.0);
+        if (IsClearDepth(samplePacked))
             continue;
+        const float sampleDepth = DecodeDepth(samplePacked);
         const float3 samplePosition =
             ReconstructViewPosition(sampleUv, sampleDepth);
         const float3 offset = samplePosition - center;
@@ -173,7 +201,14 @@ float main(float4 position : SV_Position, float2 texcoord : TEXCOORD0) : SV_Targ
         0.5,
         aoParameters0.z,
         projectedRadiusPixels);
-    return lerp(1.0, pow(ao, aoParameters1.y), resolutionFade);
+    const float localVisibility = lerp(
+        1.0,
+        pow(ao, aoParameters1.y),
+        resolutionFade);
+    // Keep the owner's preferred darker ambient appearance across the world.
+    // Local AO can darken below this ceiling, while the clear-depth return
+    // above carries the same baseline through fog/geometry coverage changes.
+    return min(localVisibility, aoParameters1.w);
 }
 )";
 
@@ -195,6 +230,12 @@ float DecodeDepth(float4 packed)
     return dot(packed.rgb, float3(1.0, 1.0 / 255.0, 1.0 / 65025.0));
 }
 
+bool IsClearDepth(float4 packed)
+{
+    const float highestCode = 253.5 / 255.0;
+    return all(packed.rgb >= highestCode.xxx);
+}
+
 float ViewZ(float depth)
 {
     const float denominator = depth - projection1.x;
@@ -210,10 +251,11 @@ float main(float4 position : SV_Position, float2 texcoord : TEXCOORD0) : SV_Targ
     uint aoHeight;
     aoTexture.GetDimensions(aoWidth, aoHeight);
     const float2 aoTexel = 1.0 / float2(aoWidth, aoHeight);
-    const float centerDepth = DecodeDepth(
-        packedDepthTexture.SampleLevel(pointSampler, texcoord, 0.0));
-    if (centerDepth >= 0.9999)
-        return 1.0;
+    const float4 centerPacked =
+        packedDepthTexture.SampleLevel(pointSampler, texcoord, 0.0);
+    if (IsClearDepth(centerPacked))
+        return aoParameters1.w;
+    const float centerDepth = DecodeDepth(centerPacked);
     const float centerZ = ViewZ(centerDepth);
 
     float weightedAo = 0.0;
@@ -243,7 +285,9 @@ float main(float4 position : SV_Position, float2 texcoord : TEXCOORD0) : SV_Targ
             totalWeight += weight;
         }
     }
-    return weightedAo / max(totalWeight, 0.0001);
+    return min(
+        weightedAo / max(totalWeight, 0.0001),
+        aoParameters1.w);
 }
 )";
 
@@ -448,7 +492,7 @@ bool D3D11AmbientOcclusion::Initialize(
         return false;
     }
     WriteLog(
-        L"D3D11 AO initialized: native-resolution per-pixel-rotated 8-sample view-space disk plus 3x3 bilateral denoise; radius=0.60 m, C1-continuous 24..72-pixel transition into a 48-pixel cap, subpixel-footprint fade only, temporal history is disabled.");
+        L"D3D11 AO initialized: native-resolution per-pixel-rotated 8-sample view-space disk plus 3x3 bilateral denoise; scale-invariant reconstructed normals, exact packed clear-depth recognition, 0.88 full-world ambient-visibility ceiling, radius=0.60 m, C1-continuous 24..72-pixel transition into a 48-pixel cap, subpixel-footprint fade only, temporal history is disabled.");
     return true;
 }
 
@@ -758,7 +802,7 @@ bool D3D11AmbientOcclusion::UpdateConfiguration(
         1.0F / static_cast<float>(depthWidth),
         1.0F / static_cast<float>(depthHeight),
         viewRadiusMeters_, 48.0F, 2.0F, 0.04F,
-        1.65F, 1.15F, 32.0F, 0.0F};
+        1.65F, 1.15F, 32.0F, 0.88F};
     context_->UpdateSubresource(
         configurationBuffer_,
         0,

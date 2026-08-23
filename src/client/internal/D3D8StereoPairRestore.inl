@@ -44,6 +44,13 @@ bool RestoreFrameState(void* device, const DrawStateSnapshot& snapshot)
                 kD3DTransformTexture0,
                 &snapshot.waterTexture0)
             : S_OK;
+        const HRESULT projectedShadowTextureResult =
+            snapshot.projectedShadowTexture0Overridden
+            ? g_methods.setTransform(
+                device,
+                kD3DTransformTexture0,
+                &snapshot.projectedShadowTexture0)
+            : S_OK;
         writesSucceeded =
             skinningRestored &&
             spriteRestored &&
@@ -53,7 +60,18 @@ bool RestoreFrameState(void* device, const DrawStateSnapshot& snapshot)
             SUCCEEDED(viewResult) &&
             SUCCEEDED(projectionResult) &&
             SUCCEEDED(worldResult) &&
-            SUCCEEDED(waterTextureResult);
+            SUCCEEDED(waterTextureResult) &&
+            SUCCEEDED(projectedShadowTextureResult);
+        if (snapshot.projectedShadowTexture0Overridden &&
+            SUCCEEDED(projectedShadowTextureResult) &&
+            bfvr::IsD3D8RuntimeDiagnosticsEnabled(g_runtimeDiagnostics) &&
+            (InterlockedOr(&g_projectedShadowAuditMask, 0x20) & 0x20) == 0)
+        {
+            AppendLog(
+                L"PROJECTED_SHADOW_AUDIT restored textureResult=0x%08lX transactionWritesSucceeded=%d.",
+                static_cast<unsigned long>(projectedShadowTextureResult),
+                writesSucceeded ? 1 : 0);
+        }
     }
 
     bool exact = writesSucceeded;
@@ -82,6 +100,7 @@ bool RestoreFrameState(void* device, const DrawStateSnapshot& snapshot)
         D3DMatrix actualView = {};
         D3DMatrix actualProjection = {};
         D3DMatrix actualWaterTexture = {};
+        D3DMatrix actualProjectedShadowTexture = {};
         const HRESULT getColorResult =
             g_methods.getRenderTarget(device, &actualColor);
         const HRESULT getDepthResult =
@@ -107,6 +126,13 @@ bool RestoreFrameState(void* device, const DrawStateSnapshot& snapshot)
                 kD3DTransformTexture0,
                 &actualWaterTexture)
             : S_OK;
+        const HRESULT getProjectedShadowTextureResult =
+            snapshot.projectedShadowTexture0Overridden
+            ? g_methods.getTransform(
+                device,
+                kD3DTransformTexture0,
+                &actualProjectedShadowTexture)
+            : S_OK;
         exact =
             writesSucceeded &&
             SUCCEEDED(getColorResult) &&
@@ -116,6 +142,7 @@ bool RestoreFrameState(void* device, const DrawStateSnapshot& snapshot)
             SUCCEEDED(getViewResult) &&
             SUCCEEDED(getProjectionResult) &&
             SUCCEEDED(getWaterTextureResult) &&
+            SUCCEEDED(getProjectedShadowTextureResult) &&
             shaderConstantsExact &&
             actualColor == snapshot.sourceColor &&
             actualDepth == snapshot.sourceDepth &&
@@ -124,7 +151,11 @@ bool RestoreFrameState(void* device, const DrawStateSnapshot& snapshot)
             EqualMatrix(actualView, snapshot.view) &&
             EqualMatrix(actualProjection, snapshot.projection) &&
             (!snapshot.waterTexture0Overridden ||
-             EqualMatrix(actualWaterTexture, snapshot.waterTexture0));
+             EqualMatrix(actualWaterTexture, snapshot.waterTexture0)) &&
+            (!snapshot.projectedShadowTexture0Overridden ||
+             EqualMatrix(
+                 actualProjectedShadowTexture,
+                 snapshot.projectedShadowTexture0));
         ReleaseUnknown(actualColor);
         ReleaseUnknown(actualDepth);
     }

@@ -41,6 +41,11 @@ public:
         std::vector<std::uint32_t>& pixels,
         UINT& width,
         UINT& height) const;
+    bool CopyCommandColumnPixels(
+        stereo::QuickMenuSelection hovered,
+        std::vector<std::uint32_t>& pixels,
+        UINT& width,
+        UINT& height) const;
 
     [[nodiscard]] bool IsReady() const noexcept;
 
@@ -61,6 +66,7 @@ private:
 
     std::array<Image, stereo::kQuickMenuSelectionCount> menus_ = {};
     std::array<Image, stereo::kQuickMenuUtilityVisualCount> utilities_ = {};
+    std::array<Image, stereo::kQuickMenuCommandVisualCount> commandColumns_ = {};
     Image cursor_ = {};
     LogCallback logCallback_ = nullptr;
     void* logContext_ = nullptr;

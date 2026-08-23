@@ -131,6 +131,9 @@ void CountStereoFrameSemanticDraw(
     case stereo::D3D8SemanticDrawClass::AnimatedMeshSkinning:
         InterlockedIncrement(&record.animatedMeshSkinningDraws);
         break;
+    case stereo::D3D8SemanticDrawClass::ProjectedTerrainShadow:
+        InterlockedIncrement(&record.projectedTerrainShadowDraws);
+        break;
     case stereo::D3D8SemanticDrawClass::WaterSurface:
         InterlockedIncrement(&record.waterSurfaceDraws);
         break;
@@ -175,6 +178,9 @@ void AccumulateContinuousPresentationFrame(
     InterlockedExchangeAdd(
         &run.totalAnimatedMeshSkinningDraws,
         frame.animatedMeshSkinningDraws);
+    InterlockedExchangeAdd(
+        &run.totalProjectedTerrainShadowDraws,
+        frame.projectedTerrainShadowDraws);
     InterlockedExchangeAdd(
         &run.totalSuppressedFirstPersonArmDraws,
         frame.suppressedFirstPersonArmDraws);

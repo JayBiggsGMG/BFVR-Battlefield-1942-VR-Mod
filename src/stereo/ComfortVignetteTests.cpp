@@ -147,6 +147,38 @@ bool TestEasedTransitions() noexcept
         0.225F);
     return NearlyEqual(strength, 0.5F);
 }
+
+bool TestDeathComfortLifecycle() noexcept
+{
+    bfvr::stereo::DeathComfortState state = {};
+    if (bfvr::stereo::UpdateDeathComfortActive(
+            state, true, 0, true, true, 1000))
+    {
+        return false;
+    }
+    if (!bfvr::stereo::UpdateDeathComfortActive(
+            state, true, 1, true, false, 1100) ||
+        !bfvr::stereo::UpdateDeathComfortActive(
+            state, true, 1, true, false, 4099) ||
+        bfvr::stereo::UpdateDeathComfortActive(
+            state, true, 1, true, false, 4100))
+    {
+        return false;
+    }
+    if (!bfvr::stereo::UpdateDeathComfortActive(
+            state, true, 2, false, false, 5000) ||
+        bfvr::stereo::UpdateDeathComfortActive(
+            state, true, 2, true, true, 5100))
+    {
+        return false;
+    }
+    // Disabling consumes an event. Re-enabling with that same sequence may
+    // not replay a stale death effect.
+    return !bfvr::stereo::UpdateDeathComfortActive(
+               state, false, 3, true, false, 6000) &&
+        !bfvr::stereo::UpdateDeathComfortActive(
+            state, true, 3, true, false, 6100);
+}
 } // namespace
 
 int main()
@@ -155,7 +187,8 @@ int main()
         !TestQuantizedMovementDoesNotFlicker() ||
         !TestSustainedStopReleasesMovementState() ||
         !TestContextAndDiscontinuityRebaseline() ||
-        !TestEasedTransitions())
+        !TestEasedTransitions() ||
+        !TestDeathComfortLifecycle())
     {
         std::fprintf(stderr, "BFVR comfort-vignette policy tests failed.\n");
         return 1;

@@ -11,7 +11,7 @@ namespace bfvr::shared
 using SharedTextureLogCallback = void (*)(void* context, const wchar_t* message);
 
 constexpr DWORD kProtocolMagic = 0x52564642; // "BFVR"
-constexpr DWORD kProtocolVersion = 20;
+constexpr DWORD kProtocolVersion = 23;
 constexpr std::size_t kTextureCount = 3;
 constexpr std::size_t kDepthTextureCount = 2;
 constexpr std::size_t kSharedNameCapacity = 128;
@@ -22,6 +22,13 @@ constexpr DWORD kProducerFlagScreenSpaceGlobalIlluminationRequested = 0x8;
 constexpr LONG kFrameOverlayBackToGameVisible = 0x1;
 constexpr LONG kFrameOverlayBackToGameHovered = 0x2;
 constexpr LONG kFramePresentationEyeFillingScope = 0x1;
+
+enum class LocalPlayerLifeState : LONG
+{
+    Unknown = 0,
+    Alive = 1,
+    Dead = 2
+};
 
 constexpr DWORD kControllerSampleFlagSessionFocused = 0x1;
 constexpr DWORD kControllerHandFlagAimActive = 0x1;
@@ -209,6 +216,9 @@ struct SharedControllerSample
     // Presenter-owned monotonic action edge. The x86 camera hook consumes a
     // new value only for the currently verified occupied weapon station.
     LONG mountedCameraToggleSequence = 0;
+    // Presenter-owned monotonic edge for the BFVR-owned native HUD toggle.
+    // The x86 client consumes it without opening or typing into the console.
+    LONG hudToggleSequence = 0;
     SharedControllerHandSample hands[2] = {};
 };
 
@@ -243,12 +253,28 @@ struct ControlBlock
     volatile LONG hapticShotBothSequence = 0;
     volatile LONG hapticDeathSequence = 0;
     volatile LONG hapticNativeMenuHoverSequence = 0;
+    // Producer-to-presenter authoritative local-kill event. The x64 audio
+    // owner consumes deltas and creates one independent voice per event.
+    volatile LONG killSoundSequence = 0;
+    // Presenter-to-producer BFVR-menu feedback requests. The x86 game thread
+    // consumes these counters and invokes Battlefield's own BfMenu wrappers;
+    // no game pointer or audio object crosses the process boundary.
+    volatile LONG nativeMenuSoundHighlightSequence = 0;
+    volatile LONG nativeMenuSoundOkSequence = 0;
+    volatile LONG nativeMenuSoundCancelSequence = 0;
+    // Continuously published by the same verified local-player poll that
+    // emits hapticDeathSequence. The presenter uses Alive to end the bounded
+    // death-comfort interval immediately on respawn.
+    volatile LONG localPlayerLifeState =
+        static_cast<LONG>(LocalPlayerLifeState::Unknown);
     // Published by the x86 producer before frameSequence. Gameplay HUD uses
     // VIEW; native menus use a latched LOCAL pose.
     volatile LONG frameUiReferenceMode =
         static_cast<LONG>(UiReferenceMode::WorldLocked);
-    // When non-zero, the x86 producer supplies the gravity-aligned LOCAL
-    // anchor shared by the world-locked menu panel and controller-ray mapper.
+    // When non-zero, the x86 producer supplies the auxiliary pose associated
+    // with framePresentationFlags: a gravity-aligned LOCAL menu anchor in
+    // ordinary mode, or a roll-only VIEW pose for an eye-filling scope. This
+    // dual use preserves the launch-proven protocol-v23 byte layout.
     volatile LONG frameUiWorldAnchorValid = 0;
     SharedPresentationPose frameUiWorldAnchor = {};
     // Published by the x86 producer before frameSequence. These flags control

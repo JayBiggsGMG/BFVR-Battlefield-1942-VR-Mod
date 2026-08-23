@@ -50,6 +50,11 @@ public:
     [[nodiscard]] bool TryGetAppliedSourceCamera(
         LONG sequence,
         stereo::Matrix4& sourceCamera) const noexcept;
+    // Returns the weapon-minus-head roll paired with this exact applied scope
+    // camera. Only the native scope quad consumes it.
+    [[nodiscard]] bool TryGetScopeOverlayRoll(
+        LONG sequence,
+        float& rollRadians) const noexcept;
     [[nodiscard]] bool IsMountedCameraDecoupled() const noexcept;
     void DisableAndRemove();
     void LogSummary() const;

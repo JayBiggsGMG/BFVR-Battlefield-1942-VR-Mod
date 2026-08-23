@@ -1,4 +1,5 @@
 #include "stereo/InfantryPresentationTurn.h"
+#include "stereo/InfantryPresentationContextPolicy.h"
 
 #include <cmath>
 #include <cstdio>
@@ -9,6 +10,55 @@ namespace
 bool Near(const float left, const float right, const float tolerance = 0.0001F)
 {
     return std::fabs(left - right) <= tolerance;
+}
+
+bool TestParachutePresentationContextIsNarrowAndLocal() noexcept
+{
+    const void* const soldier = reinterpret_cast<const void*>(0x1000);
+    const void* const parachute = reinterpret_cast<const void*>(0x2000);
+    const void* const remoteSoldier = reinterpret_cast<const void*>(0x3000);
+
+    const auto ordinary =
+        bfvr::stereo::ResolveInfantryPresentationContext({
+            soldier, soldier, nullptr, true, false});
+    const auto parachuting =
+        bfvr::stereo::ResolveInfantryPresentationContext({
+            parachute, soldier, soldier, true, true});
+    const auto occupiedVehicle =
+        bfvr::stereo::ResolveInfantryPresentationContext({
+            parachute, soldier, soldier, true, false});
+    const auto wrongCameraSoldier =
+        bfvr::stereo::ResolveInfantryPresentationContext({
+            parachute, soldier, remoteSoldier, true, true});
+    const auto dead =
+        bfvr::stereo::ResolveInfantryPresentationContext({
+            parachute, soldier, soldier, false, true});
+
+    return ordinary.eligible && !ordinary.parachuteOverride &&
+        ordinary.soldier == soldier &&
+        parachuting.eligible && parachuting.parachuteOverride &&
+        parachuting.soldier == soldier &&
+        !occupiedVehicle.eligible && !wrongCameraSoldier.eligible &&
+        !dead.eligible;
+}
+
+bool TestSteepParachuteBodyYawUsesRightBasis() noexcept
+{
+    constexpr float halfPi = 1.57079632679489661923F;
+    float yaw = 0.0F;
+    const bool forwardAccepted =
+        bfvr::stereo::ResolveHorizontalInfantryBodyYaw(
+            1.0F, 0.0F, 0.0F, -1.0F, yaw) &&
+        Near(yaw, halfPi);
+    const bool rightFallbackAccepted =
+        bfvr::stereo::ResolveHorizontalInfantryBodyYaw(
+            0.0F, 0.0F, 0.0F, -1.0F, yaw) &&
+        Near(yaw, halfPi);
+    const bool bothDegenerateRejected =
+        !bfvr::stereo::ResolveHorizontalInfantryBodyYaw(
+            0.0F, 0.0F, 0.0F, 0.0F, yaw);
+    return forwardAccepted && rightFallbackAccepted &&
+        bothDegenerateRejected;
 }
 
 bool TestSmoothIsFrameRateIndependent() noexcept
@@ -114,7 +164,9 @@ bool TestLifetimeAndTrackingLossDoNotReplay() noexcept
 
 int main()
 {
-    if (!TestSmoothIsFrameRateIndependent() ||
+    if (!TestParachutePresentationContextIsNarrowAndLocal() ||
+        !TestSteepParachuteBodyYawUsesRightBasis() ||
+        !TestSmoothIsFrameRateIndependent() ||
         !TestSmoothRejectsTimingGapAndMenuOwnership() ||
         !TestSnapEmitsOnceAndRearms() ||
         !TestLifetimeAndTrackingLossDoNotReplay())

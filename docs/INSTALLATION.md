@@ -1,4 +1,4 @@
-# Installing BFVR v1.0.1
+# Installing BFVR v1.0.2
 
 This guide assumes no modding or programming experience.
 
@@ -11,6 +11,19 @@ This guide assumes no modding or programming experience.
 
 BFVR requires 64-bit Windows 10 or Windows 11. It does not include Battlefield
 1942 or any Battlefield game files.
+
+## Choosing a Battlefield 1942 version
+
+For the easiest currently supported setup, the Moongamers Battlefield 1942
+versions are recommended. BFVR has also worked with several retail, digital,
+and community-modified releases, but their executable and graphics-wrapper
+differences can require additional compatibility work.
+
+BFVR is planned to eventually be bundled with the Battlefield 1942 VKHD
+installers. Until that integration is available, install BFVR separately using
+the instructions below.
+
+Recommended BF1942 Versions (either MOONGAMERS one should work): https://steamcommunity.com/sharedfiles/filedetails/?id=2721068159
 
 ## Install BF42++ first
 
@@ -43,7 +56,7 @@ specifically known obsolete BF42Plus 1.3.4 `dsound.dll` remains blocked because
 its abandoned updater is unsafe.
 
 If both a recognized bundled BF42++ `dsound.dll` and a separately copied
-`bf42++.dll` are present, BFVR 1.0.1 prioritizes the bundled proxy and does not
+`bf42++.dll` are present, BFVR 1.0.2 prioritizes the bundled proxy and does not
 inject the extra DLL. This prevents the duplicate from breaking BFVR, but the
 extra BF42++ files are unnecessary and can make ordinary non-VR troubleshooting
 more confusing. The simplest setup is to keep only the BF42++ form originally
@@ -51,7 +64,7 @@ provided by the game package.
 
 ## Install with the setup program
 
-1. Download `BFVR-Setup-v1.0.1.exe` from the official v1.0.1 GitHub Release.
+1. Download `BFVR-Setup-v1.0.2.exe` from the official v1.0.2 GitHub Release.
 2. Double-click the downloaded installer.
 3. Because the installer is unsigned, Windows may say **Unknown publisher**.
    If SmartScreen appears, choose **More info**, verify that the filename and

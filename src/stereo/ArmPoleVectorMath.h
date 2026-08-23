@@ -14,6 +14,7 @@ struct ArmPoleVectorInput
     bool hasPreviousPole = false;
     bool leftArm = false;
     bool preserveNative = false;
+    float maximumAngularStepRadians = 0.20943951F; // 12 degrees/XR sample
 };
 
 struct ArmPoleVectorResult
@@ -21,12 +22,14 @@ struct ArmPoleVectorResult
     std::array<float, 3> pole = {};
     bool usedPreviousPole = false;
     bool usedFallbackAxis = false;
+    bool rateLimited = false;
 };
 
-// Computes a direction-only rotate-plane pole in the same component frame as
-// the shoulder and hand target. The primary policy is a fixed, mirrored
-// outward/down/back human-arm direction. It is projected away from the
-// shoulder-to-hand axis before being given to the native Maya solver.
+// Computes one raw anatomical elbow intent in the stable shoulder/body frame.
+// Maya remains the sole projector into the current shoulder-to-wrist solve
+// plane. The fixed Parger direction is used only near vertical/behind-shoulder
+// singularities; normal poses respond to hand position. Continuity is limited
+// once per accepted XR generation by the runtime owner.
 [[nodiscard]] std::optional<ArmPoleVectorResult>
 ComputeArmPoleVector(const ArmPoleVectorInput& input) noexcept;
 

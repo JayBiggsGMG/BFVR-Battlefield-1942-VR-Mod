@@ -43,18 +43,6 @@ int main()
     passed &= Check(rightResult.has_value(), "right pole should solve");
     if (rightResult.has_value())
     {
-        std::array<float, 3> span = {
-            right.handTarget[0] - right.shoulder[0],
-            right.handTarget[1] - right.shoulder[1],
-            right.handTarget[2] - right.shoulder[2]};
-        const float spanLength = std::sqrt(Dot(span, span));
-        for (float& component : span)
-        {
-            component /= spanLength;
-        }
-        passed &= Check(
-            Near(Dot(rightResult->pole, span), 0.0F),
-            "right pole must be perpendicular to hand span");
         passed &= Check(
             Near(Dot(rightResult->pole, rightResult->pole), 1.0F),
             "right pole must be unit length");
@@ -90,26 +78,32 @@ int main()
         !bfvr::stereo::ComputeArmPoleVector(collapsed).has_value(),
         "collapsed hand span must fail closed");
 
-    auto parallel = right;
-    parallel.shoulder = {};
-    parallel.handTarget = {0.133F, -0.443F, -0.886F};
-    parallel.hasPreviousPole = true;
-    parallel.previousPole = {1.0F, 0.0F, 0.0F};
-    const auto previousResult =
-        bfvr::stereo::ComputeArmPoleVector(parallel);
+    auto limited = right;
+    limited.hasPreviousPole = true;
+    limited.previousPole = {-1.0F, 0.0F, 0.0F};
+    limited.maximumAngularStepRadians = 0.10F;
+    const auto previousResult = bfvr::stereo::ComputeArmPoleVector(limited);
     passed &= Check(
         previousResult.has_value() &&
-            previousResult->usedPreviousPole,
-        "near-parallel bend direction should reuse previous continuity");
+            previousResult->usedPreviousPole && previousResult->rateLimited,
+        "new XR intent should be angularly rate limited");
 
-    auto fallback = parallel;
-    fallback.hasPreviousPole = false;
-    const auto fallbackResult =
-        bfvr::stereo::ComputeArmPoleVector(fallback);
+    auto fallback = right;
+    fallback.shoulder = {};
+    fallback.handTarget = {0.0F, 1.0F, 0.01F};
+    const auto fallbackResult = bfvr::stereo::ComputeArmPoleVector(fallback);
     passed &= Check(
         fallbackResult.has_value() &&
             fallbackResult->usedFallbackAxis,
-        "near-parallel bend without history should use a fixed axis");
+        "near-vertical hand should use the singularity fallback");
+
+    auto moved = right;
+    moved.handTarget = {-0.15F, 0.05F, 0.60F};
+    const auto movedResult = bfvr::stereo::ComputeArmPoleVector(moved);
+    passed &= Check(
+        movedResult.has_value() && rightResult.has_value() &&
+            !Near(movedResult->pole[0], rightResult->pole[0]),
+        "ordinary elbow intent did not respond to hand position");
 
     auto nonFinite = right;
     nonFinite.handTarget[1] = std::nanf("");

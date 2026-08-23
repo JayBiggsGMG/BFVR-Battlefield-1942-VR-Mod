@@ -1,4 +1,5 @@
 #include "presenter/D3DSystemRuntime.h"
+#include "client/D3D8To9InteropPrimer.h"
 #include "presenter/D3D8To9CrossProcessProbe.h"
 
 #include "bfvr_runtime_diagnostics.hpp"
@@ -427,6 +428,11 @@ int wmain(int argc, wchar_t** argv)
             GetProcAddress(
                 translator,
                 "BFVRD3D8To9CreateSharedRenderTarget"));
+    const auto getSharedDeviceDiagnostics =
+        reinterpret_cast<BFVRD3D8To9GetSharedDeviceDiagnosticsFn>(
+            GetProcAddress(
+                translator,
+                "BFVRD3D8To9GetSharedDeviceDiagnostics"));
     const auto createDepthTarget =
         reinterpret_cast<BFVRD3D8To9CreateTextureBackedDepthStencilFn>(
             GetProcAddress(
@@ -446,6 +452,7 @@ int wmain(int argc, wchar_t** argv)
         getRuntimeDiagnostics == nullptr ||
         getBridgeVersion == nullptr ||
         createSharedTarget == nullptr ||
+        getSharedDeviceDiagnostics == nullptr ||
         ((enableAmbientOcclusion || enableScreenSpaceGlobalIllumination ||
              enableWaterReflections) &&
             (createDepthTarget == nullptr || resolveDepthTarget == nullptr)) ||
@@ -559,6 +566,40 @@ int wmain(int argc, wchar_t** argv)
         exitCode = Fail(L"BFVRD3D8To9CreateSharedRenderTarget", result);
         PrintD3D9SharedTextureDiagnostics(device8);
         goto cleanup;
+    }
+    {
+        BFVRD3D8To9SharedDeviceDiagnostics producerDiagnostics = {};
+        producerDiagnostics.size = sizeof(producerDiagnostics);
+        result = getSharedDeviceDiagnostics(
+            device8,
+            &producerDiagnostics);
+        const bool interopPrimed =
+            bfvr::PrimeD3D8To9D3D11SharedTextureInterop(
+                producerDiagnostics,
+                sharedHandle);
+        if (FAILED(result) ||
+            FAILED(producerDiagnostics.getAdapterLuidResult) ||
+            !interopPrimed)
+        {
+            fwprintf(
+                stderr,
+                L"[FAIL] D3D9/D3D11 interop primer: bridge=0x%08lX producer=%08lX:%08lX getLuid=0x%08lX primed=%d.\n",
+                static_cast<unsigned long>(result),
+                static_cast<unsigned long>(
+                    producerDiagnostics.adapterLuidHigh),
+                static_cast<unsigned long>(
+                    producerDiagnostics.adapterLuidLow),
+                static_cast<unsigned long>(
+                    producerDiagnostics.getAdapterLuidResult),
+                interopPrimed ? 1 : 0);
+            goto cleanup;
+        }
+        wprintf(
+            L"[PASS] D3D9/D3D11 interop primer opened the new shared texture once on producer adapter %08lX:%08lX.\n",
+            static_cast<unsigned long>(
+                producerDiagnostics.adapterLuidHigh),
+            static_cast<unsigned long>(
+                producerDiagnostics.adapterLuidLow));
     }
 
     result = sharedSurface8->GetDesc(&surfaceDescription);

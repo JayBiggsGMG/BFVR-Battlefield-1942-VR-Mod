@@ -21,10 +21,26 @@ constexpr std::string_view kSnapTurnAngleKey = "snap_turn_angle_degrees";
 constexpr std::string_view kMovementDirectionKey = "movement_direction";
 constexpr std::string_view kVrHeightAdjustmentKey =
     "manual_height_adjustment_centimeters";
+constexpr std::string_view kRightHandPositionXKey =
+    "right_hand_position_x_centimeters";
+constexpr std::string_view kRightHandPositionYKey =
+    "right_hand_position_y_centimeters";
+constexpr std::string_view kRightHandPositionZKey =
+    "right_hand_position_z_centimeters";
+constexpr std::string_view kLeftHandPositionXKey =
+    "left_hand_position_x_centimeters";
+constexpr std::string_view kLeftHandPositionYKey =
+    "left_hand_position_y_centimeters";
+constexpr std::string_view kLeftHandPositionZKey =
+    "left_hand_position_z_centimeters";
 constexpr std::string_view kStandingEyeHeightKey =
     "standing_eye_height_centimeters";
 constexpr std::string_view kComfortVignetteEnabledKey =
     "comfort_vignette_enabled";
+constexpr std::string_view kDeathCameraComfortEnabledKey =
+    "death_camera_comfort_enabled";
+constexpr std::string_view kKeepHudUprightKey = "keep_hud_upright";
+constexpr std::string_view kShowArmsKey = "show_arms";
 constexpr std::string_view kInvertFlightPitchKey = "invert_flight_pitch";
 constexpr std::string_view kAircraftPitchWithRollKey =
     "aircraft_pitch_with_roll";
@@ -32,15 +48,25 @@ constexpr std::string_view kSwapAircraftSticksKey =
     "swap_aircraft_sticks";
 constexpr std::string_view kInvertTurretPitchKey = "invert_turret_pitch";
 constexpr std::string_view kInvertTurretYawKey = "invert_turret_yaw";
+constexpr std::string_view kVehicleMotionAimSensitivityKey =
+    "vehicle_motion_aim_sensitivity_percent";
 constexpr std::string_view kControllerHapticsEnabledKey =
     "controller_haptics_enabled";
+constexpr std::string_view kKillSoundEnabledKey = "kill_sound_enabled";
 constexpr std::string_view kSniperScopeSmoothingEnabledKey =
     "sniper_scope_smoothing_enabled";
+constexpr std::string_view kMenuPointerSmoothingEnabledKey =
+    "menu_pointer_smoothing_enabled";
 constexpr std::string_view kOffHandGripStyleKey = "off_hand_grip_style";
 constexpr std::string_view kHandWeaponCrosshairKey =
     "hand_weapon_3d_crosshair";
 constexpr std::string_view kMountedWeaponCrosshairKey =
     "mounted_weapon_3d_crosshair";
+constexpr std::string_view kPointerItemCrosshairKey =
+    "knife_throwable_gadget_3d_crosshair";
+constexpr std::string_view kCrosshairColorKey = "3d_crosshair_color";
+constexpr std::string_view kCrosshairOpacityKey =
+    "3d_crosshair_opacity_percent";
 constexpr std::string_view kFxaaEnabledKey = "fxaa_enabled";
 constexpr std::string_view kFxaaSharpeningKey =
     "fxaa_sharpening_percent";
@@ -55,6 +81,10 @@ constexpr std::string_view kWaterReflectionsEnabledKey =
 constexpr std::string_view kBloomEnabledKey = "bloom_enabled";
 constexpr std::string_view kBloomThresholdKey = "bloom_threshold_percent";
 constexpr std::string_view kBloomIntensityKey = "bloom_intensity_percent";
+constexpr std::string_view kColorProfileKey = "color_profile";
+constexpr std::string_view kColorExposureKey = "color_exposure_ev";
+constexpr std::string_view kColorContrastKey = "color_contrast_percent";
+constexpr std::string_view kColorSaturationKey = "color_saturation_percent";
 constexpr std::string_view kHeadTrackedAudioEnabledKey =
     "head_tracked_audio_enabled";
 constexpr std::string_view kHeadTrackedAudioPositionEnabledKey =
@@ -104,10 +134,30 @@ bool IsOffHandGripStyle(std::string_view value) noexcept
     return value == "hold" || value == "toggle";
 }
 
+bool IsFirstPersonVisibility(std::string_view value) noexcept
+{
+    // true/false are accepted as a one-save migration path for development
+    // configurations written before the three-state selector existed.
+    return value == "arms_and_hands" || value == "hands_only" ||
+        value == "no_hands_or_arms" || value == "true" || value == "false";
+}
+
 bool IsWorldCrosshairMode(std::string_view value) noexcept
 {
     return value == "off" || value == "on" ||
         value == "hit_marker_only";
+}
+
+bool IsCrosshairColor(std::string_view value) noexcept
+{
+    return value == "white" || value == "green" || value == "blue" ||
+        value == "purple" || value == "red" || value == "pink" ||
+        value == "orange" || value == "yellow" || value == "magenta";
+}
+
+bool IsColorProfile(std::string_view value) noexcept
+{
+    return value == "original" || value == "filmic" || value == "vibrant";
 }
 
 bool IsPlayMode(std::string_view value) noexcept
@@ -140,6 +190,23 @@ bool IsInfantryTurnSpeed(std::string_view value) noexcept
         percent >= bfvr::settings::kMinimumInfantryTurnSpeedPercent &&
         percent <= bfvr::settings::kMaximumInfantryTurnSpeedPercent &&
         percent % bfvr::settings::kInfantryTurnSpeedStepPercent == 0;
+}
+
+bool IsVehicleMotionAimSensitivity(std::string_view value) noexcept
+{
+    std::uint32_t percent = 0;
+    const auto parsed = std::from_chars(
+        value.data(),
+        value.data() + value.size(),
+        percent);
+    return parsed.ec == std::errc{} &&
+        parsed.ptr == value.data() + value.size() &&
+        percent >=
+            bfvr::settings::kMinimumVehicleMotionAimSensitivityPercent &&
+        percent <=
+            bfvr::settings::kMaximumVehicleMotionAimSensitivityPercent &&
+        percent %
+            bfvr::settings::kVehicleMotionAimSensitivityStepPercent == 0;
 }
 
 bool IsSnapTurnAngle(std::string_view value) noexcept
@@ -201,6 +268,137 @@ bool IsUnsignedInRangeStep(
         step != 0 && (parsedValue - minimum) % step == 0;
 }
 
+bool IsSignedInRangeStep(
+    std::string_view value,
+    std::int32_t minimum,
+    std::int32_t maximum,
+    std::int32_t step) noexcept
+{
+    std::int32_t parsedValue = 0;
+    const auto parsed = std::from_chars(
+        value.data(),
+        value.data() + value.size(),
+        parsedValue);
+    return parsed.ec == std::errc{} &&
+        parsed.ptr == value.data() + value.size() &&
+        parsedValue >= minimum && parsedValue <= maximum && step > 0 &&
+        (parsedValue - minimum) % step == 0;
+}
+
+bool ParseFixedTenths(
+    std::string_view value,
+    std::int32_t& tenths) noexcept
+{
+    tenths = 0;
+    if (value.empty())
+    {
+        return false;
+    }
+    bool negative = false;
+    std::size_t offset = 0;
+    if (value.front() == '-' || value.front() == '+')
+    {
+        negative = value.front() == '-';
+        offset = 1;
+    }
+    if (offset >= value.size())
+    {
+        return false;
+    }
+    const std::size_t dot = value.find('.', offset);
+    const std::string_view wholeText = dot == std::string_view::npos
+        ? value.substr(offset)
+        : value.substr(offset, dot - offset);
+    if (wholeText.empty() ||
+        (dot != std::string_view::npos && dot + 2 != value.size()))
+    {
+        return false;
+    }
+    std::int32_t whole = 0;
+    const auto parsed = std::from_chars(
+        wholeText.data(),
+        wholeText.data() + wholeText.size(),
+        whole);
+    if (parsed.ec != std::errc{} ||
+        parsed.ptr != wholeText.data() + wholeText.size())
+    {
+        return false;
+    }
+    std::int32_t fraction = 0;
+    if (dot != std::string_view::npos)
+    {
+        const char digit = value[dot + 1];
+        if (digit < '0' || digit > '9')
+        {
+            return false;
+        }
+        fraction = digit - '0';
+    }
+    if (whole > (std::numeric_limits<std::int32_t>::max() - fraction) / 10)
+    {
+        return false;
+    }
+    tenths = whole * 10 + fraction;
+    if (negative)
+    {
+        tenths = -tenths;
+    }
+    return true;
+}
+
+std::string EncodeFixedTenths(std::int32_t value)
+{
+    const bool negative = value < 0;
+    const std::int32_t magnitude = negative ? -value : value;
+    std::string result = negative ? "-" : "";
+    result += std::to_string(magnitude / 10);
+    result.push_back('.');
+    result += std::to_string(magnitude % 10);
+    return result;
+}
+
+bool IsColorExposure(std::string_view value) noexcept
+{
+    std::int32_t tenths = 0;
+    return ParseFixedTenths(value, tenths) &&
+        tenths >= bfvr::settings::kMinimumColorExposureTenthsEv &&
+        tenths <= bfvr::settings::kMaximumColorExposureTenthsEv &&
+        (tenths - bfvr::settings::kMinimumColorExposureTenthsEv) %
+                bfvr::settings::kColorExposureStepTenthsEv == 0;
+}
+
+bool IsColorContrast(std::string_view value) noexcept
+{
+    return IsSignedInRangeStep(
+        value,
+        bfvr::settings::kMinimumColorContrastPercent,
+        bfvr::settings::kMaximumColorContrastPercent,
+        bfvr::settings::kColorContrastStepPercent);
+}
+
+bool IsColorSaturation(std::string_view value) noexcept
+{
+    return IsSignedInRangeStep(
+        value,
+        bfvr::settings::kMinimumColorSaturationPercent,
+        bfvr::settings::kMaximumColorSaturationPercent,
+        bfvr::settings::kColorSaturationStepPercent);
+}
+
+bool IsHandPosition(std::string_view value) noexcept
+{
+    std::int32_t centimeters = 0;
+    const auto parsed = std::from_chars(
+        value.data(), value.data() + value.size(), centimeters);
+    return parsed.ec == std::errc{} &&
+        parsed.ptr == value.data() + value.size() &&
+        centimeters >= bfvr::settings::kMinimumHandPositionCentimeters &&
+        centimeters <= bfvr::settings::kMaximumHandPositionCentimeters &&
+        (centimeters - bfvr::settings::kMinimumHandPositionCentimeters) %
+                bfvr::settings::kHandPositionStepCentimeters ==
+            0;
+}
+
 bool IsAmbientOcclusionRadius(std::string_view value) noexcept
 {
     return IsUnsignedInRangeStep(
@@ -217,6 +415,15 @@ bool IsFxaaSharpening(std::string_view value) noexcept
         bfvr::settings::kMinimumFxaaSharpeningPercent,
         bfvr::settings::kMaximumFxaaSharpeningPercent,
         bfvr::settings::kFxaaSharpeningStepPercent);
+}
+
+bool IsCrosshairOpacity(std::string_view value) noexcept
+{
+    return IsUnsignedInRangeStep(
+        value,
+        bfvr::settings::kMinimumCrosshairOpacityPercent,
+        bfvr::settings::kMaximumCrosshairOpacityPercent,
+        bfvr::settings::kCrosshairOpacityStepPercent);
 }
 
 bool IsAmbientOcclusionStrength(std::string_view value) noexcept
@@ -446,6 +653,60 @@ UserSettingsSchema SeededUserSettingsSchema()
             IsVrHeightAdjustment
         },
         {
+            std::string(kRightHandPositionXKey),
+            std::to_string(kDefaultRightHandPositionXCentimeters),
+            {
+                "Moves the visible right hand and its attached held item sideways in the player's body-local frame. Positive X is right; negative X is left. It does not alter aim, firing, projectile direction, or the crosshair.",
+                "Units are centimeters; accepted values are -20 through 20 in steps of 1. Applied live after VR Settings > Save without a restart."
+            },
+            IsHandPosition
+        },
+        {
+            std::string(kRightHandPositionYKey),
+            std::to_string(kDefaultRightHandPositionYCentimeters),
+            {
+                "Moves the visible right hand and its attached held item vertically in the player's body-local frame. Positive Y is up; negative Y is down. It does not alter aim, firing, projectile direction, or the crosshair.",
+                "Units are centimeters; accepted values are -20 through 20 in steps of 1. Applied live after VR Settings > Save without a restart."
+            },
+            IsHandPosition
+        },
+        {
+            std::string(kRightHandPositionZKey),
+            std::to_string(kDefaultRightHandPositionZCentimeters),
+            {
+                "Moves the visible right hand and its attached held item forward or backward in the player's body-local frame. Positive Z is forward; negative Z is backward. It does not alter aim, firing, projectile direction, or the crosshair.",
+                "Units are centimeters; accepted values are -20 through 20 in steps of 1. Applied live after VR Settings > Save without a restart."
+            },
+            IsHandPosition
+        },
+        {
+            std::string(kLeftHandPositionXKey),
+            std::to_string(kDefaultLeftHandPositionXCentimeters),
+            {
+                "Moves the visible free left hand sideways in the player's body-local frame. Positive X is right; negative X is left. A rifle or sidearm support pose keeps its authored hand-to-weapon relationship.",
+                "Units are centimeters; accepted values are -20 through 20 in steps of 1. Applied live after VR Settings > Save without a restart; aim and firing are unchanged."
+            },
+            IsHandPosition
+        },
+        {
+            std::string(kLeftHandPositionYKey),
+            std::to_string(kDefaultLeftHandPositionYCentimeters),
+            {
+                "Moves the visible free left hand vertically in the player's body-local frame. Positive Y is up; negative Y is down. A rifle or sidearm support pose keeps its authored hand-to-weapon relationship.",
+                "Units are centimeters; accepted values are -20 through 20 in steps of 1. Applied live after VR Settings > Save without a restart; aim and firing are unchanged."
+            },
+            IsHandPosition
+        },
+        {
+            std::string(kLeftHandPositionZKey),
+            std::to_string(kDefaultLeftHandPositionZCentimeters),
+            {
+                "Moves the visible free left hand forward or backward in the player's body-local frame. Positive Z is forward; negative Z is backward. A rifle or sidearm support pose keeps its authored hand-to-weapon relationship.",
+                "Units are centimeters; accepted values are -20 through 20 in steps of 1. Applied live after VR Settings > Save without a restart; aim and firing are unchanged."
+            },
+            IsHandPosition
+        },
+        {
             std::string(kStandingEyeHeightKey),
             std::to_string(kDefaultStandingEyeHeightCentimeters),
             {
@@ -462,6 +723,33 @@ UserSettingsSchema SeededUserSettingsSchema()
                 "The effect is composited above the stereo world but below Ref2 HUD, scope, Quick Menu, VR Settings, and other overlays, so interface elements remain clear. Accepted values: true or false. Applied after VR Settings > Save without a restart."
             },
             IsBoolean
+        },
+        {
+            std::string(kDeathCameraComfortEnabledKey),
+            "true",
+            {
+                "Enables BFVR's death-camera comfort effect. A verified local-player alive-to-dead transition quickly closes a stronger muted dark-red peripheral aperture for the native death-camera flight, then eases it away without flattening, freezing, or head-locking the stereo world.",
+                "This effect is independent of comfort_vignette_enabled and takes priority through the same single vignette compositor, so the two effects never stack. Accepted values: true or false. Applied after VR Settings > Save without a restart."
+            },
+            IsBoolean
+        },
+        {
+            std::string(kKeepHudUprightKey),
+            "true",
+            {
+                "Keeps the ordinary spawned-player HUD level with OpenXR's gravity-aligned application space instead of copying headset roll. Head position, yaw, and pitch still place the HUD normally; native menus, the scoreboard path, BFVR panels, and physical weapon scopes keep their own presentation rules.",
+                "Accepted values: true or false. Applied after VR Settings > Save without a restart. false restores the legacy fully head-locked HUD, including head roll."
+            },
+            IsBoolean
+        },
+        {
+            std::string(kShowArmsKey),
+            "arms_and_hands",
+            {
+                "Controls BFVR's stereo replay of native first-person arms and hands. arms_and_hands shows the complete game-selected presentation; hands_only hides separate arm/combined meshes while retaining explicitly identified left/right hand meshes; no_hands_or_arms hides every classified first-person part.",
+                "A mod which combines hands and arms into one mesh cannot be split: that combined or unrecognized mesh is hidden in hands_only and restored by arms_and_hands. Native animation, controller IK, hand placement, elbow placement, weapon transforms, and gameplay state continue in every mode. Applied after VR Settings > Save without a restart."
+            },
+            IsFirstPersonVisibility
         },
         {
             std::string(kInvertFlightPitchKey),
@@ -509,6 +797,15 @@ UserSettingsSchema SeededUserSettingsSchema()
             IsBoolean
         },
         {
+            std::string(kVehicleMotionAimSensitivityKey),
+            std::to_string(kDefaultVehicleMotionAimSensitivityPercent),
+            {
+                "Sets how strongly right-controller movement aims tank cannons and other land/sea vehicle, turret, AA, and mounted weapons. It does not change right-stick sensitivity, infantry aim, aircraft controls, or BF1942's authored turret speed limits.",
+                "Accepted values are 50 through 300 percent in steps of 10. 100 is the original motion-aim response and the default 200 requires half the original physical hand travel. Applied after Controls > Save without a restart."
+            },
+            IsVehicleMotionAimSensitivity
+        },
+        {
             std::string(kControllerHapticsEnabledKey),
             "true",
             {
@@ -518,11 +815,29 @@ UserSettingsSchema SeededUserSettingsSchema()
             IsBoolean
         },
         {
+            std::string(kKillSoundEnabledKey),
+            "true",
+            {
+                "Plays the supplied BFVR kill sound when Battlefield's authoritative score handling confirms that the current local player killed another player. Shots, hit markers, deaths, suicides, and team-kill score variants do not trigger it.",
+                "Kills confirmed within 300 ms count as one multi-kill sound. A later kill starts an independent voice without restarting a sound already playing. Accepted values: true or false. Applied after Graphics / Audio > Save without a restart."
+            },
+            IsBoolean
+        },
+        {
             std::string(kSniperScopeSmoothingEnabledKey),
             "true",
             {
-                "Softens scoped micro-motion with a frame-time-aware bounded angular stabilizer. Filtering applies only while total stabilized-to-raw error is below 0.25 degrees; deliberate movement catches up to raw immediately at that boundary. The same result drives aim and scope presentation, while current weapon translation stays raw. Controls > Save applies the toggle live. After a scoped shot, the weapon's native zoom state decides whether the scope exits or remains active.",
+                "Softens scoped micro-motion with a frame-time-aware bounded angular stabilizer. Filtering applies only while total stabilized-to-raw error is below 1.5 degrees; deliberate movement catches up to raw immediately at that boundary. The same result drives aim and scope presentation, while current weapon translation stays raw. Controls > Save applies the toggle live. After a scoped shot, the weapon's native zoom state decides whether the scope exits or remains active.",
                 "Accepted values: true or false. Applied after Controls > Save without a restart."
+            },
+            IsBoolean
+        },
+        {
+            std::string(kMenuPointerSmoothingEnabledKey),
+            "true",
+            {
+                "Stabilizes the right-controller pointer in Battlefield's native menus, the Quick Menu, and the VR Settings dialog. A small deadzone suppresses hand tremor while frame-time-aware adaptive filtering keeps deliberate movement responsive.",
+                "Accepted values: true or false. Applied after VR Settings > Save without a restart. Turning it off restores direct unfiltered controller-ray coordinates."
             },
             IsBoolean
         },
@@ -540,7 +855,7 @@ UserSettingsSchema SeededUserSettingsSchema()
             "hit_marker_only",
             {
                 "Controls the stereo 3D HUD crosshair only for shooting hand weapons such as rifles and pistols. off hides both the aiming crosshair and its hit marker; on shows both; hit_marker_only hides the aiming crosshair but still shows confirmed-hit feedback.",
-                "Accepted values: off, on, or hit_marker_only. Gadget crosshairs always remain enabled. This does not change weapon aim, bullet direction, scopes, or BF1942 hit detection. Applied only after VR Settings > Save."
+                "Accepted values: off, on, or hit_marker_only. Knife, throwable, and gadget items have their own setting. This does not change weapon aim, bullet direction, scopes, or BF1942 hit detection. Applied only after Controls > Save."
             },
             IsWorldCrosshairMode
         },
@@ -549,9 +864,36 @@ UserSettingsSchema SeededUserSettingsSchema()
             "on",
             {
                 "Controls the stereo 3D HUD crosshair for vehicles, turrets, and mounted guns. off hides both the aiming crosshair and its hit marker; on shows both; hit_marker_only hides the aiming crosshair but still shows confirmed-hit feedback.",
-                "Accepted values: off, on, or hit_marker_only. This does not change mounted aim, projectile direction, or BF1942 hit detection. Applied only after VR Settings > Save."
+                "Accepted values: off, on, or hit_marker_only. This does not change mounted aim, projectile direction, or BF1942 hit detection. Applied only after Controls > Save."
             },
             IsWorldCrosshairMode
+        },
+        {
+            std::string(kPointerItemCrosshairKey),
+            "on",
+            {
+                "Controls the stereo 3D HUD crosshair for BFVR's controller-pointer knife, throwable, and gadget item classification. off hides both the aiming crosshair and its hit marker; on shows both; hit_marker_only hides the aiming crosshair but retains confirmed-hit feedback.",
+                "Accepted values: off, on, or hit_marker_only. The default on value preserves the existing BFVR behavior. This does not change aim, item use, projectile direction, or BF1942 hit detection. Applied after Controls > Save without a restart."
+            },
+            IsWorldCrosshairMode
+        },
+        {
+            std::string(kCrosshairColorKey),
+            "green",
+            {
+                "Selects the base tint shared by BFVR's stereo 3D aiming crosshair and 3D hit marker. The existing D3D8 crosshair renderer, endpoint, per-eye projection, angular size, and composition timing remain unchanged.",
+                "Accepted values: white, green, blue, purple, red, pink, orange, or yellow. The legacy value magenta loads as pink. The default green preserves the current appearance. World post-processing and non-neutral Color settings may alter the final displayed tint. Applied after Controls > Save without a restart."
+            },
+            IsCrosshairColor
+        },
+        {
+            std::string(kCrosshairOpacityKey),
+            std::to_string(kDefaultCrosshairOpacityPercent),
+            {
+                "Controls the opacity shared by BFVR's stereo 3D aiming crosshair and confirmed-hit marker. It does not change their endpoint, per-eye projection, angular size, color, or hit detection.",
+                "Accepted values: 5 through 100 percent in steps of 5. Zero is deliberately rejected so enabled crosshair feedback can never become fully invisible. Applied after Controls > Save without a restart."
+            },
+            IsCrosshairOpacity
         },
         {
             std::string(kFxaaEnabledKey),
@@ -635,6 +977,42 @@ UserSettingsSchema SeededUserSettingsSchema()
             IsBloomIntensity
         },
         {
+            std::string(kColorProfileKey),
+            "original",
+            {
+                "Selects BFVR's world-only final color treatment. original is an identity profile, filmic applies a restrained toe and highlight shoulder, and vibrant applies a richer but bounded treatment. Ref2 HUD, native menus, scope UI, Quick Menu, and VR Settings remain outside this processing.",
+                "Accepted values: original, filmic, or vibrant. The three manual Color adjustments are applied relative to the selected profile. Applied after Graphics > Save without a restart."
+            },
+            IsColorProfile
+        },
+        {
+            std::string(kColorExposureKey),
+            "0.0",
+            {
+                "Adjusts stereo-world exposure in linear light before the selected Color Profile. Zero is neutral and appears at the middle of the in-game slider.",
+                "Units are EV. Accepted values: -1.0 through +1.0 in steps of 0.1. Ref2 HUD and separately composed interface layers are unchanged. Applied after Graphics > Save without a restart."
+            },
+            IsColorExposure
+        },
+        {
+            std::string(kColorContrastKey),
+            "0",
+            {
+                "Adjusts stereo-world contrast after the selected Color Profile. Zero is neutral; negative values reduce contrast and positive values increase it.",
+                "Accepted values: -50 through +50 percent in steps of 1. Ref2 HUD and separately composed interface layers are unchanged. Applied after Graphics > Save without a restart."
+            },
+            IsColorContrast
+        },
+        {
+            std::string(kColorSaturationKey),
+            "0",
+            {
+                "Adjusts stereo-world saturation after the selected Color Profile. Zero is neutral, -100 is grayscale, and positive values increase saturation.",
+                "Accepted values: -100 through +100 percent in steps of 1. BFVR's 3D crosshair is already part of the stereo-world targets and is adjusted with the scene; Ref2 HUD and separately composed interface layers are unchanged. Applied after Graphics > Save without a restart."
+            },
+            IsColorSaturation
+        },
+        {
             std::string(kHeadTrackedAudioEnabledKey),
             "true",
             {
@@ -697,6 +1075,25 @@ UserSettingsValues DecodeUserSettings(const UserSettings& settings) noexcept
             result.infantryTurnSpeedPercent = parsedPercent;
         }
     }
+    const auto vehicleMotionAimSensitivity = settings.values.find(
+        std::string(kVehicleMotionAimSensitivityKey));
+    if (vehicleMotionAimSensitivity != settings.values.end())
+    {
+        std::uint32_t parsedPercent = 0;
+        const auto parsed = std::from_chars(
+            vehicleMotionAimSensitivity->second.data(),
+            vehicleMotionAimSensitivity->second.data() +
+                vehicleMotionAimSensitivity->second.size(),
+            parsedPercent);
+        if (parsed.ec == std::errc{} &&
+            parsed.ptr == vehicleMotionAimSensitivity->second.data() +
+                vehicleMotionAimSensitivity->second.size() &&
+            IsVehicleMotionAimSensitivity(
+                vehicleMotionAimSensitivity->second))
+        {
+            result.vehicleMotionAimSensitivityPercent = parsedPercent;
+        }
+    }
     const auto readBoolean = [&](std::string_view key, bool fallback) {
         const auto found = settings.values.find(std::string(key));
         return found == settings.values.end()
@@ -715,12 +1112,35 @@ UserSettingsValues DecodeUserSettings(const UserSettings& settings) noexcept
     result.controllerHapticsEnabled = readBoolean(
         kControllerHapticsEnabledKey,
         true);
+    result.killSoundEnabled = readBoolean(kKillSoundEnabledKey, true);
     result.sniperScopeSmoothingEnabled = readBoolean(
         kSniperScopeSmoothingEnabledKey,
+        true);
+    result.menuPointerSmoothingEnabled = readBoolean(
+        kMenuPointerSmoothingEnabledKey,
         true);
     result.comfortVignetteEnabled = readBoolean(
         kComfortVignetteEnabledKey,
         false);
+    result.deathCameraComfortEnabled = readBoolean(
+        kDeathCameraComfortEnabledKey,
+        true);
+    result.keepHudUpright = readBoolean(kKeepHudUprightKey, true);
+    const auto visibility = settings.values.find(std::string(kShowArmsKey));
+    if (visibility == settings.values.end() ||
+        visibility->second == "arms_and_hands" ||
+        visibility->second == "true")
+    {
+        result.firstPersonVisibility = FirstPersonVisibility::ArmsAndHands;
+    }
+    else if (visibility->second == "hands_only")
+    {
+        result.firstPersonVisibility = FirstPersonVisibility::HandsOnly;
+    }
+    else
+    {
+        result.firstPersonVisibility = FirstPersonVisibility::NoHandsOrArms;
+    }
     const auto readGripStyle = [&settings]() {
         const auto found = settings.values.find(
             std::string(kOffHandGripStyleKey));
@@ -751,6 +1171,27 @@ UserSettingsValues DecodeUserSettings(const UserSettings& settings) noexcept
     result.mountedWeaponCrosshair = readCrosshairMode(
         kMountedWeaponCrosshairKey,
         WorldCrosshairMode::On);
+    result.pointerItemCrosshair = readCrosshairMode(
+        kPointerItemCrosshairKey,
+        WorldCrosshairMode::On);
+    const std::string_view crosshairColor = readEnumText(
+        kCrosshairColorKey,
+        "green");
+    result.crosshairColor = crosshairColor == "white"
+        ? CrosshairColor::White
+        : crosshairColor == "blue"
+        ? CrosshairColor::Blue
+        : crosshairColor == "purple"
+        ? CrosshairColor::Purple
+        : crosshairColor == "red"
+        ? CrosshairColor::Red
+        : crosshairColor == "pink" || crosshairColor == "magenta"
+        ? CrosshairColor::Pink
+        : crosshairColor == "orange"
+        ? CrosshairColor::Orange
+        : crosshairColor == "yellow"
+        ? CrosshairColor::Yellow
+        : CrosshairColor::Green;
     result.fxaaEnabled = readBoolean(kFxaaEnabledKey, true);
     result.ambientOcclusionEnabled = readBoolean(
         kAmbientOcclusionEnabledKey,
@@ -790,6 +1231,10 @@ UserSettingsValues DecodeUserSettings(const UserSettings& settings) noexcept
         kFxaaSharpeningKey,
         kDefaultFxaaSharpeningPercent,
         IsFxaaSharpening);
+    result.crosshairOpacityPercent = readUnsigned(
+        kCrosshairOpacityKey,
+        kDefaultCrosshairOpacityPercent,
+        IsCrosshairOpacity);
     result.ambientOcclusionStrengthPercent = readUnsigned(
         kAmbientOcclusionStrengthKey,
         kDefaultAmbientOcclusionStrengthPercent,
@@ -810,6 +1255,73 @@ UserSettingsValues DecodeUserSettings(const UserSettings& settings) noexcept
         kStandingEyeHeightKey,
         kDefaultStandingEyeHeightCentimeters,
         IsStandingEyeHeight);
+    const std::string_view colorProfile = readEnumText(
+        kColorProfileKey,
+        "original");
+    result.colorProfile = colorProfile == "filmic"
+        ? ColorProfile::Filmic
+        : colorProfile == "vibrant"
+        ? ColorProfile::Vibrant
+        : ColorProfile::Original;
+    const auto readSigned = [&settings](
+                                std::string_view key,
+                                std::int32_t fallback,
+                                UserSettingValidator validator) {
+        const auto found = settings.values.find(std::string(key));
+        if (found == settings.values.end() || validator == nullptr ||
+            !validator(found->second))
+        {
+            return fallback;
+        }
+        std::int32_t value = fallback;
+        const auto parsed = std::from_chars(
+            found->second.data(),
+            found->second.data() + found->second.size(),
+            value);
+        return parsed.ec == std::errc{} ? value : fallback;
+    };
+    const auto exposure = settings.values.find(std::string(kColorExposureKey));
+    if (exposure != settings.values.end() &&
+        IsColorExposure(exposure->second))
+    {
+        std::int32_t tenths = kDefaultColorExposureTenthsEv;
+        if (ParseFixedTenths(exposure->second, tenths))
+        {
+            result.colorExposureTenthsEv = tenths;
+        }
+    }
+    result.colorContrastPercent = readSigned(
+        kColorContrastKey,
+        kDefaultColorContrastPercent,
+        IsColorContrast);
+    result.colorSaturationPercent = readSigned(
+        kColorSaturationKey,
+        kDefaultColorSaturationPercent,
+        IsColorSaturation);
+    result.rightHandPositionXCentimeters = readSigned(
+        kRightHandPositionXKey,
+        kDefaultRightHandPositionXCentimeters,
+        IsHandPosition);
+    result.rightHandPositionYCentimeters = readSigned(
+        kRightHandPositionYKey,
+        kDefaultRightHandPositionYCentimeters,
+        IsHandPosition);
+    result.rightHandPositionZCentimeters = readSigned(
+        kRightHandPositionZKey,
+        kDefaultRightHandPositionZCentimeters,
+        IsHandPosition);
+    result.leftHandPositionXCentimeters = readSigned(
+        kLeftHandPositionXKey,
+        kDefaultLeftHandPositionXCentimeters,
+        IsHandPosition);
+    result.leftHandPositionYCentimeters = readSigned(
+        kLeftHandPositionYKey,
+        kDefaultLeftHandPositionYCentimeters,
+        IsHandPosition);
+    result.leftHandPositionZCentimeters = readSigned(
+        kLeftHandPositionZKey,
+        kDefaultLeftHandPositionZCentimeters,
+        IsHandPosition);
     const auto height = settings.values.find(
         std::string(kVrHeightAdjustmentKey));
     if (height != settings.values.end() &&
@@ -859,6 +1371,17 @@ void EncodeUserSettings(
         kInfantryTurnSpeedStepPercent;
     settings.values[std::string(kInfantryTurnSpeedKey)] =
         std::to_string(snappedTurnSpeed);
+    const std::uint32_t clampedVehicleMotionAimSensitivity = std::clamp(
+        values.vehicleMotionAimSensitivityPercent,
+        kMinimumVehicleMotionAimSensitivityPercent,
+        kMaximumVehicleMotionAimSensitivityPercent);
+    const std::uint32_t snappedVehicleMotionAimSensitivity =
+        ((clampedVehicleMotionAimSensitivity +
+          kVehicleMotionAimSensitivityStepPercent / 2U) /
+         kVehicleMotionAimSensitivityStepPercent) *
+        kVehicleMotionAimSensitivityStepPercent;
+    settings.values[std::string(kVehicleMotionAimSensitivityKey)] =
+        std::to_string(snappedVehicleMotionAimSensitivity);
     settings.values[std::string(kInvertFlightPitchKey)] =
         values.invertFlightPitch ? "true" : "false";
     settings.values[std::string(kAircraftPitchWithRollKey)] =
@@ -871,10 +1394,29 @@ void EncodeUserSettings(
         values.invertTurretYaw ? "true" : "false";
     settings.values[std::string(kControllerHapticsEnabledKey)] =
         values.controllerHapticsEnabled ? "true" : "false";
+    settings.values[std::string(kKillSoundEnabledKey)] =
+        values.killSoundEnabled ? "true" : "false";
     settings.values[std::string(kSniperScopeSmoothingEnabledKey)] =
         values.sniperScopeSmoothingEnabled ? "true" : "false";
+    settings.values[std::string(kMenuPointerSmoothingEnabledKey)] =
+        values.menuPointerSmoothingEnabled ? "true" : "false";
     settings.values[std::string(kComfortVignetteEnabledKey)] =
         values.comfortVignetteEnabled ? "true" : "false";
+    settings.values[std::string(kDeathCameraComfortEnabledKey)] =
+        values.deathCameraComfortEnabled ? "true" : "false";
+    settings.values[std::string(kKeepHudUprightKey)] =
+        values.keepHudUpright ? "true" : "false";
+    const char* firstPersonVisibility = "arms_and_hands";
+    if (values.firstPersonVisibility == FirstPersonVisibility::HandsOnly)
+    {
+        firstPersonVisibility = "hands_only";
+    }
+    else if (values.firstPersonVisibility ==
+             FirstPersonVisibility::NoHandsOrArms)
+    {
+        firstPersonVisibility = "no_hands_or_arms";
+    }
+    settings.values[std::string(kShowArmsKey)] = firstPersonVisibility;
     settings.values[std::string(kOffHandGripStyleKey)] =
         values.offHandGripStyle == OffHandGripStyle::Toggle
         ? "toggle"
@@ -892,6 +1434,24 @@ void EncodeUserSettings(
         encodeCrosshairMode(values.handWeaponCrosshair);
     settings.values[std::string(kMountedWeaponCrosshairKey)] =
         encodeCrosshairMode(values.mountedWeaponCrosshair);
+    settings.values[std::string(kPointerItemCrosshairKey)] =
+        encodeCrosshairMode(values.pointerItemCrosshair);
+    const auto encodeCrosshairColor = [](CrosshairColor color) {
+        switch (color)
+        {
+        case CrosshairColor::White: return "white";
+        case CrosshairColor::Blue: return "blue";
+        case CrosshairColor::Purple: return "purple";
+        case CrosshairColor::Red: return "red";
+        case CrosshairColor::Pink: return "pink";
+        case CrosshairColor::Orange: return "orange";
+        case CrosshairColor::Yellow: return "yellow";
+        case CrosshairColor::Green:
+        default: return "green";
+        }
+    };
+    settings.values[std::string(kCrosshairColorKey)] =
+        encodeCrosshairColor(values.crosshairColor);
     settings.values[std::string(kFxaaEnabledKey)] =
         values.fxaaEnabled ? "true" : "false";
     settings.values[std::string(kAmbientOcclusionEnabledKey)] =
@@ -924,11 +1484,36 @@ void EncodeUserSettings(
             kMinimumFxaaSharpeningPercent,
             kMaximumFxaaSharpeningPercent,
             kFxaaSharpeningStepPercent));
+    settings.values[std::string(kCrosshairOpacityKey)] =
+        std::to_string(snap(
+            values.crosshairOpacityPercent,
+            kMinimumCrosshairOpacityPercent,
+            kMaximumCrosshairOpacityPercent,
+            kCrosshairOpacityStepPercent));
     settings.values[std::string(kVrHeightAdjustmentKey)] =
         std::to_string(std::clamp(
             values.vrHeightAdjustmentCentimeters,
             kMinimumVrHeightAdjustmentCentimeters,
             kMaximumVrHeightAdjustmentCentimeters));
+    const auto encodeHandPosition = [&](std::string_view key,
+                                        std::int32_t value) {
+        settings.values[std::string(key)] = std::to_string(std::clamp(
+            value,
+            kMinimumHandPositionCentimeters,
+            kMaximumHandPositionCentimeters));
+    };
+    encodeHandPosition(
+        kRightHandPositionXKey, values.rightHandPositionXCentimeters);
+    encodeHandPosition(
+        kRightHandPositionYKey, values.rightHandPositionYCentimeters);
+    encodeHandPosition(
+        kRightHandPositionZKey, values.rightHandPositionZCentimeters);
+    encodeHandPosition(
+        kLeftHandPositionXKey, values.leftHandPositionXCentimeters);
+    encodeHandPosition(
+        kLeftHandPositionYKey, values.leftHandPositionYCentimeters);
+    encodeHandPosition(
+        kLeftHandPositionZKey, values.leftHandPositionZCentimeters);
     settings.values[std::string(kStandingEyeHeightKey)] =
         std::to_string(std::clamp(
             values.standingEyeHeightCentimeters,
@@ -958,6 +1543,32 @@ void EncodeUserSettings(
             kMinimumBloomIntensityPercent,
             kMaximumBloomIntensityPercent,
             kBloomIntensityStepPercent));
+    const auto encodeColorProfile = [](ColorProfile profile) {
+        switch (profile)
+        {
+        case ColorProfile::Filmic: return "filmic";
+        case ColorProfile::Vibrant: return "vibrant";
+        case ColorProfile::Original:
+        default: return "original";
+        }
+    };
+    settings.values[std::string(kColorProfileKey)] =
+        encodeColorProfile(values.colorProfile);
+    settings.values[std::string(kColorExposureKey)] = EncodeFixedTenths(
+        std::clamp(
+            values.colorExposureTenthsEv,
+            kMinimumColorExposureTenthsEv,
+            kMaximumColorExposureTenthsEv));
+    settings.values[std::string(kColorContrastKey)] = std::to_string(
+        std::clamp(
+            values.colorContrastPercent,
+            kMinimumColorContrastPercent,
+            kMaximumColorContrastPercent));
+    settings.values[std::string(kColorSaturationKey)] = std::to_string(
+        std::clamp(
+            values.colorSaturationPercent,
+            kMinimumColorSaturationPercent,
+            kMaximumColorSaturationPercent));
 }
 
 bool UserSettingsRequireRestart(

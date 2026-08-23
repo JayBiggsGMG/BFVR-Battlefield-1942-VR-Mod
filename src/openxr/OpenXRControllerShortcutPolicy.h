@@ -5,7 +5,7 @@
 namespace bfvr
 {
 constexpr std::int64_t kControllerRecenterHoldNanoseconds =
-    2'500'000'000LL;
+    2'000'000'000LL;
 
 struct OpenXRControllerShortcutState
 {

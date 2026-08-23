@@ -13,6 +13,9 @@ constexpr std::uint32_t kTreeRendererDrawBillboardsReturn = 0x0064D84C;
 constexpr std::uint32_t kNewRendFontDrawReturn = 0x0065D140;
 constexpr std::uint32_t kTreeMeshDrawBlocksReturn = 0x0067C997;
 constexpr std::uint32_t kAnimatedMeshDrawMeshReturn = 0x005AF40F;
+constexpr std::uint32_t kPatchCellBlockDrawReturn = 0x0069922E;
+constexpr std::uint32_t kPatchTerrainVectorShadowCellDrawReturn = 0x00682E95;
+constexpr std::uint32_t kPatchTerrainLinkedShadowCellDrawReturn = 0x00683ADD;
 constexpr std::uint32_t kWaterSurfaceDrawReturn = 0x00654571;
 constexpr std::uint32_t kSpriteInfoDrawReturn = 0x0062E8BE;
 constexpr std::uint32_t kMenuQuadFlushReturn = 0x00664CF6;
@@ -151,6 +154,24 @@ D3D8SemanticDrawClass ClassifyBF1942Win32SemanticDraw(
         return D3D8SemanticDrawClass::AnimatedMeshSkinning;
     }
 
+    const bool knownProjectedTerrainShadowProducer =
+        signature.producerReturnAddress ==
+            kPatchTerrainVectorShadowCellDrawReturn ||
+        signature.producerReturnAddress ==
+            kPatchTerrainLinkedShadowCellDrawReturn;
+    const bool projectedTerrainShadow =
+        signature.wrapperReturnAddress == kDrawIndexedPrimitiveWrapperReturn &&
+        signature.rendererReturnAddress == kPatchCellBlockDrawReturn &&
+        knownProjectedTerrainShadowProducer &&
+        signature.indexedPrimitive &&
+        signature.perspective &&
+        signature.primitiveType == kTriangleList &&
+        signature.primitiveCount != 0;
+    if (projectedTerrainShadow)
+    {
+        return D3D8SemanticDrawClass::ProjectedTerrainShadow;
+    }
+
     const bool waterSurface =
         signature.wrapperReturnAddress == kDrawIndexedPrimitiveWrapperReturn &&
         signature.rendererReturnAddress == kWaterSurfaceDrawReturn &&
@@ -250,9 +271,11 @@ bool IsBF1942FirstPersonArmDraw(
     D3D8SemanticDrawClass semanticClass,
     bool perspective,
     float projectionM00,
-    float projectionM11) noexcept
+    float projectionM11,
+    bool magnifiedWorldViewActive) noexcept
 {
     return
+        !magnifiedWorldViewActive &&
         semanticClass == D3D8SemanticDrawClass::AnimatedMeshSkinning &&
         perspective &&
         std::isfinite(projectionM00) &&

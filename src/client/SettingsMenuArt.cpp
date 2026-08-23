@@ -1,4 +1,6 @@
 #include "client/SettingsMenuArt.h"
+#include "BFVRVersion.h"
+#include "stereo/CrosshairColorPolicy.h"
 
 #include <wincodec.h>
 
@@ -331,6 +333,45 @@ bool SettingsMenuArt::Compose(
     return true;
 }
 
+bool SettingsMenuArt::ComposeVersionBanner(
+    std::vector<std::uint32_t>& pixels,
+    UINT& width,
+    UINT& height) const
+{
+    pixels.clear();
+    width = 0;
+    height = 0;
+    if (!IsReady())
+    {
+        return false;
+    }
+    Image result = {};
+    result.width = kVersionBannerWidth;
+    result.height = kVersionBannerHeight;
+    result.pixels.assign(
+        static_cast<std::size_t>(result.width) * result.height,
+        0U);
+    constexpr std::uint32_t versionTint =
+        stereo::CrosshairTintArgb(settings::CrosshairColor::Green);
+    if (!DrawTintedText(
+            result,
+            kVersionCredit,
+            16,
+            0,
+            static_cast<int>(kVersionBannerWidth - 32),
+            static_cast<int>(kVersionBannerHeight),
+            26,
+            DT_CENTER | DT_SINGLELINE | DT_VCENTER,
+            versionTint))
+    {
+        return false;
+    }
+    pixels = std::move(result.pixels);
+    width = result.width;
+    height = result.height;
+    return true;
+}
+
 bool SettingsMenuArt::IsReady() const noexcept
 {
     const auto valid = [](const Image& image) {
@@ -507,6 +548,29 @@ bool SettingsMenuArt::DrawWhiteText(
     int pixelHeight,
     UINT format) const
 {
+    return DrawTintedText(
+        destination,
+        text,
+        left,
+        top,
+        width,
+        height,
+        pixelHeight,
+        format,
+        0xFFFFFFFFU);
+}
+
+bool SettingsMenuArt::DrawTintedText(
+    Image& destination,
+    const wchar_t* text,
+    int left,
+    int top,
+    int width,
+    int height,
+    int pixelHeight,
+    UINT format,
+    std::uint32_t tintArgb) const
+{
     if (text == nullptr || text[0] == L'\0' || width <= 0 || height <= 0 ||
         pixelHeight <= 0)
     {
@@ -518,7 +582,7 @@ bool SettingsMenuArt::DrawWhiteText(
         [&](const TextCacheEntry& entry) {
             return entry.text == text && entry.width == width &&
                 entry.height == height && entry.pixelHeight == pixelHeight &&
-                entry.format == format;
+                entry.format == format && entry.tintArgb == tintArgb;
         });
     if (cached != textCache_.end())
     {
@@ -588,6 +652,10 @@ bool SettingsMenuArt::DrawWhiteText(
     textImage.pixels.resize(
         static_cast<std::size_t>(textImage.width) * textImage.height);
     const auto* sourcePixels = static_cast<const std::uint32_t*>(bitmapPixels);
+    const std::uint32_t tintBlue = tintArgb & 0xFFU;
+    const std::uint32_t tintGreen = (tintArgb >> 8U) & 0xFFU;
+    const std::uint32_t tintRed = (tintArgb >> 16U) & 0xFFU;
+    const std::uint32_t tintAlpha = (tintArgb >> 24U) & 0xFFU;
     for (std::size_t index = 0; index < textImage.pixels.size(); ++index)
     {
         const std::uint32_t source = sourcePixels[index];
@@ -595,11 +663,12 @@ bool SettingsMenuArt::DrawWhiteText(
             source & 0xFFU,
             (source >> 8U) & 0xFFU,
             (source >> 16U) & 0xFFU});
+        const std::uint32_t alpha = (coverage * tintAlpha + 127U) / 255U;
         textImage.pixels[index] = PackPixel(
-            coverage,
-            coverage,
-            coverage,
-            coverage);
+            (tintBlue * alpha + 127U) / 255U,
+            (tintGreen * alpha + 127U) / 255U,
+            (tintRed * alpha + 127U) / 255U,
+            alpha);
     }
     SelectObject(deviceContext, previousFont);
     SelectObject(deviceContext, previousBitmap);
@@ -616,6 +685,7 @@ bool SettingsMenuArt::DrawWhiteText(
     entry.height = height;
     entry.pixelHeight = pixelHeight;
     entry.format = format;
+    entry.tintArgb = tintArgb;
     entry.image = std::move(textImage);
     textCache_.push_back(std::move(entry));
     const Image& cachedImage = textCache_.back().image;
@@ -698,6 +768,12 @@ bool SettingsMenuArt::DrawStatusField(
     case stereo::SettingsMenuStatus::ForwardRecenterFailed:
         message = L"Recenter unavailable - tracking not ready";
         break;
+    case stereo::SettingsMenuStatus::HandPositionsReset:
+        message = L"Hand defaults restored - not saved";
+        break;
+    case stereo::SettingsMenuStatus::ColorSettingsReset:
+        message = L"Color settings reset - not saved";
+        break;
     case stereo::SettingsMenuStatus::SettingsLoaded:
     default:
         break;
@@ -764,6 +840,37 @@ bool SettingsMenuArt::ComposeSettingsBody(
                     centerY - 32, 128, 64, 25,
                     DT_CENTER | DT_SINGLELINE | DT_VCENTER);
         };
+        const auto drawToggleAt = [&](int centerY,
+                                      const wchar_t* label,
+                                      bool checked,
+                                      const wchar_t* description) {
+            return DrawWhiteText(destination, label, 82, centerY - 31,
+                       440, 62, 27,
+                       DT_LEFT | DT_SINGLELINE | DT_VCENTER) &&
+                CompositeLayerAt(checkBox_, destination, controlLeft,
+                    centerY - 32, 64, 64) &&
+                (!checked || CompositeLayerAt(whiteButton_, destination,
+                    controlLeft + 8, centerY - 24, 48, 48)) &&
+                DrawWhiteText(destination, checked ? L"ON" : L"OFF",
+                    controlLeft + 82, centerY - 31, 120, 62, 23,
+                    DT_LEFT | DT_SINGLELINE | DT_VCENTER) &&
+                DrawWhiteText(destination, description, 82, centerY + 35,
+                    860, 42, 18,
+                    DT_LEFT | DT_SINGLELINE | DT_VCENTER);
+        };
+        const auto firstPersonVisibilityName = [](
+                settings::FirstPersonVisibility visibility) {
+            switch (visibility)
+            {
+            case settings::FirstPersonVisibility::HandsOnly:
+                return L"HANDS ONLY";
+            case settings::FirstPersonVisibility::NoHandsOrArms:
+                return L"NO HANDS/ARMS";
+            case settings::FirstPersonVisibility::ArmsAndHands:
+            default:
+                return L"ARMS & HANDS";
+            }
+        };
         if (state.page == 0)
         {
             const wchar_t* playMode =
@@ -818,91 +925,133 @@ bool SettingsMenuArt::ComposeSettingsBody(
                 stereo::SettingsMenuSelection::MovementDirectionPrevious,
                 stereo::SettingsMenuSelection::MovementDirectionNext);
         }
-        const int comfortY = static_cast<int>(
-            stereo::kSettingsMenuVrPageTwoRowCentersPixels[0]);
-        const int heightY = static_cast<int>(
-            stereo::kSettingsMenuVrPageTwoRowCentersPixels[1]);
-        const float normalizedHeight = static_cast<float>(
-            state.values.vrHeightAdjustmentCentimeters -
-            settings::kMinimumVrHeightAdjustmentCentimeters) /
-            static_cast<float>(settings::kMaximumVrHeightAdjustmentCentimeters -
-                settings::kMinimumVrHeightAdjustmentCentimeters);
-        const std::wstring height =
-            (state.values.vrHeightAdjustmentCentimeters > 0 ? L"+" : L"") +
-            std::to_wstring(state.values.vrHeightAdjustmentCentimeters) + L" cm";
-        const auto drawAction = [&](int centerY,
-                                    const wchar_t* label,
-                                    stereo::SettingsMenuSelection selection) {
-            // NumberBox.png intentionally carries transparent padding on its
-            // right edge. Centre its visible 91/128-wide frame on the panel,
-            // then centre text inside that visible frame rather than inside
-            // the padded source rectangle.
-            return CompositeLayerAt(numberBox_, destination, 306, centerY - 42,
-                       580, 84) &&
-                DrawWhiteText(destination, label, 316, centerY - 42, 392, 84,
-                    state.hovered == selection ? 27 : 24,
-                    DT_CENTER | DT_SINGLELINE | DT_VCENTER);
-        };
-        const bool comfortDrawn = DrawWhiteText(
-                destination,
-                L"Comfort Vignette",
-                82,
-                comfortY - 31,
-                440,
-                62,
-                27,
-                DT_LEFT | DT_SINGLELINE | DT_VCENTER) &&
-            CompositeLayerAt(
-                checkBox_, destination, controlLeft, comfortY - 32, 64, 64) &&
-            (!state.values.comfortVignetteEnabled || CompositeLayerAt(
-                whiteButton_,
-                destination,
-                controlLeft + 8,
-                comfortY - 24,
-                48,
-                48)) &&
-            DrawWhiteText(
-                destination,
-                state.values.comfortVignetteEnabled ? L"ON" : L"OFF",
-                controlLeft + 82,
-                comfortY - 31,
-                120,
-                62,
-                23,
-                DT_LEFT | DT_SINGLELINE | DT_VCENTER) &&
-            DrawWhiteText(
-                destination,
-                L"Movement translation only; HUD and overlays stay clear.",
-                82,
-                comfortY + 33,
-                860,
-                38,
-                18,
-                DT_LEFT | DT_SINGLELINE | DT_VCENTER);
-        return comfortDrawn &&
-            drawSliderAt(heightY, L"Manual Height Adjustment",
-                   normalizedHeight, height) &&
-            DrawWhiteText(destination,
-                L"Infantry only; vehicles and mounted seats use independent neutral poses.",
-                82, heightY + 42, 860, 46, 18,
-                DT_LEFT | DT_SINGLELINE | DT_VCENTER) &&
-            drawAction(static_cast<int>(
-                    stereo::kSettingsMenuVrPageTwoRowCentersPixels[2]),
-                L"CALIBRATE STANDING",
-                stereo::SettingsMenuSelection::AutoCalibrateStandingHeight) &&
-            drawAction(static_cast<int>(
-                    stereo::kSettingsMenuVrPageTwoRowCentersPixels[3]),
-                L"RECENTER FORWARD",
-                stereo::SettingsMenuSelection::RecenterForward);
+        if (state.page == 1)
+        {
+            return drawToggleAt(
+                       static_cast<int>(
+                           stereo::kSettingsMenuVrPageTwoRowCentersPixels[0]),
+                       L"Comfort Vignette",
+                       state.values.comfortVignetteEnabled,
+                       L"Movement translation only; HUD and overlays stay clear.") &&
+                drawToggleAt(
+                    static_cast<int>(
+                        stereo::kSettingsMenuVrPageTwoRowCentersPixels[1]),
+                    L"Death Camera Comfort",
+                    state.values.deathCameraComfortEnabled,
+                    L"Uses a strong muted dark-red vignette during the death-camera flight.") &&
+                drawToggleAt(
+                    static_cast<int>(
+                        stereo::kSettingsMenuVrPageTwoRowCentersPixels[2]),
+                    L"Keep HUD Upright",
+                    state.values.keepHudUpright,
+                    L"Keeps the spawned-player HUD level when you tilt your head.") &&
+                drawSelectorAt(
+                    static_cast<int>(
+                        stereo::kSettingsMenuVrPageTwoRowCentersPixels[3]),
+                    L"Show",
+                    firstPersonVisibilityName(
+                        state.values.firstPersonVisibility),
+                    stereo::SettingsMenuSelection::ShowPrevious,
+                    stereo::SettingsMenuSelection::ShowNext) &&
+                drawToggleAt(
+                    static_cast<int>(
+                        stereo::kSettingsMenuVrPageTwoRowCentersPixels[4]),
+                    L"Menu Pointer Smoothing",
+                    state.values.menuPointerSmoothingEnabled,
+                    L"Stabilizes controller-pointer tremor in all Battlefield and BFVR menus.");
+        }
+        if (state.page == 2)
+        {
+            const int heightY = static_cast<int>(
+                stereo::kSettingsMenuVrPageThreeRowCentersPixels[0]);
+            const float normalizedHeight = static_cast<float>(
+                state.values.vrHeightAdjustmentCentimeters -
+                settings::kMinimumVrHeightAdjustmentCentimeters) /
+                static_cast<float>(
+                    settings::kMaximumVrHeightAdjustmentCentimeters -
+                    settings::kMinimumVrHeightAdjustmentCentimeters);
+            const std::wstring height =
+                (state.values.vrHeightAdjustmentCentimeters > 0 ? L"+" : L"") +
+                std::to_wstring(
+                    state.values.vrHeightAdjustmentCentimeters) + L" cm";
+            const auto drawAction = [&](int centerY,
+                                        const wchar_t* label,
+                                        stereo::SettingsMenuSelection selection) {
+                // NumberBox.png intentionally carries transparent padding on its
+                // right edge. Centre its visible 91/128-wide frame on the panel,
+                // then centre text inside that visible frame rather than inside
+                // the padded source rectangle.
+                return CompositeLayerAt(numberBox_, destination, 306,
+                           centerY - 42, 580, 84) &&
+                    DrawWhiteText(destination, label, 316, centerY - 42,
+                        392, 84, state.hovered == selection ? 27 : 24,
+                        DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+            };
+            return drawSliderAt(heightY, L"Manual Height Adjustment",
+                       normalizedHeight, height) &&
+                DrawWhiteText(destination,
+                    L"Infantry only; vehicles and mounted seats use independent neutral poses.",
+                    82, heightY + 42, 860, 46, 18,
+                    DT_LEFT | DT_SINGLELINE | DT_VCENTER) &&
+                drawAction(static_cast<int>(
+                        stereo::kSettingsMenuVrPageThreeRowCentersPixels[1]),
+                    L"CALIBRATE STANDING",
+                    stereo::SettingsMenuSelection::AutoCalibrateStandingHeight) &&
+                drawAction(static_cast<int>(
+                        stereo::kSettingsMenuVrPageThreeRowCentersPixels[2]),
+                    L"RECENTER FORWARD",
+                    stereo::SettingsMenuSelection::RecenterForward);
+        }
+        const wchar_t* labels[] = {
+            L"Right Hand: Left / Right",
+            L"Right Hand: Down / Up",
+            L"Right Hand: Back / Forward",
+            L"Left Hand: Left / Right",
+            L"Left Hand: Down / Up",
+            L"Left Hand: Back / Forward"};
+        const std::int32_t positions[] = {
+            state.values.rightHandPositionXCentimeters,
+            state.values.rightHandPositionYCentimeters,
+            state.values.rightHandPositionZCentimeters,
+            state.values.leftHandPositionXCentimeters,
+            state.values.leftHandPositionYCentimeters,
+            state.values.leftHandPositionZCentimeters};
+        bool drawn = true;
+        for (std::size_t index = 0;
+             drawn && index < stereo::kSettingsMenuVrPageFourRowCentersPixels.size();
+             ++index)
+        {
+            const float normalized = static_cast<float>(
+                positions[index] - settings::kMinimumHandPositionCentimeters) /
+                static_cast<float>(settings::kMaximumHandPositionCentimeters -
+                    settings::kMinimumHandPositionCentimeters);
+            const std::wstring display =
+                (positions[index] > 0 ? L"+" : L"") +
+                std::to_wstring(positions[index]) + L" cm";
+            drawn = drawSliderAt(
+                static_cast<int>(
+                    stereo::kSettingsMenuVrPageFourRowCentersPixels[index]),
+                labels[index], normalized, display);
+        }
+        const int resetY = static_cast<int>(
+            stereo::kSettingsMenuHandResetCenterPixels);
+        return drawn &&
+            CompositeLayerAt(numberBox_, destination, 306, resetY - 42,
+                580, 84) &&
+            DrawWhiteText(destination, L"RESET HANDS TO DEFAULTS", 316,
+                resetY - 42, 392, 84,
+                state.hovered ==
+                        stereo::SettingsMenuSelection::ResetHandPositions
+                    ? 27
+                    : 24,
+                DT_CENTER | DT_SINGLELINE | DT_VCENTER);
     }
     if (state.tab == stereo::SettingsMenuTab::GraphicsAudio)
     {
-        const auto drawToggle = [&](std::size_t row,
-                                    const wchar_t* label,
-                                    bool checked,
-                                    bool requiresRestart) {
-            const int centerY = static_cast<int>(
-                stereo::kSettingsMenuGraphicsRowCentersPixels[row]);
+        const auto drawToggleAt = [&](int centerY,
+                                      const wchar_t* label,
+                                      bool checked,
+                                      bool requiresRestart) {
             bool drawn = DrawWhiteText(
                     destination,
                     label,
@@ -933,6 +1082,17 @@ bool SettingsMenuArt::ComposeSettingsBody(
                 centerY - 24,
                 48,
                 48));
+        };
+        const auto drawToggle = [&](std::size_t row,
+                                    const wchar_t* label,
+                                    bool checked,
+                                    bool requiresRestart) {
+            return drawToggleAt(
+                static_cast<int>(
+                    stereo::kSettingsMenuGraphicsRowCentersPixels[row]),
+                label,
+                checked,
+                requiresRestart);
         };
         const auto drawSlider = [&](std::size_t row,
                                     const wchar_t* label,
@@ -982,6 +1142,135 @@ bool SettingsMenuArt::ComposeSettingsBody(
                     21,
                     DT_CENTER | DT_SINGLELINE | DT_VCENTER);
         };
+        if (state.page == 1)
+        {
+            const auto drawSelectorAt = [&](int centerY,
+                                            const wchar_t* label,
+                                            const wchar_t* value,
+                                            stereo::SettingsMenuSelection previous,
+                                            stereo::SettingsMenuSelection next) {
+                const int leftCenter = static_cast<int>(
+                    stereo::kSettingsMenuSelectorLeftArrowCenterPixels);
+                const int rightCenter = static_cast<int>(
+                    stereo::kSettingsMenuSelectorRightArrowCenterPixels);
+                return DrawWhiteText(destination, label, 82, centerY - 32,
+                           445, 64, 27,
+                           DT_LEFT | DT_SINGLELINE | DT_VCENTER) &&
+                    DrawWhiteText(destination, L"<", leftCenter - 38,
+                        centerY - 38, 76, 76,
+                        state.hovered == previous ? 38 : 30,
+                        DT_CENTER | DT_SINGLELINE | DT_VCENTER) &&
+                    DrawWhiteText(destination, value, leftCenter + 38,
+                        centerY - 32, rightCenter - leftCenter - 76, 64, 23,
+                        DT_CENTER | DT_SINGLELINE | DT_VCENTER) &&
+                    DrawWhiteText(destination, L">", rightCenter - 38,
+                        centerY - 38, 76, 76,
+                        state.hovered == next ? 38 : 30,
+                        DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+            };
+            const auto drawSignedSliderAt = [&](int centerY,
+                                                const wchar_t* label,
+                                                std::int32_t value,
+                                                std::int32_t minimum,
+                                                std::int32_t maximum,
+                                                const std::wstring& display) {
+                const float normalized = static_cast<float>(value - minimum) /
+                    static_cast<float>(maximum - minimum);
+                const int markerCenter = controlLeft + 12 +
+                    static_cast<int>(std::lround(
+                        std::clamp(normalized, 0.0F, 1.0F) * 232.0F));
+                return DrawWhiteText(destination, label, 82, centerY - 31,
+                           450, 62, 25,
+                           DT_LEFT | DT_SINGLELINE | DT_VCENTER) &&
+                    CompositeLayerAt(sliderBar_, destination, controlLeft,
+                        centerY - 32, 256, 64) &&
+                    CompositeLayerAt(numberBox_, destination,
+                        static_cast<int>(
+                            stereo::kSettingsMenuNumberBoxLeftPixels),
+                        centerY - 32, 128, 64) &&
+                    CompositeLayerAt(whiteButton_, destination,
+                        markerCenter - 24, centerY - 24, 48, 48) &&
+                    DrawWhiteText(destination, display.c_str(),
+                        static_cast<int>(
+                            stereo::kSettingsMenuNumberBoxLeftPixels),
+                        centerY - 32, 128, 64, 21,
+                        DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+            };
+            const auto profileName = [](settings::ColorProfile profile) {
+                switch (profile)
+                {
+                case settings::ColorProfile::Filmic: return L"FILMIC";
+                case settings::ColorProfile::Vibrant: return L"VIBRANT";
+                case settings::ColorProfile::Original:
+                default: return L"ORIGINAL";
+                }
+            };
+            const auto signedPercent = [](std::int32_t value) {
+                return (value > 0 ? L"+" : L"") + std::to_wstring(value) +
+                    L"%";
+            };
+            wchar_t exposure[16] = {};
+            const std::int32_t exposureMagnitude =
+                std::abs(state.values.colorExposureTenthsEv);
+            _snwprintf_s(
+                exposure,
+                std::size(exposure),
+                _TRUNCATE,
+                L"%s%d.%d EV",
+                state.values.colorExposureTenthsEv > 0
+                    ? L"+"
+                    : state.values.colorExposureTenthsEv < 0 ? L"-" : L"",
+                exposureMagnitude / 10,
+                exposureMagnitude % 10);
+            const int profileY = static_cast<int>(
+                stereo::kSettingsMenuColorRowCentersPixels[0]);
+            const int exposureY = static_cast<int>(
+                stereo::kSettingsMenuColorRowCentersPixels[1]);
+            const int contrastY = static_cast<int>(
+                stereo::kSettingsMenuColorRowCentersPixels[2]);
+            const int saturationY = static_cast<int>(
+                stereo::kSettingsMenuColorRowCentersPixels[3]);
+            const int resetY = static_cast<int>(
+                stereo::kSettingsMenuColorRowCentersPixels[4]);
+            return drawSelectorAt(
+                       profileY,
+                       L"Color Profile",
+                       profileName(state.values.colorProfile),
+                       stereo::SettingsMenuSelection::ColorProfilePrevious,
+                       stereo::SettingsMenuSelection::ColorProfileNext) &&
+                drawSignedSliderAt(exposureY, L"Exposure",
+                    state.values.colorExposureTenthsEv,
+                    settings::kMinimumColorExposureTenthsEv,
+                    settings::kMaximumColorExposureTenthsEv,
+                    exposure) &&
+                drawSignedSliderAt(contrastY, L"Contrast",
+                    state.values.colorContrastPercent,
+                    settings::kMinimumColorContrastPercent,
+                    settings::kMaximumColorContrastPercent,
+                    signedPercent(state.values.colorContrastPercent)) &&
+                drawSignedSliderAt(saturationY, L"Saturation",
+                    state.values.colorSaturationPercent,
+                    settings::kMinimumColorSaturationPercent,
+                    settings::kMaximumColorSaturationPercent,
+                    signedPercent(state.values.colorSaturationPercent)) &&
+                CompositeLayerAt(numberBox_, destination, 306, resetY - 42,
+                    580, 84) &&
+                DrawWhiteText(destination, L"RESET COLOR SETTINGS", 316,
+                    resetY - 42, 392, 84,
+                    state.hovered ==
+                            stereo::SettingsMenuSelection::ResetColorSettings
+                        ? 27
+                        : 24,
+                    DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+        }
+        if (state.page == 2)
+        {
+            return drawToggleAt(
+                static_cast<int>(stereo::kSettingsMenuAudioRowCenterPixels),
+                L"Kill Sound",
+                state.values.killSoundEnabled,
+                false);
+        }
         wchar_t aoRadius[32] = {};
         _snwprintf_s(
             aoRadius,
@@ -1077,13 +1366,11 @@ bool SettingsMenuArt::ComposeSettingsBody(
         default: return L"ON";
         }
     };
-    const auto drawSelector = [&](std::size_t row,
+    const auto drawSelector = [&](int centerY,
                                   const wchar_t* label,
                                   const wchar_t* value,
                                   stereo::SettingsMenuSelection previous,
                                   stereo::SettingsMenuSelection next) {
-        const int centerY = static_cast<int>(
-            stereo::kSettingsMenuControlsSelectorRowCentersPixels[row]);
         const int leftCenter = static_cast<int>(
             stereo::kSettingsMenuSelectorLeftArrowCenterPixels);
         const int rightCenter = static_cast<int>(
@@ -1125,42 +1412,120 @@ bool SettingsMenuArt::ComposeSettingsBody(
                 state.hovered == next ? 38 : 30,
                 DT_CENTER | DT_SINGLELINE | DT_VCENTER);
     };
+    const auto crosshairColorName = [](settings::CrosshairColor color) {
+        switch (color)
+        {
+        case settings::CrosshairColor::White: return L"WHITE";
+        case settings::CrosshairColor::Blue: return L"BLUE";
+        case settings::CrosshairColor::Purple: return L"PURPLE";
+        case settings::CrosshairColor::Red: return L"RED";
+        case settings::CrosshairColor::Pink: return L"PINK";
+        case settings::CrosshairColor::Orange: return L"ORANGE";
+        case settings::CrosshairColor::Yellow: return L"YELLOW";
+        case settings::CrosshairColor::Green:
+        default: return L"GREEN";
+        }
+    };
+    const auto drawSlider = [&](int centerY,
+                                const wchar_t* label,
+                                float normalized,
+                                const std::wstring& display) {
+        const int markerCenter = controlLeft + 12 +
+            static_cast<int>(std::lround(
+                std::clamp(normalized, 0.0F, 1.0F) * 232.0F));
+        return DrawWhiteText(destination, label, 82, centerY - 32, 445, 64,
+                   27, DT_LEFT | DT_SINGLELINE | DT_VCENTER) &&
+            CompositeLayerAt(sliderBar_, destination, controlLeft,
+                centerY - 32, 256, 64) &&
+            CompositeLayerAt(numberBox_, destination,
+                static_cast<int>(stereo::kSettingsMenuNumberBoxLeftPixels),
+                centerY - 32, 128, 64) &&
+            CompositeLayerAt(whiteButton_, destination, markerCenter - 24,
+                centerY - 24, 48, 48) &&
+            DrawWhiteText(destination, display.c_str(),
+                static_cast<int>(stereo::kSettingsMenuNumberBoxLeftPixels),
+                centerY - 32, 128, 64, 25,
+                DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+    };
+    if (state.page == 2)
+    {
+        const float normalized = static_cast<float>(
+            state.values.vehicleMotionAimSensitivityPercent -
+            settings::kMinimumVehicleMotionAimSensitivityPercent) /
+            static_cast<float>(
+                settings::kMaximumVehicleMotionAimSensitivityPercent -
+                settings::kMinimumVehicleMotionAimSensitivityPercent);
+        const int centerY = static_cast<int>(
+            stereo::kSettingsMenuControlsVehicleAimSliderCenterPixels);
+        return DrawWhiteText(destination, L"Vehicle / Mounted Aim:", 82, 145,
+                   620, 58, 29, DT_LEFT | DT_SINGLELINE | DT_VCENTER) &&
+            DrawWhiteText(destination,
+                L"Tank cannons, vehicle and naval turrets, AA, and mounted guns.",
+                82, 208, 860, 44, 19,
+                DT_LEFT | DT_SINGLELINE | DT_VCENTER) &&
+            drawSlider(centerY, L"Turret Motion Sensitivity", normalized,
+                std::to_wstring(
+                    state.values.vehicleMotionAimSensitivityPercent) + L"%") &&
+            DrawWhiteText(destination,
+                L"Changes right-controller motion only; the right stick and each weapon's native traverse limits are unchanged.",
+                82, 485, 860, 68, 18,
+                DT_LEFT | DT_WORDBREAK | DT_VCENTER);
+    }
+    if (state.page == 1)
+    {
+        return DrawWhiteText(destination, L"3D HUD Crosshairs:", 82, 120,
+                   520, 52, 27, DT_LEFT | DT_SINGLELINE | DT_VCENTER) &&
+            drawSelector(
+                static_cast<int>(
+                    stereo::kSettingsMenuControlsCrosshairRowCentersPixels[0]),
+                L"Hand Weapons",
+                crosshairModeName(state.values.handWeaponCrosshair),
+                stereo::SettingsMenuSelection::HandCrosshairPrevious,
+                stereo::SettingsMenuSelection::HandCrosshairNext) &&
+            drawSelector(
+                static_cast<int>(
+                    stereo::kSettingsMenuControlsCrosshairRowCentersPixels[1]),
+                L"Mounted Guns",
+                crosshairModeName(state.values.mountedWeaponCrosshair),
+                stereo::SettingsMenuSelection::MountedCrosshairPrevious,
+                stereo::SettingsMenuSelection::MountedCrosshairNext) &&
+            drawSelector(
+                static_cast<int>(
+                    stereo::kSettingsMenuControlsCrosshairRowCentersPixels[2]),
+                L"Knives / Throwables / Gadgets",
+                crosshairModeName(state.values.pointerItemCrosshair),
+                stereo::SettingsMenuSelection::PointerItemCrosshairPrevious,
+                stereo::SettingsMenuSelection::PointerItemCrosshairNext) &&
+            drawSelector(
+                static_cast<int>(
+                    stereo::kSettingsMenuControlsCrosshairColorRowCenterPixels),
+                L"Color",
+                crosshairColorName(state.values.crosshairColor),
+                stereo::SettingsMenuSelection::CrosshairColorPrevious,
+                stereo::SettingsMenuSelection::CrosshairColorNext) &&
+            drawSlider(
+                static_cast<int>(
+                    stereo::kSettingsMenuControlsCrosshairOpacityRowCenterPixels),
+                L"Opacity",
+                static_cast<float>(state.values.crosshairOpacityPercent -
+                    settings::kMinimumCrosshairOpacityPercent) /
+                    static_cast<float>(
+                        settings::kMaximumCrosshairOpacityPercent -
+                        settings::kMinimumCrosshairOpacityPercent),
+                std::to_wstring(state.values.crosshairOpacityPercent) + L"%") &&
+            DrawWhiteText(destination,
+                L"All settings apply to the stereo aiming crosshair and confirmed-hit marker; opacity never reaches zero.",
+                82, 785, 860, 42, 18,
+                DT_LEFT | DT_SINGLELINE | DT_VCENTER);
+    }
     if (!drawSelector(
-            0,
+            static_cast<int>(stereo::kSettingsMenuControlsGripRowCenterPixels),
             L"Off-hand Grip Style",
             gripStyleName(state.values.offHandGripStyle),
             stereo::SettingsMenuSelection::OffHandGripPrevious,
             stereo::SettingsMenuSelection::OffHandGripNext) ||
-        !DrawWhiteText(
-            destination,
-            L"3D HUD Crosshairs:",
-            82,
-            245,
-            460,
-            52,
-            27,
-            DT_LEFT | DT_SINGLELINE | DT_VCENTER) ||
-        !drawSelector(
-            1,
-            L"Hand Weapons",
-            crosshairModeName(state.values.handWeaponCrosshair),
-            stereo::SettingsMenuSelection::HandCrosshairPrevious,
-            stereo::SettingsMenuSelection::HandCrosshairNext) ||
-        !drawSelector(
-            2,
-            L"Mounted Guns",
-            crosshairModeName(state.values.mountedWeaponCrosshair),
-            stereo::SettingsMenuSelection::MountedCrosshairPrevious,
-            stereo::SettingsMenuSelection::MountedCrosshairNext) ||
-        !DrawWhiteText(
-            destination,
-            L"Aircraft, Aim & Feedback:",
-            82,
-            452,
-            460,
-            52,
-            27,
-            DT_LEFT | DT_SINGLELINE | DT_VCENTER))
+        !DrawWhiteText(destination, L"Aircraft, Aim & Feedback:", 82, 240,
+            460, 52, 27, DT_LEFT | DT_SINGLELINE | DT_VCENTER))
     {
         return false;
     }

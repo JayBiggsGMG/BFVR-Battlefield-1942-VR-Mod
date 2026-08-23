@@ -34,6 +34,12 @@ FindBF1942FrameLimiterOwnerPointer(
     const std::uint8_t* bytes,
     std::size_t byteCount) noexcept;
 
+// Resolves that same owner-pointer operand from committed executable sections
+// in the live BF1942 image. Other guarded process-local settings may reuse it.
+[[nodiscard]] BF1942FrameLimiterSignatureResult
+FindBF1942FrameLimiterOwnerPointerInExecutableImage(
+    HMODULE executableModule) noexcept;
+
 enum class BF1942FrameLimiterOverrideStatus
 {
     NotRequested,

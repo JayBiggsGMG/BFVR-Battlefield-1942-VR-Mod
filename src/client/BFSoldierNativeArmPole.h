@@ -1,5 +1,7 @@
 #pragma once
 
+#include "stereo/ArmVrPoseMath.h"
+
 #include <cstdint>
 
 namespace bfvr
@@ -19,7 +21,10 @@ public:
         std::int32_t rightHandleIndex,
         std::int32_t leftHandBone,
         std::int32_t leftHandleIndex,
-        std::int32_t activeItemIndex) noexcept;
+        std::int32_t activeItemIndex,
+        std::int32_t controllerGeneration,
+        const stereo::ArmVrShoulderAnchors* shoulderAnchors) noexcept;
+    void EnableVrSolve(bool rightArm, bool leftArm) noexcept;
     void CaptureSolvedEndpoints(
         const void* rightBoneRecord,
         const void* leftBoneRecord) noexcept;
@@ -55,6 +60,10 @@ private:
     std::int32_t priorActiveItemIndex_ = -1;
     float previousRightPole_[3] = {};
     float previousLeftPole_[3] = {};
+    std::int32_t cachedRightGeneration_ = 0;
+    std::int32_t cachedLeftGeneration_ = 0;
+    bool cachedRightVrAnchor_ = false;
+    bool cachedLeftVrAnchor_ = false;
     volatile long callbackEntrants_ = 0;
     volatile long appliedRight_ = 0;
     volatile long appliedLeft_ = 0;

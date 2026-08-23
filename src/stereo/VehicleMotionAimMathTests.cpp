@@ -36,8 +36,8 @@ bool TestMirroredPivotDirectionsAndNoDuplicateSample()
     return reference.trackingAccepted && reference.sampleAdvanced &&
         NearlyEqual(reference.mouseLookX, 0.0F) &&
         NearlyEqual(reference.mouseLookY, 0.0F) &&
-        NearlyEqual(moved.mouseLookX, 0.24F) &&
-        NearlyEqual(moved.mouseLookY, -0.35F) &&
+        NearlyEqual(moved.mouseLookX, 0.48F) &&
+        NearlyEqual(moved.mouseLookY, -0.70F) &&
         duplicate.trackingAccepted && !duplicate.sampleAdvanced &&
         NearlyEqual(duplicate.mouseLookX, 0.0F) &&
         NearlyEqual(duplicate.mouseLookY, 0.0F);
@@ -66,8 +66,8 @@ bool TestOppositeMovementAndJitterDeadzone()
         300);
     return NearlyEqual(jitter.mouseLookX, 0.0F) &&
         NearlyEqual(jitter.mouseLookY, 0.0F) &&
-        NearlyEqual(rightAndUp.mouseLookX, -0.24F) &&
-        NearlyEqual(rightAndUp.mouseLookY, 0.24F);
+        NearlyEqual(rightAndUp.mouseLookX, -0.48F) &&
+        NearlyEqual(rightAndUp.mouseLookY, 0.48F);
 }
 
 bool TestSlowMovementAccumulatesAcrossDeadzone()
@@ -99,7 +99,7 @@ bool TestSlowMovementAccumulatesAcrossDeadzone()
         400);
     return NearlyEqual(first.mouseLookX, 0.0F) &&
         NearlyEqual(second.mouseLookX, 0.0F) &&
-        NearlyEqual(third.mouseLookX, 0.0288F);
+        NearlyEqual(third.mouseLookX, 0.0576F);
 }
 
 bool TestTrackingLossAndModePauseRebaseline()
@@ -168,7 +168,7 @@ bool TestTrackingJumpBecomesZeroInputReference()
     return jump.trackingAccepted && jump.sampleAdvanced &&
         NearlyEqual(jump.mouseLookX, 0.0F) &&
         NearlyEqual(jump.mouseLookY, 0.0F) &&
-        NearlyEqual(afterJump.mouseLookX, 0.24F) &&
+        NearlyEqual(afterJump.mouseLookX, 0.48F) &&
         NearlyEqual(afterJump.mouseLookY, 0.0F);
 }
 
@@ -187,6 +187,32 @@ bool TestLiveCalibratedStickAndMotionSigns()
         NearlyEqual(inverted.stickPitch, -1.0F) &&
         NearlyEqual(inverted.motionPitch, -1.0F);
 }
+
+bool TestOnlyArmedSurfaceSeatsEnableControllerMotion()
+{
+    using bfvr::stereo::ShouldEnableVehicleMotionAim;
+    using bfvr::stereo::VehicleMotionAimWeaponStatus;
+    return ShouldEnableVehicleMotionAim(
+               true,
+               VehicleMotionAimWeaponStatus::Armed,
+               false) &&
+        !ShouldEnableVehicleMotionAim(
+            true,
+            VehicleMotionAimWeaponStatus::Unarmed,
+            false) &&
+        !ShouldEnableVehicleMotionAim(
+            true,
+            VehicleMotionAimWeaponStatus::Unknown,
+            false) &&
+        !ShouldEnableVehicleMotionAim(
+            true,
+            VehicleMotionAimWeaponStatus::Armed,
+            true) &&
+        !ShouldEnableVehicleMotionAim(
+            false,
+            VehicleMotionAimWeaponStatus::Armed,
+            false);
+}
 } // namespace
 
 int main()
@@ -197,7 +223,8 @@ int main()
         TestSlowMovementAccumulatesAcrossDeadzone() &&
         TestTrackingLossAndModePauseRebaseline() &&
         TestTrackingJumpBecomesZeroInputReference() &&
-        TestLiveCalibratedStickAndMotionSigns();
+        TestLiveCalibratedStickAndMotionSigns() &&
+        TestOnlyArmedSurfaceSeatsEnableControllerMotion();
     if (!passed)
     {
         std::fprintf(stderr, "Vehicle motion-aim math tests failed.\n");

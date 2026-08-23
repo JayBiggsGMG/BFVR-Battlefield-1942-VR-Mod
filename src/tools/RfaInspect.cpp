@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <filesystem>
@@ -560,17 +561,136 @@ bool PrintWaveSignature(const std::vector<std::uint8_t>& contents)
     return true;
 }
 
+bool PrintDdsSignature(const std::vector<std::uint8_t>& contents)
+{
+    if (contents.size() < 128 ||
+        std::string_view(
+            reinterpret_cast<const char*>(contents.data()),
+            4) != "DDS " ||
+        ReadU32(contents.data() + 4) != 124U)
+    {
+        return false;
+    }
+
+    const std::uint32_t height = ReadU32(contents.data() + 12);
+    const std::uint32_t width = ReadU32(contents.data() + 16);
+    const std::uint32_t mipCount = (std::max)(
+        ReadU32(contents.data() + 28),
+        1U);
+    const std::uint32_t pixelFlags = ReadU32(contents.data() + 80);
+    const std::uint32_t fourCc = ReadU32(contents.data() + 84);
+    const std::uint32_t bitsPerPixel = ReadU32(contents.data() + 88);
+    const std::uint32_t redMask = ReadU32(contents.data() + 92);
+    const std::uint32_t greenMask = ReadU32(contents.data() + 96);
+    const std::uint32_t blueMask = ReadU32(contents.data() + 100);
+    const std::uint32_t alphaMask = ReadU32(contents.data() + 104);
+    const char fourCcText[5] = {
+        static_cast<char>(fourCc & 0xFFU),
+        static_cast<char>((fourCc >> 8U) & 0xFFU),
+        static_cast<char>((fourCc >> 16U) & 0xFFU),
+        static_cast<char>((fourCc >> 24U) & 0xFFU),
+        '\0'};
+
+    std::printf(
+        "dds width=%lu height=%lu mips=%lu pixelFlags=0x%08lX fourCC=%s bpp=%lu masks=%08lX/%08lX/%08lX/%08lX bytes=%llu\n",
+        static_cast<unsigned long>(width),
+        static_cast<unsigned long>(height),
+        static_cast<unsigned long>(mipCount),
+        static_cast<unsigned long>(pixelFlags),
+        fourCcText,
+        static_cast<unsigned long>(bitsPerPixel),
+        static_cast<unsigned long>(redMask),
+        static_cast<unsigned long>(greenMask),
+        static_cast<unsigned long>(blueMask),
+        static_cast<unsigned long>(alphaMask),
+        static_cast<unsigned long long>(contents.size()));
+
+    if (fourCc == 0U && bitsPerPixel == 16U &&
+        redMask != 0U && greenMask != 0U && blueMask != 0U)
+    {
+        const auto decodeChannel = [](std::uint16_t pixel, std::uint32_t mask)
+        {
+            unsigned int shift = 0;
+            while (((mask >> shift) & 1U) == 0U)
+            {
+                ++shift;
+            }
+            const std::uint32_t maximum = mask >> shift;
+            return static_cast<double>((pixel & mask) >> shift) /
+                static_cast<double>(maximum);
+        };
+        std::size_t offset = 128;
+        std::uint32_t mipWidth = width;
+        std::uint32_t mipHeight = height;
+        for (std::uint32_t mip = 0; mip < mipCount; ++mip)
+        {
+            const std::size_t pixelCount =
+                static_cast<std::size_t>(mipWidth) * mipHeight;
+            const std::size_t byteCount = pixelCount * 2U;
+            if (byteCount > contents.size() - offset)
+            {
+                return false;
+            }
+            double sums[3] = {};
+            double squareSums[3] = {};
+            for (std::size_t pixelIndex = 0;
+                 pixelIndex < pixelCount;
+                 ++pixelIndex)
+            {
+                const std::uint16_t pixel = static_cast<std::uint16_t>(
+                    contents[offset + pixelIndex * 2U] |
+                    (contents[offset + pixelIndex * 2U + 1U] << 8U));
+                const double channels[3] = {
+                    decodeChannel(pixel, redMask),
+                    decodeChannel(pixel, greenMask),
+                    decodeChannel(pixel, blueMask)};
+                for (std::size_t channel = 0; channel < 3; ++channel)
+                {
+                    sums[channel] += channels[channel];
+                    squareSums[channel] += channels[channel] * channels[channel];
+                }
+            }
+            std::printf(
+                "mip=%lu size=%lux%lu mean=%.6f/%.6f/%.6f sd=%.6f/%.6f/%.6f\n",
+                static_cast<unsigned long>(mip),
+                static_cast<unsigned long>(mipWidth),
+                static_cast<unsigned long>(mipHeight),
+                sums[0] / pixelCount,
+                sums[1] / pixelCount,
+                sums[2] / pixelCount,
+                std::sqrt((std::max)(
+                    squareSums[0] / pixelCount -
+                        (sums[0] / pixelCount) * (sums[0] / pixelCount),
+                    0.0)),
+                std::sqrt((std::max)(
+                    squareSums[1] / pixelCount -
+                        (sums[1] / pixelCount) * (sums[1] / pixelCount),
+                    0.0)),
+                std::sqrt((std::max)(
+                    squareSums[2] / pixelCount -
+                        (sums[2] / pixelCount) * (sums[2] / pixelCount),
+                    0.0)));
+            offset += byteCount;
+            mipWidth = (std::max)(mipWidth / 2U, 1U);
+            mipHeight = (std::max)(mipHeight / 2U, 1U);
+        }
+    }
+    return width != 0 && height != 0;
+}
+
 } // namespace
 
 int wmain(int argumentCount, wchar_t** arguments)
 {
     const bool printWaveSignature = argumentCount == 4 &&
         std::wstring_view(arguments[3]) == L"--wave-signature";
-    if (argumentCount != 3 && !printWaveSignature)
+    const bool printDdsSignature = argumentCount == 4 &&
+        std::wstring_view(arguments[3]) == L"--dds-signature";
+    if (argumentCount != 3 && !printWaveSignature && !printDdsSignature)
     {
         std::fwprintf(
             stderr,
-            L"Usage: BFVRRfaInspect <archive.rfa> <entry/path> [--wave-signature]\n");
+            L"Usage: BFVRRfaInspect <archive.rfa> <entry/path> [--wave-signature|--dds-signature]\n");
         return 2;
     }
     std::ifstream archive(
@@ -608,6 +728,18 @@ int wmain(int argumentCount, wchar_t** arguments)
             std::fwprintf(
                 stderr,
                 L"Entry is not a supported PCM WAVE file: %ls\n",
+                arguments[2]);
+            return 1;
+        }
+        return 0;
+    }
+    if (printDdsSignature)
+    {
+        if (!PrintDdsSignature(contents))
+        {
+            std::fwprintf(
+                stderr,
+                L"Entry is not a supported DDS file: %ls\n",
                 arguments[2]);
             return 1;
         }

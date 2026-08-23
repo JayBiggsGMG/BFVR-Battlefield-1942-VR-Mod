@@ -1,6 +1,6 @@
 #pragma once
 
-#include "stereo/StereoMath.h"
+#include "stereo/VehicleMotionAimMath.h"
 
 namespace bfvr
 {
@@ -30,6 +30,14 @@ struct LocalInfantryBodyPose
     stereo::Matrix4 world = {};
 };
 
+struct LocalInfantryPresentationContext
+{
+    const void* soldier = nullptr;
+    float bodyYawRadians = 0.0F;
+    bool bodyYawValid = false;
+    bool parachuteOverride = false;
+};
+
 // Resolves the occupied PlayerControlObject's first native weapon and samples
 // the same nominal FireArms transformation selected by the firing path.
 [[nodiscard]] bool InitializeMountedWeaponAimResolver(
@@ -40,6 +48,14 @@ void ShutdownMountedWeaponAimResolver() noexcept;
 [[nodiscard]] bool ReadMountedWeaponFirePose(
     void* currentControlObject,
     stereo::Matrix4& firePose) noexcept;
+
+// Queries the same per-PlayerControlObject weapon vector used by BF1942's
+// native vehicle HUD. Only a valid non-empty vector proves an armed station;
+// malformed, unreadable, or unavailable state remains Unknown so controller
+// motion can fail closed without disabling independent stick mouse-look.
+[[nodiscard]] stereo::VehicleMotionAimWeaponStatus
+ReadOccupiedVehicleWeaponStatus(
+    const void* currentControlObject) noexcept;
 
 // Reads the live local player's occupied non-soldier control object, proves
 // that its primary FireArms transform is currently available, and samples the
@@ -70,5 +86,14 @@ void ShutdownMountedWeaponAimResolver() noexcept;
 // path, but returns only its normalized horizontal heading. This is distinct
 // from BF1942's faster first-person look/aim heading.
 [[nodiscard]] bool ReadLocalInfantryBodyYaw(float& yawRadians) noexcept;
+
+// Resolves the ordinary local infantry lifetime plus the one native state in
+// which BF1942 can temporarily expose another current control object while
+// the camera still belongs to the parachuting default soldier. This is a
+// read-only presentation query and never changes the soldier or control
+// object. A valid context can carry an unavailable body yaw for one frame.
+[[nodiscard]] bool ReadLocalInfantryPresentationContext(
+    const void* cameraSoldier,
+    LocalInfantryPresentationContext& presentationContext) noexcept;
 
 } // namespace bfvr

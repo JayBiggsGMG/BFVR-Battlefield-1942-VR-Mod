@@ -53,6 +53,7 @@ public:
 
     std::size_t AppendLayers(
         float targetStrength,
+        float targetDeathBlend,
         float deltaSeconds,
         XrSpace viewSpace,
         const XrPosef& headInLocalSpace,
@@ -75,7 +76,7 @@ private:
 
     bool CreateSwapchain();
     bool CreateShaders();
-    bool Render(float strength);
+    bool Render(float strength, float deathBlend);
     void DestroySwapchain() noexcept;
     void WriteLog(const wchar_t* format, ...) const;
 
@@ -92,7 +93,9 @@ private:
     OpenXRLogCallback logCallback_ = nullptr;
     void* logContext_ = nullptr;
     float currentStrength_ = 0.0F;
+    float currentDeathBlend_ = 0.0F;
     bool firstVisibleFrameLogged_ = false;
+    bool firstDeathFrameLogged_ = false;
 };
 
 } // namespace bfvr

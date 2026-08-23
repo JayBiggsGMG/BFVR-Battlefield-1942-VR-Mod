@@ -71,6 +71,27 @@ constexpr std::array kViveWandBindings = {
     Binding{Action::Haptic, Hand::Right, "/output/haptic"},
 };
 
+constexpr std::array kMicrosoftMotionControllerBindings = {
+    Binding{Action::AimPose, Hand::Left, "/input/aim/pose"},
+    Binding{Action::GripPose, Hand::Left, "/input/grip/pose"},
+    Binding{Action::Trigger, Hand::Left, "/input/trigger/value"},
+    Binding{Action::Squeeze, Hand::Left, "/input/squeeze/click"},
+    Binding{Action::MovementTurnAxis, Hand::Left, "/input/thumbstick"},
+    Binding{Action::AxisClick, Hand::Left, "/input/thumbstick/click"},
+    Binding{Action::PrimaryFace, Hand::Left, "/input/trackpad/click"},
+    Binding{Action::Menu, Hand::Left, "/input/menu/click"},
+    Binding{Action::Haptic, Hand::Left, "/output/haptic"},
+    Binding{Action::AimPose, Hand::Right, "/input/aim/pose"},
+    Binding{Action::GripPose, Hand::Right, "/input/grip/pose"},
+    Binding{Action::Trigger, Hand::Right, "/input/trigger/value"},
+    Binding{Action::Squeeze, Hand::Right, "/input/squeeze/click"},
+    Binding{Action::MovementTurnAxis, Hand::Right, "/input/thumbstick"},
+    Binding{Action::AxisClick, Hand::Right, "/input/thumbstick/click"},
+    Binding{Action::PrimaryFace, Hand::Right, "/input/trackpad/click"},
+    Binding{Action::SecondaryFace, Hand::Right, "/input/menu/click"},
+    Binding{Action::Haptic, Hand::Right, "/output/haptic"},
+};
+
 constexpr std::array kSimpleBindings = {
     Binding{Action::AimPose, Hand::Left, "/input/aim/pose"},
     Binding{Action::PrimaryFace, Hand::Left, "/input/select/click"},
@@ -90,6 +111,9 @@ const std::array kProfiles = {
     Profile{
         "/interaction_profiles/htc/vive_controller",
         kViveWandBindings},
+    Profile{
+        "/interaction_profiles/microsoft/motion_controller",
+        kMicrosoftMotionControllerBindings},
     Profile{
         "/interaction_profiles/khr/simple_controller",
         kSimpleBindings},

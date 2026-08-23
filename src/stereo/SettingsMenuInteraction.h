@@ -3,6 +3,7 @@
 #include "settings/UserSettings.h"
 #include "stereo/QuickMenuInteraction.h"
 #include "stereo/UiPointerMath.h"
+#include "stereo/UiPointerSmoothing.h"
 
 #include <array>
 #include <cstddef>
@@ -41,15 +42,32 @@ enum class SettingsMenuSelection : std::uint32_t
     MovementDirectionNext,
     InfantryTurnSpeed,
     VrHeightAdjustment,
+    RightHandPositionX,
+    RightHandPositionY,
+    RightHandPositionZ,
+    LeftHandPositionX,
+    LeftHandPositionY,
+    LeftHandPositionZ,
+    ResetHandPositions,
     AutoCalibrateStandingHeight,
     RecenterForward,
     ComfortVignetteEnabled,
+    ShowPrevious,
+    ShowNext,
+    DeathCameraComfortEnabled,
+    KeepHudUpright,
+    MenuPointerSmoothingEnabled,
+    CrosshairColorPrevious,
+    CrosshairColorNext,
+    CrosshairOpacity,
     OffHandGripPrevious,
     OffHandGripNext,
     HandCrosshairPrevious,
     HandCrosshairNext,
     MountedCrosshairPrevious,
     MountedCrosshairNext,
+    PointerItemCrosshairPrevious,
+    PointerItemCrosshairNext,
     InvertFlightPitch,
     AircraftPitchWithRoll,
     SwapAircraftSticks,
@@ -57,6 +75,7 @@ enum class SettingsMenuSelection : std::uint32_t
     InvertTurretYaw,
     ControllerHapticsEnabled,
     SniperScopeSmoothingEnabled,
+    VehicleMotionAimSensitivity,
     FxaaEnabled,
     FxaaSharpening,
     AmbientOcclusionEnabled,
@@ -65,7 +84,14 @@ enum class SettingsMenuSelection : std::uint32_t
     BloomEnabled,
     BloomThreshold,
     BloomIntensity,
-    WaterReflectionsEnabled
+    WaterReflectionsEnabled,
+    ColorProfilePrevious,
+    ColorProfileNext,
+    ColorExposure,
+    ColorContrast,
+    ColorSaturation,
+    ResetColorSettings,
+    KillSoundEnabled
 };
 
 enum class SettingsMenuCommand : std::uint32_t
@@ -92,7 +118,9 @@ enum class SettingsMenuStatus : std::uint32_t
     StandingHeightUnavailable,
     StandingModeRequired,
     ForwardRecentered,
-    ForwardRecenterFailed
+    ForwardRecenterFailed,
+    HandPositionsReset,
+    ColorSettingsReset
 };
 
 constexpr std::uint32_t kSettingsMenuTextureSize = 1024;
@@ -112,20 +140,33 @@ constexpr float kSettingsMenuSliderRightPixels = 816.0F;
 constexpr float kSettingsMenuNumberBoxLeftPixels = 832.0F;
 constexpr std::array<float, 4> kSettingsMenuVrPageOneRowCentersPixels = {
     165.0F, 315.0F, 465.0F, 650.0F};
-constexpr std::array<float, 4> kSettingsMenuVrPageTwoRowCentersPixels = {
-    135.0F, 300.0F, 515.0F, 700.0F};
-constexpr std::array<float, 3> kSettingsMenuControlsSelectorRowCentersPixels = {
-    165.0F, 330.0F, 420.0F};
+constexpr std::array<float, 5> kSettingsMenuVrPageTwoRowCentersPixels = {
+    120.0F, 255.0F, 390.0F, 535.0F, 700.0F};
+constexpr std::array<float, 3> kSettingsMenuVrPageThreeRowCentersPixels = {
+    180.0F, 370.0F, 610.0F};
+constexpr std::array<float, 6> kSettingsMenuVrPageFourRowCentersPixels = {
+    125.0F, 230.0F, 335.0F, 440.0F, 545.0F, 650.0F};
+constexpr float kSettingsMenuHandResetCenterPixels = 770.0F;
+constexpr float kSettingsMenuControlsGripRowCenterPixels = 150.0F;
+constexpr std::array<float, 3>
+    kSettingsMenuControlsCrosshairRowCentersPixels = {
+        205.0F, 335.0F, 465.0F};
+constexpr float kSettingsMenuControlsCrosshairColorRowCenterPixels = 595.0F;
+constexpr float kSettingsMenuControlsCrosshairOpacityRowCenterPixels = 725.0F;
+constexpr float kSettingsMenuControlsVehicleAimSliderCenterPixels = 390.0F;
 constexpr std::array<float, 7> kSettingsMenuControlsToggleRowCentersPixels = {
-    520.0F, 573.0F, 626.0F, 679.0F, 732.0F, 785.0F, 838.0F};
+    335.0F, 410.0F, 485.0F, 560.0F, 635.0F, 710.0F, 785.0F};
 constexpr float kSettingsMenuSelectorLeftArrowCenterPixels = 585.0F;
 constexpr float kSettingsMenuSelectorRightArrowCenterPixels = 910.0F;
 constexpr std::array<float, 9> kSettingsMenuGraphicsRowCentersPixels = {
     125.0F, 210.0F, 295.0F, 380.0F,
     465.0F, 550.0F, 635.0F, 720.0F, 805.0F};
+constexpr std::array<float, 5> kSettingsMenuColorRowCentersPixels = {
+    160.0F, 315.0F, 470.0F, 625.0F, 795.0F};
+constexpr float kSettingsMenuAudioRowCenterPixels = 310.0F;
 constexpr std::array<std::uint32_t,
     static_cast<std::size_t>(SettingsMenuTab::Count)>
-    kSettingsMenuPageCounts = {2, 1, 1};
+    kSettingsMenuPageCounts = {4, 3, 3};
 
 struct SettingsMenuSnapshot
 {
@@ -165,21 +206,31 @@ public:
     [[nodiscard]] bool IsActive() const noexcept;
     [[nodiscard]] SettingsMenuCommand TakeCommand() noexcept;
     [[nodiscard]] bool TakeValuesChanged() noexcept;
+    [[nodiscard]] SettingsMenuSelection
+    TakeMenuSoundActivation() noexcept;
 
 private:
     void Activate(SettingsMenuSelection selection) noexcept;
     [[nodiscard]] std::uint32_t PageCount() const noexcept;
     void SetTurnSpeedFromPointer(float pointerU) noexcept;
+    void SetVehicleMotionAimSensitivityFromPointer(float pointerU) noexcept;
     void SetHeightAdjustmentFromPointer(float pointerU) noexcept;
+    void SetHandPositionFromPointer(
+        SettingsMenuSelection selection,
+        float pointerU) noexcept;
+    void SetCrosshairOpacityFromPointer(float pointerU) noexcept;
     void SetGraphicsSliderFromPointer(
         SettingsMenuSelection selection,
         float pointerU) noexcept;
 
     UiMenuAnchorTracker anchor_ = {};
+    UiPointerSmoother pointerSmoother_ = {};
     Pose panelPose_ = {};
     SettingsMenuTab tab_ = SettingsMenuTab::VrSettings;
     SettingsMenuSelection hovered_ = SettingsMenuSelection::None;
     SettingsMenuSelection pressed_ = SettingsMenuSelection::None;
+    SettingsMenuSelection menuSoundActivation_ =
+        SettingsMenuSelection::None;
     SettingsMenuCommand command_ = SettingsMenuCommand::None;
     settings::UserSettingsValues values_ = {};
     SettingsMenuStatus status_ = SettingsMenuStatus::SettingsLoaded;

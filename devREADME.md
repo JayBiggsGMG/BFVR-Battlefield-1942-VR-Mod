@@ -108,7 +108,7 @@ following one-pass infantry layout for a normal local/offline play test:
   and release A to choose Escape, Enter, 1-6, or F9-F12. Releasing off-panel
   or losing focus/tracking cancels. Its authored stack is background, selected
   hover, text, then the frame as the final/top layer.
-- Right B: reload on press. Hold continuously for 2.5 seconds to recenter the
+- Right B: reload on press. Hold continuously for 2 seconds to recenter the
   current infantry or vehicle view using the same action as VR Settings >
   Recenter Forward; one hold produces one recenter and reload remains intact.
 - Left X / Y / grip: prone / scoreboard (hold through BF1942's paired native
@@ -139,7 +139,7 @@ The default profile layouts are:
 - Valve Index/Knuckles maps physical A/B to primary/secondary on each hand.
   Consequently left A acts like Touch X (Prone), left B like Touch Y
   (Scoreboard), right A like Touch A (Quick Menu), and right B like Touch B
-  (Reload; hold 2.5 seconds to recenter). Triggers, squeezes, sticks, stick
+  (Reload; hold 2 seconds to recenter). Triggers, squeezes, sticks, stick
   clicks, aim/grip poses, and haptics remain on the corresponding hand. Index
   exposes no application Menu component, so Map has no default Index binding;
   it can be assigned to either controller through SteamVR.
@@ -154,15 +154,35 @@ These mappings use the interaction-profile paths standardized by OpenXR. In
 particular, each runtime owns its controller-specific aim pose, so BFVR does
 not apply a Quest-derived angular correction to Index or Vive pointer rays.
 
-VR Settings page 2 includes a default-On `Comfort Vignette` toggle. While the
-local soldier or occupied vehicle translates, BFVR smoothly closes to a stable,
-feathered black peripheral aperture and restores the full view after movement
-stops. A filtered movement-state trigger prevents quantized game transforms
-from making the aperture pulse between simulation updates. Head movement,
-artificial turning, turret aiming, and a
+VR Settings page 2 groups `Comfort Vignette`, `Death Camera Comfort`, `Show`,
+and the default-on `Menu Pointer Smoothing` toggle. `Show` selects Arms & Hands, Hands Only, or No
+Hands/Arms. While the local soldier or occupied vehicle
+translates, BFVR smoothly closes to a stable, feathered black peripheral
+aperture and restores the full view after movement stops. A filtered
+movement-state trigger prevents quantized game transforms from making the
+aperture pulse between simulation updates. Page 3 groups manual height,
+standing calibration, and forward recentering. Head movement, artificial
+turning, turret aiming, and a
 vehicle rotating in place do not trigger it. The effect is procedural—there is
 no vignette image asset—and OpenXR composites it over the world but under the
 native HUD, scope texture, Quick Menu, Settings, and other overlays.
+
+`Menu Pointer Smoothing` uses the same normalized, frame-time-aware adaptive
+filter for Battlefield's native menu injection, the Quick Menu, and VR
+Settings. A small output deadzone absorbs controller tremor, while the cutoff
+rises with pointer speed so deliberate movement remains responsive. Cursor
+rendering and hit testing consume the same filtered point. Tracking loss,
+leaving a panel, switching Quick Menu surfaces, or disabling the toggle clears
+history; Controls remain clickable at their displayed cursor position. Save
+applies the setting live without changing any startup or OpenXR path.
+
+The potential 1.0.2 VR Settings presentation adds a green
+`BFVR v1.0.2 - JayBiggsGaming` credit as a separate transparent OpenXR quad
+below the menu. It deliberately leaves the authored 1024-square menu texture,
+panel pose, and ray-to-pointer mapping unchanged; the desktop mirror composes
+the same extra quad. `BFVRVersion.inc` is the canonical release version shared
+by this C++ text, loader console text, the Windows version resource, and the
+Inno Setup metadata/output name.
 
 When the local player controls a non-default vehicle or mounted
 `PlayerControlObject`, BFVR switches only the stick axes while retaining the
@@ -170,15 +190,20 @@ buttons above:
 
 - Land, sea, AA, and mounted guns: left Y is proportional gas/throttle or
   reverse, left X is proportional steering, and the right stick continuously
-  aims turret/station traverse and elevation. Tracked right-controller movement
-  adds fine relative aim on the same axes: hand-left moves the barrel right and
-  hand-down moves it up, as though the gun pivot were between the controller
-  and barrel. Holding the hand still holds aim still; the stick remains the
-  unrestricted control for continuous/360-degree traverse. These directions
-  and the current 48.0-native-input-units-per-metre sensitivity are fixed; the
-  latter halves physical travel relative to the initial headset build. A future
-  in-game VR settings menu is intended to expose horizontal/vertical inversion
-  and sensitivity.
+  supplies native camera or turret/station traverse and elevation. For an
+  occupied PCO with a valid non-empty native weapon vector, tracked
+  right-controller movement adds fine relative aim on the same axes: hand-left
+  moves the barrel right and hand-down moves it up, as though the gun pivot
+  were between the controller and barrel. Empty or unreadable weapon vectors
+  disable only that physical-motion contribution, so unarmed driver/passenger
+  freelook remains head- and stick-controlled. Holding the hand still holds aim
+  still; the stick remains the unrestricted control for continuous/360-degree
+  traverse. Controls now
+  exposes a saved **Turret Motion Sensitivity** slider from 50% to 300% in 10%
+  steps. The 200% default produces 96.0 native input units per metre and halves
+  the initial headset build's physical travel; 100% preserves that original
+  response. The slider scales only controller-motion aim, while the existing
+  pitch/yaw inversion options continue to affect both motion and stick aim.
 - Aircraft defaults to left Y throttle, left X roll, right X yaw, and right Y
   pitch. The saved Controls option `Aircraft Pitch + Roll on Same Stick` pairs
   roll with pitch and moves yaw to the other stick. `Swap Aircraft Sticks`
@@ -194,9 +219,10 @@ null pointer or configurable key binding. A soldier is the default
 `PlayerControlObject`; vehicles and stationary weapons are non-default control
 objects. The controlled template's native `VCAir` category selects the aircraft
 axes, while land/sea and unreadable mod categories never acquire aircraft-only
-roll/yaw mapping. Entering or leaving a vehicle clears crouch/directional stick
-state and captures a fresh zero-input motion reference so neither infantry state
-nor a stale hand position can leak across the transition.
+roll/yaw mapping. Entering, leaving, or changing the exact occupied control
+object clears crouch/directional stick state and captures a fresh zero-input
+motion reference so neither infantry state nor a stale hand position can leak
+across a seat transition.
 
 While the Quick Menu is open, controller fire, alt-fire, infantry stick-up/down
 actions, and face-button gameplay actions are suppressed; stick locomotion and
@@ -219,8 +245,10 @@ actions in the same temporary input frame.
 
 Controller pose does not write infantry look or aircraft flight axes; deliberate
 right-stick turn and ordinary keyboard/mouse look remain live. Only surface,
-sea, and mounted control objects translate newly timestamped right-grip position
-deltas into bounded native turret/station `mouseLookX/Y` input. The opt-in weapon
+sea, and mounted control objects with a proven non-empty native weapon vector
+translate newly timestamped right-grip position deltas into bounded native
+turret/station `mouseLookX/Y` input. Unarmed and unresolved seats fail closed
+without affecting stick look. The opt-in weapon
 path separately uses the tracked right grip for the classified first-person
 viewmodel and feeds the same fresh grip-driven rendered orientation into ordinary
 alive-local-infantry fire. This follows the virtual weapon geometry instead of
@@ -254,9 +282,58 @@ BF1942's projectile origin, weapon/barrel offsets, spread, cadence, projectile
 creation, and stock-server authority. Because the stock normalized look route
 still converges in the background, an immediate shot after an unusually large
 hand jump may briefly differ from the displayed ray.
+Off-hand acquisition uses an 18 cm radius around a long gun's unchanged
+animation-authored support point. Close sidearms retain their 12 cm captured-cup
+radius. Both gates remain acquisition-only: neither changes a hand target or
+weapon anchor, and an established grab has no distance-based auto-release.
+The WorkInProgress launcher keeps both the temporary recorder and its audit
+sink disabled with `BFVR_OFFHAND_CALIBRATION=0` and an empty
+`BFVR_OFFHAND_CALIBRATION_LOG`. Set the recorder to `1` and restore a dedicated
+audit path only for deliberate calibration.
+With a primary slot-3 weapon equipped,
+release left squeeze, place and rotate the free visual left hand at the desired
+socket, and click the left stick. BFVR records and immediately flushes the
+complete native and calibrated left-wrist-from-right-wrist relations directly
+to the configured dedicated
+`build/bfvr-release-win32/RelWithDebInfo/logs/offhand-calibrations.log` and
+hot-applies the
+calibrated relation only to that exact live soldier/Skeleton/item identity. A
+held stick cannot recapture every frame; release and click again to replace the
+session value. Capture/rejection records use the narrow
+`OFFHAND_CALIBRATION_` audit prefix. The dedicated capture file does not depend
+on the ordinary observer callback or diagnostics level; an observer copy is
+also permitted when available, without enabling any other diagnostic family.
+Sidearms, gadgets, untracked hands, and an already-held
+support are rejected. The experiment writes no persistent calibration data
+and is disabled by setting the environment value to `0`.
+The accepted 2026-08-15 corrections are separate from that recorder and remain
+active with it off. They identify DP, MP18, Type5, AK47, and Saiga12k through
+the exact native `HandFireArmsTemplate` zoom-FOV and soldier-camera-position
+properties already read from the active item, then require primary slot 3 and
+a close match to the captured native wrist relation. The duplicate MP18
+captures select the nearest recorded native relation. Unknown template
+properties, another item slot, or a materially different native pose remain
+unchanged. This secondary pose fingerprint prevents a mod that reuses a stock
+weapon template but authors a different left-hand placement from inheriting
+the correction.
+The runtime `soldierCameraPosition` vector begins at template `+0x3F0`; a
+2026-08-15 live DP probe rejected the earlier `+0x3EC` assumption by exposing
+the preceding zero float followed by only the first two configured components.
+The subsequent owner headset pass accepted all six stored corrections: Russian
+assault and medic, Japanese medic and engineer, and Chinese medic and engineer.
+The later No4Sniper Oculus/SteamVR A/B exposed a separate native-capture
+boundary: the current generic arm path waits only two untouched attachment
+callbacks and freezes the next left-from-right relation. The two runtimes
+captured No4 relations 6.37 cm and 1.26 degrees apart even though neither
+matched an override. This is a general first-sample timing risk; it must be
+corrected with automatic native-relation convergence, not manual per-weapon
+measurement or a broad vanilla weapon table. The six saved overrides also keep
+their secondary relation gate because it is what prevents a mod with different
+authored hand placement from inheriting a correction.
+
 The default-on `Sniper Aim Smoothing` checkbox on the Controls page affects
 only scoped micro-motion. It applies a frame-time-aware spherical orientation
-interpolation while total stabilized-to-raw error remains below `0.25` degrees;
+interpolation while total stabilized-to-raw error remains below `1.5` degrees;
 as error grows, raw input receives more weight, and at the boundary the aim
 catches up to raw immediately. Current weapon translation is always preserved.
 The same aim ray drives scoped presentation and native authority convergence,
@@ -273,6 +350,13 @@ weapons without `useScope` receive no BFVR camera, FOV, or overlay policy.
 Scope exit clears smoothing history and returns camera direction to normal;
 unscoped aim, firing, grips, arms, elbows, IK, recoil, artificial turning,
 vehicles, and mounted weapons are not filtered by this feature.
+The temporary SteamVR smoothing audit remains available for a deliberate
+future investigation, but the WorkInProgress launcher now clears
+`BFVR_SCOPE_SMOOTHING_AUDIT_LOG`. With no explicit audit path the client does
+not collect its outcome counters or write a scope-exit summary. If deliberately
+enabled, it classifies filtered samples, duplicate generations, invalid/zero
+timestamps, intervals above 50 ms, and 1.5-degree raw bypasses without
+altering the filter result.
 
 The VR replay applies only a rigid controller attachment to the classified
 weapon family: no viewmodel scale or perspective morph and no artificial
@@ -285,11 +369,12 @@ or gameplay-state changes are involved. Set `BFVR_NATIVE_1P_ARMS=0` before
 launch to opt out and restore the prior arm suppression.
 The exact native CrossHair visibility setter is forced off without disabling
 the rest of the HUD. BFVR replaces it with the supplied 64x64 world crosshair
-only for the gadget slots: grenades/TNT (4),
-mines/binoculars/medpack (5), and wrench (6). Knives, pistols, ordinary guns,
-launchers, and the detonator remain excluded. Unknown modded items which reuse
-slots 4/5/6 remain enabled by policy because those slots are conventionally
-gadget families; all other infantry slots remain excluded. A non-default
+for controller-pointer items: knife (1), grenades/TNT (4),
+mines/binoculars/medpack (5), and wrench (6). Pistols, ordinary guns, launchers,
+and the detonator remain outside that pointer family and use their established
+aim paths. Unknown modded items which reuse slots 1/4/5/6 remain enabled by
+policy because those slots are conventionally pointer-item families; all other
+infantry slots remain excluded. A non-default
 vehicle or mounted control object additionally requires BF1942 itself to
 request its crosshair and expose a readable native weapon, so unarmed or
 unresolved stations fail closed. The gadget endpoint uses the exact direct
@@ -306,6 +391,56 @@ and `BFVR_CROSSHAIR_ANGULAR_DIAMETER_DEGREES` adjusts apparent size from
 The aligned `HitMarker.png` layer appears only while BF1942's own local network
 hit-indication timer is positive. BFVR reads that timer without changing or
 extending it; it does not infer hits from health, depth, or collision.
+
+Controls page 2 keeps all stereo 3D crosshair policy together: hand-weapon,
+mounted-weapon, and knife/throwable/gadget modes, the eight-color selector,
+and opacity. Opacity is persisted as 5..100% in 5% steps and scales both RGB
+and alpha for BFVR's premultiplied aiming-crosshair and hit-marker blend. The
+parser and renderer both clamp to a nonzero 5% floor; native scoped crosshair artwork
+continues to receive only the selected RGB tint because Battlefield's recovered
+scope color setter has no alpha parameter.
+
+Exact scope is the exception: BFVR suppresses these world-overlay layers while
+BF1942's native CrossHair path carries the scope raster and native hit
+feedback. During active/pending exact scope only, BFVR applies the selected 3D
+Crosshair Color through the prefix-verified native color setter, then restores
+the captured live native RGB on exit. This does not edit profile files or
+recolor scope artwork.
+
+The potential 1.0.2 settings work keeps that architecture intact. The hand,
+mounted, and controller-pointer knife/throwable/gadget sources now each use a
+saved three-state display mode. `Crosshair.png` and `HitMarker.png` remain
+aligned 64x64 premultiplied layers but are neutral grayscale art; one vertex
+diffuse tint selects White, Green, Blue, Purple, Red, Pink, Orange, or Yellow
+for both eyes and both layers. The tint draw still occurs immediately before transport into
+the owned stereo-world targets, so later world color treatment intentionally
+affects it with the scene.
+
+The first-person part-name classifier remains behind the prefix-verified
+`AnimatedMesh::draw` forwarding context, but it no longer scans template names
+for every animated world mesh. The hook now records only the current mesh;
+classification is requested lazily after the existing projection/semantic
+policy proves a first-person candidate and only when Hands Only needs to
+distinguish separate hands. A bounded per-thread cache stores both recognized
+hands and conservative combined/unrecognized results using the template
+address plus name-storage identity. Arms & Hands and No Hands/Arms require no
+classification, and ordinary soldiers never enter the classifier in any mode.
+
+The owner's first SteamVR headset A/B rejects that classifier as a material
+performance explanation: facing bots felt unchanged after the lazy/cached
+build, and Arms & Hands versus Hands Only produced no noticeable cadence
+difference. The matching 2026-08-16 SteamVR 2.16.7 records instead show a
+runtime-level cadence mismatch. Across 156.892 seconds BFVR submitted 9,900
+frames and consumed 9,426 fresh game frames, while the 90-Hz compositor made
+14,079 headset presents and reprojected 4,081 (29.0%) with zero dropped frames.
+BFVR remained healthy and logged no session, device, or swapchain failure; the
+owner's occasional brief black flashes therefore remain unassigned and may be
+below BFVR's application-visible boundary. Treat the global name scan as
+removed unnecessary work, not as the cause of the observed SteamVR slowdown.
+VirtualDesktopXR is a separate runtime, not a SteamVR extension: its same-day
+log requested 2496x2688 per eye versus SteamVR's 1872x2016, exactly 1.78 times
+the pixel area, so its performance must be compared at matched source
+resolution and refresh rate before attributing a shared runtime defect.
 
 ### Native arm ownership trace
 
@@ -388,6 +523,29 @@ waits, the OpenXR runtime's predicted refresh period, and how often the headset
 had to receive the last complete image because a new one was not ready. These
 “new BFVR frames” are not vanilla BF1942's frame rate.
 
+The ordinary launcher explicitly sets `BFVR_PERFORMANCE_SUMMARY=0` alongside
+broad diagnostics-off behavior. For a deliberate low-noise performance
+capture, temporarily set that explicit launcher assignment to `1`, or use a
+separate diagnostic launcher that supplies the flag without overriding it.
+
+This opt-in records in-memory aggregates and emits one summary every 30 seconds
+plus a final summary. It does not enable per-frame logging, draw provenance, or
+deep restored-state readbacks. The x86 summary covers total replay,
+skinning-family draw counts, native Present, producer waits, and new-frame
+pacing. It intentionally leaves the optional per-draw prepare/draw/restore
+timers off so soldier-heavy scenes do not gain extra clock reads. The x64
+summaries separate shared-texture
+acquisition, SSGI/water-SSR/AO/composite/menu command enqueue, D3D11 flush,
+`xrWaitFrame`, `xrBeginFrame`, each swapchain acquire/wait/copy/release, and the
+actual `xrEndFrame`. Existing AO, SSGI, and bloom GPU timestamp reports are also
+enabled for the explicit profiling run. CPU enqueue times are not GPU duration;
+compare them with `sourceFinalize` and those GPU timestamp summaries.
+
+The targeted flag is inherited by both BF1942 and its x64 companion when a
+diagnostic launcher enables it. The ordinary `Launch-BFVR-VR.bat` explicitly
+forces both `BFVR_DIAGNOSTICS=off` and `BFVR_PERFORMANCE_SUMMARY=0` so normal
+headset use performs no aggregate timing capture.
+
 The x86 game bridge and x64 presenter use two named auto-reset events as
 cross-process doorbells instead of repeatedly sleeping and checking for frame
 changes. Shared sequence numbers remain authoritative, and BFVR automatically
@@ -397,6 +555,31 @@ the one-set image path. Headset timing should compare `consumeWait`,
 `nextRequestWait`, and their sum before adding a second native-resolution
 texture set: Oculus publishes the next pose only after the current source has
 been consumed/submitted, so those two waits are not fully independent.
+
+Two SteamVR-specific speculative future-frame pipelines were live-rejected and
+are absent from the current source. The first waited up to 100 ms after
+`xrEndFrame`; frames 352, 353, 354, and 2972 exhausted that interval and caused
+severe stale-image stutter. A second version kept OpenXR cadence independent and
+never waited for the source, but owner testing found performance every bit as
+bad. Do not restore either `predictedDisplayTime + predictedDisplayPeriod`
+source buffering design. The established immediate runtime-timed path remains
+active for SteamVR, Oculus, and VirtualDesktopXR.
+
+A distinct 2026-08-18 Present-boundary overlap experiment was also live-
+rejected and is absent from the current source. It completed the current
+source reads into x64-local textures and acknowledged x86 before `xrEndFrame`,
+then allowed an ordinary native BF1942 bubble frame when the next real OpenXR
+request was unavailable at Present. It did not predict a pose, but owner
+testing found performance the same or probably worse and found a new severe
+gun-alignment error whose magnitude depended on look direction. The bubble
+frame therefore broke the established synchronization between request-bound
+camera/weapon state and the submitted stereo source. The environment flag,
+early acknowledgement, pose-clearing branch, policy/test files, and wrapper
+launcher were fully removed. Do not restore this scheduling family.
+
+Neither rejected result implicated startup. Preserve the OpenXR 1.0 API request
+that fixed SteamVR/VDXR launch and the temporary x86 D3D11 open of the first
+D3D9Ex texture before publication that fixed the Oasis driver.
 
 The original standalone probe is x86 because it shares the client build. The
 currently installed Oculus x86 runtime faults inside `xrCreateSession`, while
@@ -458,7 +641,12 @@ timestamps at the current native eye size:
 
 The matching x64 control executes the native-resolution spatial AO and bilateral
 denoise shaders, verifies non-trivial output, and compares the existing stereo
-world conversion with and without the AO sample:
+world conversion with and without the AO sample. Its synthetic scene includes
+a receding planar floor spanning the former normal-reconstruction cutoff and a
+recessed surface whose valid device depth exceeds 0.9999, plus a clear-depth
+strip. It therefore requires equal near/far floor visibility, non-trivial AO
+past the former loose clear-depth threshold, and one continuous full-world
+ambient baseline through true clear depth:
 
 ```powershell
 .\build\bfvr-presenter-x64\Release\BFVRAmbientOcclusionGpuProbe.exe `
@@ -486,7 +674,9 @@ the horizontal/vertical blur:
 
 Add `--ambient-occlusion` to `BFVRD3D8To9SharedSurfaceProbe` for the complete
 no-game INTZ -> packed D3D9 shared depth -> x64 AO -> world-composite control.
-The ordinary invocation above remains the exact no-AO regression.
+It verifies the exact 0.88 depth-valid ambient attenuation on both world eyes
+and exact unchanged Ref2 UI. The ordinary invocation above remains the exact
+no-AO regression.
 
 Add `--ssgi` for the complete no-game INTZ -> packed D3D9 shared depth -> x64
 native-resolution SSGI -> world-composite control. Its
@@ -508,16 +698,27 @@ failures, invalid frame projections, or x64 AO setup failures retain the
 ordinary D24S8/color/UI path; the established three shared color textures stay
 mandatory. Ref2 UI and bloom are not processed by AO. Use the same build with
 the variable unset for the required headset A/B.
-The current owner-comparison build uses native-eye-resolution R16_FLOAT AO
+The owner-accepted build uses native-eye-resolution R16_FLOAT AO
 intermediates, world-composite intensity 1.0, and a per-pixel-rotated
-eight-sample 0.60 m view-space disk. Projected radii remain exact through 24
-pixels and use a C1-continuous transition over 24..72 pixels into a 48-pixel
-cap. The 3x3 bilateral denoiser uses its original absolute-plus-relative
-view-depth tolerance. The arbitrary view-distance fade is absent; AO fades only
-when its projected footprint becomes subpixel. Native resolution avoids
-stretching a half-resolution result through the ordinary color sampler. The AO
-pass explicitly installs its complete viewport/scissor/blend/depth/raster
-state, and packed-depth transport is unchanged.
+eight-sample 0.60 m view-space disk. Reconstructed-normal derivatives are
+normalized before their cross product, so their validity no longer changes
+with view distance or eye resolution; the result is oriented against the actual
+surface-to-camera vector. The D3D9 depth exporter reserves the highest base-255
+RGB code for source depth 1.0; AO now recognizes that exact sentinel instead of
+treating every decoded depth at or above 0.9999 as clear. Valid distant terrain,
+water, and meshes therefore retain local AO rather than crossing a flat
+camera-distance cutoff. The explicit 0.88 ambient-visibility ceiling is carried
+through true clear depth as a full-world ambient grade, retaining the requested
+darker appearance without exposing a brighter band at fog/depth-coverage
+boundaries; local AO can darken below it. Ref2 UI remains untouched because it
+is composited separately. Projected radii remain exact through 24 pixels and
+use a C1-continuous transition over 24..72 pixels into a 48-pixel cap. The 3x3
+bilateral denoiser uses its original absolute-plus-relative view-depth
+tolerance. The arbitrary view-distance fade is absent; AO fades only when its
+projected footprint becomes subpixel. Native resolution avoids stretching a
+half-resolution result through the ordinary color sampler. The AO pass
+explicitly installs its complete viewport/scissor/blend/depth/raster state, and
+packed-depth transport is unchanged.
 
 Live screen-space global illumination is a rejected experiment and is disabled
 in the current launcher with `BFVR_OPENXR_SSGI=0` and intensity `0.0`. The x86
@@ -569,6 +770,57 @@ One-handed fire affects the right controller only. When BFVR's
 actual off-hand weapon-support binding is acquired, firing affects both
 controllers; raw grip-button state alone does not select both hands.
 
+The potential 1.0.2 audio path keeps Battlefield menu audio inside the game
+process. Quick Menu and Settings hover/activation events advance pointer-free
+protocol-v22 counters; the x86 BfMenu input thread consumes them and calls the
+prefix-verified `playLoadMenuHighLight`, `playLoadMenuOk`, or
+`playLoadMenuCancel` wrapper on its live menu object. The BFVR Back-to-Game
+button calls the same original wrappers directly. This preserves the active
+`MenuSound.ssc`, mod replacements, native audio device, and native menu-volume
+grouping without extracting stock sound files.
+
+The separate default-on `Kill Sound` option uses two verified retail score
+boundaries. Remote MP retains the confirmed forwarding hook at
+`GameClient::handleGameEventManagerEvent` (`0x004933D0`): it accepts only
+`GEScoreMsg` type `0x2A`, ordinary subtype 3, resolves killer/victim IDs through
+native `GameClient::findPlayer` (`0x00491980`), and requires the killer to match
+PlayerManager's current BFPlayer (with GameClient `+0x170` as fallback). SP and
+listen-server play additionally observe `GameServer::handleScore` at
+`0x004AD2D0`, whose arguments directly distinguish ordinary kill type 3 from
+teamkill type 6 and identify both scoring player and victim. That path requires
+the scoring player to equal PlayerManager's current player and the victim to be
+a different non-null player. Both native handlers are forwarded unchanged; an
+identical killer/victim pair seen at both boundaries within two seconds is
+published once. Separately, the first confirmed kill opens a 300 ms multi-kill
+burst; further confirmations in that window remain silent so a grenade does not
+stack several voices.
+The x64
+presenter loads `assets/Sounds/killsound.wav` once and creates one independent
+XAudio2 source voice per audible kill, retaining the PCM buffer until all
+voices finish. Kills outside the burst window can overlap without restarting.
+The authored WAV
+follows Windows/headset output volume; no unverified Battlefield master-volume
+address or profile file is consulted. Static cross-build evidence and both
+architecture builds support these boundaries. Owner testing confirms correct
+SP and MP playback, teamkill silence, and 300 ms multikill grouping.
+
+The 2026-08-15 development asset audit found that the repository WAV and the
+active launch-payload WAV could diverge. `BFVR/assets` remains canonical, but
+the former CMake `POST_BUILD` copy ran only when a native target actually
+rebuilt, and the outer development launcher mirrored only Settings-menu PNGs.
+The runtime asset copy is now an always-run dependency of both `BFVRClient`
+and `BFVRPresenter`, player staging copies directly from canonical `assets/`,
+and the local launcher mirrors that complete tree before launch. The launcher
+also rejects any BFVR checkout other than `WorkInProgress`; none of these local
+staging operations commits, merges, tags, publishes, or modifies `main`.
+Both the active Win32 RelWithDebInfo `BFVRClient` target and x64 Release
+`BFVRPresenter` target ran the new synchronization dependency successfully.
+The canonical, Win32-runtime, and x64-runtime WAVs then shared SHA-256
+`B47B72E209A61B480F28AC3F929FCB4FCADAAEDE9F1B2CC89AB732D71F09371A`.
+All 32 Win32 deterministic suites passed. A temporary player-payload staging
+run produced 68 manifest files and matched all 55 canonical asset files with
+zero missing or differing hashes; the temporary payload was then removed.
+
 The per-eye water surface-reflection pass is controlled by the default-on
 `Water SSR` checkbox on VR Settings > Graphics. Saving a changed enable state
 shows `Settings saved - restart required`; the next BFVR launch uses the
@@ -590,6 +842,29 @@ matching confidence fade recover substantially taller or more distant finite
 geometry without making the per-water-pixel search unbounded.
 That reflection is blended only into the corresponding world eye, on top of
 the native normal-mapped, map-authored sun shine.
+BF1942's alpha-blended tree cards test depth but do not write it, so the water
+receiver mask can remain present behind their visible pixels. The first cheap
+1.0.2 trial capped final SSR replacement at 35%, but the owner saw exactly the
+same artifact; the active reflection weight in that scene was evidently not
+crossing the cap often enough to matter. That cap is fully removed.
+
+The replacement trial no longer subtracts any original world color. It keeps
+the complete source pixel and adds at most 20% of the reflected color into the
+pixel's unused brightness, which avoids simple additive blowout. It adds no
+texture, draw, target switch, shared handle, protocol field, or pass, and does
+not alter tree depth/sorting or the water ray marcher. This is a low-cost visual
+workaround rather than material-accurate foliage occlusion and awaits headset
+review for tree visibility, water strength, and unwanted brightening.
+Both exact embedded Water-SSR composite variants compile under strict `ps_4_0`
+and create successfully on the installed D3D11 hardware device. The scaler
+initializer also now treats any shader-compilation failure as a real
+initialization failure instead of accidentally continuing with a missing
+shader. The first build's new success log mistakenly said literal
+`20% strength` through a printf-style variadic logger. `% s` consumed a
+nonexistent string argument and crashed both the standalone consumer and the
+owner's presenter after Water SSR initialization. The owner-run dump confirms
+the resulting wide-string read at `0xFFFFFFFFFFFFFFFF`. The log now uses
+non-format text `0.20 strength`; the soft-add shader itself is unchanged.
 There is no temporal history or motion-vector dependency, and Ref2 UI is never
 sampled or modified. Missing masks/depth/projections, unsupported resources, or
 shader failures retain the native water image for that frame.
@@ -718,6 +993,72 @@ draws with no tree-sprite preparation, source-match, or application failure
 and 78,686/78,686 exact restorations. The owner has since confirmed that this
 corrected close foliage renders properly in-headset.
 
+Dynamic soldier and vehicle shadows use BF1942's separate projected-terrain
+receiver path. The shared WinPC `PatchCellBlock::draw` submission returns at
+`0x0069922E`. Retail contains a vector-based `PatchTerrain::drawShadowCells`
+at `0x00682D70` (direct-call return `0x00682E95`) and an alternate linked-list
+traversal whose direct call returns at `0x00683ADD`; the tested live path uses
+`0x00682E95`. Both returns are permanent members of the static classifier, so
+the tested live path no longer depends on runtime discovery finding it before
+a budget expires. Generation into the auxiliary shadow texture remains outside
+the full-backbuffer replay. At the hooked D3D submission, the renderer wrapper
+return is stack slot 10, its three caller-owned arguments are slots 11-13,
+`PatchCellBlock::draw`'s saved `ESI` is slot 14, and the outer return is slot
+15. For only that three-address indexed conjunction, BFVR verifies
+stage 0 uses `D3DTSS_TCI_CAMERASPACEPOSITION` and `D3DTTFF_COUNT2`, then
+replaces the native texture transform with
+`inverse(eyeView) * sourceView * nativeTexture` for each eye. This preserves
+the game's world-space projection while terrain geometry keeps its normal
+stereo View/Projection. The original texture transform is restored after the
+draw, and any signature, state, matrix, or D3D-write failure falls back to the
+native path. Runtime summaries expose `projectedTerrainShadows`,
+`projectedShadowTextureEyes`, and `projectedShadowTextureFailures`. Deterministic
+coordinate-equivalence and semantic-classification tests pass. Headset PID
+`15796` proved exact native state, two successful eye writes, exact restoration,
+and owner visual acceptance. Normal diagnostics-off headset runs retain only a
+sparse `PROJECTED_SHADOW_AUDIT`: one startup/armed record, one first exact
+`PatchCellBlock` stack-layout record, one first exact receiver-candidate
+signature, one first classified draw/state record, one prepared-matrix delta
+record, one result per eye, one restoration record, and one shutdown summary
+when teardown runs.
+The diagnostics-off filter evaluates the final formatted callback text so the
+observer adapter cannot hide these records behind its outer `%s` format. This
+does not enable continuous tracing or change render policy.
+
+Earlier builds depended on a bounded runtime discovery window for the tested
+`0x00682E95` route. Historical runs prove that its 65,536-draw budget could be
+spent before a visible shadow appeared, leaving the correction inactive for
+the rest of that process. Discovery remains as compatibility fallback for an
+unfamiliar outer return, but it now reads the two stage-0 values only on the
+already-profiled shared `PatchCellBlock::draw` indexed submission with the
+expected perspective, triangle-list, and alpha-blend shape. It can promote
+only that same terrain-cell boundary under the exact native
+`CAMERASPACEPOSITION + COUNT2` pair. Observing either proven static producer
+caches it and ends fallback discovery for the process. No launcher,
+configuration, injection, or OpenXR lifecycle behavior depends on this
+fallback.
+
+The visual correction baseline is the exact normally launched
+`BFVRClient.dll` tested in PID `15796`: 2,159,616 bytes, SHA-256
+`B94A64951FCC1E8D523825E8292F5A17CC8E2895D761BC7CE862F88B1EB8DBE3`.
+That local run retained the launch sequence used by the externally validated
+Oasis/WMR build: inject bf42++ before BFVRClient while BF1942 is suspended,
+initialize the observer, translator, and OpenXR path before resume, then enter
+run-until-stopped presentation. It does not itself validate Oasis because the
+local machine does not have Oasis.
+
+The reliability correction builds in the normal Win32 RelWithDebInfo tree and
+all 36 registered deterministic suites pass, including both proven static
+producer returns, nearby-producer rejection, projected-texture state/matrix
+coverage, and the existing startup compatibility tests. The x64 Release
+presenter also builds, and the launcher's non-starting `--dry-run` resolves the
+client, translator, game, and BF42++ paths. The resulting 2,212,864-byte client
+SHA-256 is
+`F49BC6C393A14AB78F0FF812F3BA903C10A051CD14596282A2301F5A344CCBA8`.
+No loader, launcher, OpenXR bootstrap/runtime-selection, presenter, Oasis, or
+Steam-launch source changed. A headset run is still required to confirm the
+new client reproduces the already accepted shadow appearance every launch.
+
 The x64 conversion stage follows OpenXR's linear-composition contract. It
 prefers a BGRA8 sRGB swapchain and converts BF1942's legacy encoded R10/R16 RGB
 to linear before output; BGRA8 UNORM remains a linear-data fallback. Its
@@ -731,6 +1072,18 @@ default-off. When explicitly enabled, only the world eyes compile and execute
 the independent quarter-resolution brightness extraction/blur and bind its
 HDR result at the final linear composite; the default path still compiles no
 bloom shaders and allocates no bloom resources.
+
+The potential 1.0.2 color page extends this same final world pass with
+Original, Filmic, and Vibrant profiles followed by signed exposure, contrast,
+and saturation adjustments. Original with zero adjustments is the identity
+configuration. `LeftWorld` and `RightWorld` always use the scaler so saved
+changes apply live; Ref2 receives neutral constants and separately composed
+scope/menu/settings layers remain outside the pass. Death-camera comfort also
+extends the established comfort-vignette layer rather than adding another:
+the x86 alive-to-dead observer publishes protocol-v21 life state, and x64
+blends a tighter muted dark-red profile for up to three seconds or until a
+verified respawn while ordinary locomotion comfort continues updating behind
+the same compositor.
 
 The 2026-07-24 Oculus Link validation passed both synthetic modes on the exact
 runtime-selected adapter. The user saw the deliberately different per-eye

@@ -116,6 +116,7 @@ bool BuildOpenXREyeFillingScopeLayers(
     std::uint32_t uiHeight,
     const XrPosef& headInLocalSpace,
     const std::array<XrView, 2>& viewsInLocalSpace,
+    const XrQuaternionf& scopeRollInViewSpace,
     std::array<XrCompositionLayerQuad, 2>& layers) noexcept
 {
     if (viewSpace == XR_NULL_HANDLE || uiSwapchain == XR_NULL_HANDLE ||
@@ -125,6 +126,11 @@ bool BuildOpenXREyeFillingScopeLayers(
     }
     XrPosef localToView = {};
     if (!InvertPose(headInLocalSpace, localToView))
+    {
+        return false;
+    }
+    XrQuaternionf normalizedScopeRoll = scopeRollInViewSpace;
+    if (!Normalize(normalizedScopeRoll))
     {
         return false;
     }
@@ -146,7 +152,11 @@ bool BuildOpenXREyeFillingScopeLayers(
         }
 
         XrPosef eyeOffset = {};
-        eyeOffset.orientation.w = 1.0F;
+        // Keep the quad centered on each physical eye, then rotate only its
+        // artwork around that eye's forward axis. The supplied VIEW-space
+        // delta is weapon roll minus head roll, so head and weapon tilt cannot
+        // leak into one another.
+        eyeOffset.orientation = normalizedScopeRoll;
         eyeOffset.position.z =
             -stereo::kEyeFillingScopeOverlayDistanceMeters;
         XrCompositionLayerQuad& layer = result[eye];

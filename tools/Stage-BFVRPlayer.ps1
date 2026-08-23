@@ -43,8 +43,8 @@ foreach ($requiredFile in $requiredFiles) {
         throw "A required player source file is missing: $requiredFile"
     }
 }
-if (-not (Test-Path -LiteralPath (Join-Path $win32Root 'assets') -PathType Container)) {
-    throw "The staged runtime artwork is missing from the Win32 build: $win32Root\assets"
+if (-not (Test-Path -LiteralPath (Join-Path $sourceRoot 'assets') -PathType Container)) {
+    throw "The canonical BFVR asset directory is missing: $sourceRoot\assets"
 }
 
 New-Item -ItemType Directory -Path $destinationPath | Out-Null
@@ -57,8 +57,7 @@ Copy-Item -LiteralPath (Join-Path $win32Root 'BFVR.exe') -Destination $destinati
 Copy-Item -LiteralPath (Join-Path $win32Root 'BFVRClient.dll') -Destination $destinationPath
 Copy-Item -LiteralPath (Join-Path $win32Root 'BFVRD3D8To9.dll') -Destination $destinationPath
 Copy-Item -LiteralPath (Join-Path $x64Root 'BFVRPresenter.exe') -Destination $destinationPath
-Copy-Item -Path (Join-Path $win32Root 'assets\*') -Destination (Join-Path $destinationPath 'assets') -Recurse
-Copy-Item -LiteralPath (Join-Path $sourceRoot 'assets\BF42VRlogo.png') -Destination (Join-Path $destinationPath 'assets')
+Copy-Item -Path (Join-Path $sourceRoot 'assets\*') -Destination (Join-Path $destinationPath 'assets') -Recurse
 Copy-Item -LiteralPath (Join-Path $x64Root 'runtime\openxr\win64\openxr_loader.dll') -Destination (Join-Path $destinationPath 'runtime\openxr\win64')
 Copy-Item -LiteralPath (Join-Path $sourceRoot 'README.md') -Destination $destinationPath
 Copy-Item -LiteralPath (Join-Path $sourceRoot 'docs\INSTALLATION.md') -Destination (Join-Path $destinationPath 'docs')

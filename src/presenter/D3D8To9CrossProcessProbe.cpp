@@ -7,7 +7,9 @@
 
 #include <array>
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
+#include <cstdint>
 #include <iterator>
 #include <string>
 #include <vector>
@@ -16,6 +18,36 @@ namespace
 {
 constexpr UINT kTextureWidth = 1404;
 constexpr UINT kTextureHeight = 1512;
+
+std::uint8_t ApplyLinearVisibilityToSrgb(
+    std::uint8_t encoded,
+    float visibility)
+{
+    const float srgb = static_cast<float>(encoded) / 255.0F;
+    const float linear = srgb <= 0.04045F
+        ? srgb / 12.92F
+        : std::pow((srgb + 0.055F) / 1.055F, 2.4F);
+    const float attenuated = linear * visibility;
+    const float result = attenuated <= 0.0031308F
+        ? attenuated * 12.92F
+        : 1.055F * std::pow(attenuated, 1.0F / 2.4F) - 0.055F;
+    return static_cast<std::uint8_t>(std::clamp(
+        std::lround(result * 255.0F),
+        0L,
+        255L));
+}
+
+DWORD ApplyLinearVisibilityToSrgb(DWORD color, float visibility)
+{
+    const DWORD alpha = color & 0xFF000000U;
+    const auto channel = [&](unsigned int shift)
+    {
+        return static_cast<DWORD>(ApplyLinearVisibilityToSrgb(
+            static_cast<std::uint8_t>((color >> shift) & 0xFFU),
+            visibility)) << shift;
+    };
+    return alpha | channel(16U) | channel(8U) | channel(0U);
+}
 
 std::wstring QuoteArgument(const wchar_t* argument)
 {
@@ -137,6 +169,16 @@ bool RunD3D8To9CrossProcessProbe(
         0xFF654321u,
         0x9E1452EBu};
     std::array<DWORD, kTextureCount> expectedPixels = kClearColors;
+    if (enableAmbientOcclusion)
+    {
+        // Uniform depth has no local occluder, but the owner-selected AO
+        // profile now applies a 0.88 ambient-visibility ceiling to all valid
+        // world geometry. Ref2 remains outside the AO composite.
+        expectedPixels[0] = ApplyLinearVisibilityToSrgb(
+            expectedPixels[0], 0.88F);
+        expectedPixels[1] = ApplyLinearVisibilityToSrgb(
+            expectedPixels[1], 0.88F);
+    }
     if (enableScreenSpaceGlobalIllumination)
     {
         wchar_t debugMode[2] = {};

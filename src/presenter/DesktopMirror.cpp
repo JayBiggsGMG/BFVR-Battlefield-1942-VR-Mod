@@ -147,6 +147,21 @@ bfvr::OpenXRPresentationPose ToPresentationPose(
     return result;
 }
 
+bfvr::stereo::Quaternion Multiply(
+    const bfvr::stereo::Quaternion& left,
+    const bfvr::stereo::Quaternion& right) noexcept
+{
+    return {
+        left.w * right.x + left.x * right.w +
+            left.y * right.z - left.z * right.y,
+        left.w * right.y - left.x * right.z +
+            left.y * right.w + left.z * right.x,
+        left.w * right.z + left.x * right.y -
+            left.y * right.x + left.z * right.w,
+        left.w * right.w - left.x * right.x -
+            left.y * right.y - left.z * right.z};
+}
+
 bool IsSrgbFormat(DXGI_FORMAT format) noexcept
 {
     return format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB ||
@@ -247,6 +262,7 @@ void DesktopMirror::Render(
     const OpenXRPresentationTextures& textures,
     const OpenXRPresentationView* rightEyeView,
     OpenXRUiPresentationMode uiPresentationMode,
+    const OpenXRPresentationPose* scopeRollInView,
     const OpenXRQuickMenuMirrorState* quickMenu)
 {
     if (!initialized_ || permanentlyDisabled_ || textures.rightWorld == nullptr ||
@@ -324,9 +340,16 @@ void DesktopMirror::Render(
             rightEyeView->fov.angleRight,
             rightEyeView->fov.angleUp,
             rightEyeView->fov.angleDown};
+        bfvr::stereo::Pose scopeEye = ToStereoPose(rightEyeView->pose);
+        if (scopeRollInView != nullptr)
+        {
+            scopeEye.orientation = Multiply(
+                scopeEye.orientation,
+                ToStereoPose(*scopeRollInView).orientation);
+        }
         const auto scopeQuad =
             bfvr::stereo::MakeEyeFillingScopeOverlayQuad(
-                ToStereoPose(rightEyeView->pose),
+                scopeEye,
                 fov);
         const float blendFactor[4] = {};
         context_->OMSetBlendState(
@@ -347,7 +370,7 @@ void DesktopMirror::Render(
         if (scopeDrawn && !firstScopeMirroredLogged_)
         {
             firstScopeMirroredLogged_ = true;
-            WriteLog(L"Desktop mirror composited its first scope Ref2 layer through the physical right-eye pose/FOV, matching the eye-exclusive headset quad instead of texture-centre alignment.");
+            WriteLog(L"Desktop mirror composited its first scope Ref2 layer through the physical right-eye pose/FOV and the same weapon-minus-head roll as the eye-exclusive headset quad.");
         }
         else if (!scopeDrawn && !scopeMirrorFailureReported_)
         {
@@ -387,6 +410,36 @@ void DesktopMirror::Render(
                 quickMenu->utilityHeightMeters,
                 quickMenuUtilityView_,
                 IsSrgbFormat(utilityDescription.Format),
+                *rightEyeView,
+                crop.sourceScale,
+                crop.sourceOffset);
+        }
+        if (quickMenuCommandView_ != nullptr &&
+            quickMenu->commandTexture != nullptr)
+        {
+            D3D11_TEXTURE2D_DESC commandDescription = {};
+            quickMenu->commandTexture->GetDesc(&commandDescription);
+            DrawQuickMenuQuad(
+                quickMenu->commandPose,
+                quickMenu->commandWidthMeters,
+                quickMenu->commandHeightMeters,
+                quickMenuCommandView_,
+                IsSrgbFormat(commandDescription.Format),
+                *rightEyeView,
+                crop.sourceScale,
+                crop.sourceOffset);
+        }
+        if (quickMenuVersionView_ != nullptr &&
+            quickMenu->versionTexture != nullptr)
+        {
+            D3D11_TEXTURE2D_DESC versionDescription = {};
+            quickMenu->versionTexture->GetDesc(&versionDescription);
+            DrawQuickMenuQuad(
+                quickMenu->versionPose,
+                quickMenu->versionWidthMeters,
+                quickMenu->versionHeightMeters,
+                quickMenuVersionView_,
+                IsSrgbFormat(versionDescription.Format),
                 *rightEyeView,
                 crop.sourceScale,
                 crop.sourceOffset);
@@ -705,10 +758,16 @@ bool DesktopMirror::EnsureQuickMenuViews(
 {
     if (quickMenuTexture_ == quickMenu.menuTexture &&
         quickMenuUtilityTexture_ == quickMenu.utilityTexture &&
+        quickMenuCommandTexture_ == quickMenu.commandTexture &&
+        quickMenuVersionTexture_ == quickMenu.versionTexture &&
         quickMenuCursorTexture_ == quickMenu.cursorTexture &&
         quickMenuView_ != nullptr &&
         (quickMenu.utilityTexture == nullptr ||
          quickMenuUtilityView_ != nullptr) &&
+        (quickMenu.commandTexture == nullptr ||
+         quickMenuCommandView_ != nullptr) &&
+        (quickMenu.versionTexture == nullptr ||
+         quickMenuVersionView_ != nullptr) &&
         (!quickMenu.pointerVisible || quickMenuCursorView_ != nullptr))
     {
         return true;
@@ -730,6 +789,24 @@ bool DesktopMirror::EnsureQuickMenuViews(
                 nullptr,
                 &quickMenuUtilityView_);
     }
+    if (SUCCEEDED(result))
+    {
+        result = quickMenu.versionTexture == nullptr
+            ? S_OK
+            : device_->CreateShaderResourceView(
+                quickMenu.versionTexture,
+                nullptr,
+                &quickMenuVersionView_);
+    }
+    if (SUCCEEDED(result))
+    {
+        result = quickMenu.commandTexture == nullptr
+            ? S_OK
+            : device_->CreateShaderResourceView(
+                quickMenu.commandTexture,
+                nullptr,
+                &quickMenuCommandView_);
+    }
     if (SUCCEEDED(result) && quickMenu.cursorTexture != nullptr)
     {
         result = device_->CreateShaderResourceView(
@@ -749,6 +826,8 @@ bool DesktopMirror::EnsureQuickMenuViews(
     }
     quickMenuTexture_ = quickMenu.menuTexture;
     quickMenuUtilityTexture_ = quickMenu.utilityTexture;
+    quickMenuCommandTexture_ = quickMenu.commandTexture;
+    quickMenuVersionTexture_ = quickMenu.versionTexture;
     quickMenuCursorTexture_ = quickMenu.cursorTexture;
     return true;
 }
@@ -993,6 +1072,16 @@ void DesktopMirror::ReleaseQuickMenuViews()
         quickMenuUtilityView_->Release();
         quickMenuUtilityView_ = nullptr;
     }
+    if (quickMenuVersionView_ != nullptr)
+    {
+        quickMenuVersionView_->Release();
+        quickMenuVersionView_ = nullptr;
+    }
+    if (quickMenuCommandView_ != nullptr)
+    {
+        quickMenuCommandView_->Release();
+        quickMenuCommandView_ = nullptr;
+    }
     if (quickMenuView_ != nullptr)
     {
         quickMenuView_->Release();
@@ -1000,6 +1089,8 @@ void DesktopMirror::ReleaseQuickMenuViews()
     }
     quickMenuTexture_ = nullptr;
     quickMenuUtilityTexture_ = nullptr;
+    quickMenuCommandTexture_ = nullptr;
+    quickMenuVersionTexture_ = nullptr;
     quickMenuCursorTexture_ = nullptr;
 }
 

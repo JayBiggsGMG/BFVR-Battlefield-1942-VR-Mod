@@ -2,6 +2,8 @@
 
 #include "stereo/StereoMath.h"
 
+#include <cstdint>
+
 namespace bfvr
 {
 
@@ -16,6 +18,7 @@ struct WorldCrosshairFrameState
 {
     stereo::Vec3 endpoint = {};
     float angularDiameterDegrees = 2.0F;
+    std::uint32_t tintArgb = 0xFF06FF00U;
     bool crosshairVisible = true;
     bool hitMarkerVisible = false;
 };
@@ -24,7 +27,7 @@ struct WorldCrosshairFrameState
 // exact selected shooting-weapon or gadget slot published by native arm
 // handling; mounted eligibility comes from BF1942's own HudManager visibility
 // request plus the current PlayerControlObject weapon's authoritative firing
-// transformation. Gadget visibility is intentionally not user-configurable.
+// transformation. Each source category has an independent display mode.
 // The hit marker observes BFPlayer's existing local hit-indication timer
 // without extending or mutating it.
 [[nodiscard]] bool ReadWorldCrosshairFrameState(

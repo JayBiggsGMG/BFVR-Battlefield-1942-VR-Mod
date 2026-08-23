@@ -102,6 +102,16 @@ bool TestBounds()
         bfvr::stereo::QuickMenuUtilitySelectionAt(1.0F, 0.5F) ==
             QuickMenuSelection::VrSettings &&
         bfvr::stereo::QuickMenuUtilitySelectionAt(0.5F, -0.1F) ==
+            QuickMenuSelection::None &&
+        bfvr::stereo::QuickMenuCommandSelectionAt(0.5F, 0.10F) ==
+            QuickMenuSelection::RadioRoger &&
+        bfvr::stereo::QuickMenuCommandSelectionAt(0.5F, 0.35F) ==
+            QuickMenuSelection::RadioNegative &&
+        bfvr::stereo::QuickMenuCommandSelectionAt(0.5F, 0.60F) ==
+            QuickMenuSelection::RadioGoGoGo &&
+        bfvr::stereo::QuickMenuCommandSelectionAt(0.5F, 0.90F) ==
+            QuickMenuSelection::ToggleHud &&
+        bfvr::stereo::QuickMenuCommandSelectionAt(1.1F, 0.5F) ==
             QuickMenuSelection::None;
 }
 
@@ -117,7 +127,13 @@ bool TestPhysicalSize()
                initialPanelSizeMeters * requestedScale) &&
         bfvr::stereo::kQuickMenuUtilityTextureWidth == 512 &&
         bfvr::stereo::kQuickMenuUtilityTextureHeight == 64 &&
-        bfvr::stereo::kQuickMenuUtilityHeightMeters > 0.0F;
+        bfvr::stereo::kQuickMenuUtilityHeightMeters > 0.0F &&
+        bfvr::stereo::kQuickMenuCommandTextureWidth == 86 &&
+        bfvr::stereo::kQuickMenuCommandTextureHeight == 425 &&
+        NearlyEqual(
+            bfvr::stereo::kQuickMenuCommandWidthMeters /
+                bfvr::stereo::kQuickMenuCommandHeightMeters,
+            86.0F / 425.0F);
 }
 
 bool TestMirrorProjection()
@@ -430,6 +446,57 @@ bool TestUtilityStripInteraction()
         interaction.TakeReleasedSelection() == QuickMenuSelection::None;
 }
 
+bool TestCommandColumnInteraction()
+{
+    bfvr::stereo::QuickMenuInteraction interaction;
+    bfvr::stereo::QuickMenuFrameInput input = {};
+    input.predictedDisplayTime = 1'000'000'000;
+    input.sessionFocused = true;
+    input.shouldRender = true;
+    input.headTracked = true;
+    input.rightGripTracked = true;
+    input.rightAimTracked = true;
+    input.rightPrimaryHeld = true;
+    input.headPose.position = {0.0F, 1.70F, 0.0F};
+    input.rightGripPose.position = {0.25F, 1.20F, -0.35F};
+    input.rightAimPose.position = input.headPose.position;
+    interaction.Update(input);
+    const auto opened = interaction.Snapshot();
+    if (!opened.visible)
+    {
+        return false;
+    }
+
+    const Vec3 localTarget = {
+        bfvr::stereo::kQuickMenuWidthMeters * 0.5F +
+            bfvr::stereo::kQuickMenuCommandWidthMeters * 0.5F,
+        -(bfvr::stereo::kQuickMenuHeightMeters -
+          bfvr::stereo::kQuickMenuCommandHeightMeters) * 0.5F +
+            bfvr::stereo::kQuickMenuCommandHeightMeters * 0.375F,
+        0.0F};
+    input.rightAimPose.position = Add(
+        input.headPose.position,
+        Rotate(opened.panelPose.orientation, localTarget));
+    input.rightAimPose.orientation = opened.panelPose.orientation;
+    input.predictedDisplayTime += 11'111'111;
+    interaction.Update(input);
+    const auto aimed = interaction.Snapshot();
+    if (!aimed.pointerVisible || !aimed.pointerOnCommandColumn ||
+        aimed.pointerOnUtilityStrip ||
+        aimed.hovered != QuickMenuSelection::RadioRoger ||
+        !NearlyEqual(aimed.pointerU, 0.5F, 0.003F) ||
+        !NearlyEqual(aimed.pointerV, 0.125F, 0.003F))
+    {
+        return false;
+    }
+    input.rightPrimaryHeld = false;
+    input.predictedDisplayTime += 11'111'111;
+    interaction.Update(input);
+    return interaction.TakeReleasedSelection() ==
+            QuickMenuSelection::RadioRoger &&
+        interaction.TakeReleasedSelection() == QuickMenuSelection::None;
+}
+
 bool TestArt(const wchar_t* assetsDirectory)
 {
     bfvr::QuickMenuArt art;
@@ -470,7 +537,7 @@ bool TestArt(const wchar_t* assetsDirectory)
         }
     }
     for (std::size_t index = static_cast<std::size_t>(
-             QuickMenuSelection::MountedCameraDecouple);
+             QuickMenuSelection::RadioRoger);
          index < bfvr::stereo::kQuickMenuSelectionCount;
          ++index)
     {
@@ -536,6 +603,40 @@ bool TestArt(const wchar_t* assetsDirectory)
     {
         return false;
     }
+    std::vector<std::uint32_t> commandBase;
+    UINT commandWidth = 0;
+    UINT commandHeight = 0;
+    if (!art.CopyCommandColumnPixels(
+            QuickMenuSelection::None,
+            commandBase,
+            commandWidth,
+            commandHeight) ||
+        commandWidth != bfvr::stereo::kQuickMenuCommandTextureWidth ||
+        commandHeight != bfvr::stereo::kQuickMenuCommandTextureHeight)
+    {
+        return false;
+    }
+    for (std::uint32_t index = 0;
+         index < bfvr::stereo::kQuickMenuCommandButtonCount;
+         ++index)
+    {
+        std::vector<std::uint32_t> hovered;
+        UINT hoveredWidth = 0;
+        UINT hoveredHeight = 0;
+        const auto selection = static_cast<QuickMenuSelection>(
+            static_cast<std::uint32_t>(QuickMenuSelection::RadioRoger) +
+            index);
+        if (!art.CopyCommandColumnPixels(
+                selection,
+                hovered,
+                hoveredWidth,
+                hoveredHeight) ||
+            hoveredWidth != commandWidth || hoveredHeight != commandHeight ||
+            hovered == commandBase)
+        {
+            return false;
+        }
+    }
     std::vector<std::uint32_t> cursor;
     UINT cursorWidth = 0;
     UINT cursorHeight = 0;
@@ -588,6 +689,11 @@ int wmain(int argumentCount, wchar_t** arguments)
     if (!TestUtilityStripInteraction())
     {
         std::cerr << "Quick Menu utility-strip interaction test failed.\n";
+        return 1;
+    }
+    if (!TestCommandColumnInteraction())
+    {
+        std::cerr << "Quick Menu command-column interaction test failed.\n";
         return 1;
     }
     if (!TestArt(arguments[1]))

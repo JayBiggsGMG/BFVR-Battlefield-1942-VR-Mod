@@ -138,6 +138,77 @@ std::optional<Quaternion> NormalizeQuaternion(
         : std::nullopt;
 }
 
+Quaternion MultiplyQuaternion(
+    const Quaternion& left,
+    const Quaternion& right) noexcept
+{
+    return {
+        left.w * right.x + left.x * right.w +
+            left.y * right.z - left.z * right.y,
+        left.w * right.y - left.x * right.z +
+            left.y * right.w + left.z * right.x,
+        left.w * right.z + left.x * right.y -
+            left.y * right.x + left.z * right.w,
+        left.w * right.w - left.x * right.x -
+            left.y * right.y - left.z * right.z};
+}
+
+Quaternion ConjugateQuaternion(const Quaternion& value) noexcept
+{
+    return {-value.x, -value.y, -value.z, value.w};
+}
+
+std::optional<Quaternion> ExtractLocalForwardTwist(
+    const Quaternion& orientation) noexcept
+{
+    // Project onto the local-forward (D3D8 +Z) twist subgroup. This removes
+    // yaw/pitch without using Euler angles or a gravity projection, so aiming
+    // almost vertically does not create a roll singularity. The sole
+    // undefined case is an exact 180-degree swing away from local forward.
+    return NormalizeQuaternion({0.0F, 0.0F, orientation.z, orientation.w});
+}
+
+float SignedForwardTwistAngle(const Quaternion& twist) noexcept
+{
+    float angle = 2.0F * std::atan2(twist.z, twist.w);
+    while (angle > kPi)
+    {
+        angle -= 2.0F * kPi;
+    }
+    while (angle < -kPi)
+    {
+        angle += 2.0F * kPi;
+    }
+    return angle;
+}
+
+BasisVector RotateBasisVector(
+    const Quaternion& orientation,
+    const BasisVector& value) noexcept;
+
+Matrix4 ReplaceRotation(
+    const Matrix4& source,
+    const Quaternion& orientation) noexcept
+{
+    const BasisVector right =
+        RotateBasisVector(orientation, {1.0F, 0.0F, 0.0F});
+    const BasisVector up =
+        RotateBasisVector(orientation, {0.0F, 1.0F, 0.0F});
+    const BasisVector forward =
+        RotateBasisVector(orientation, {0.0F, 0.0F, 1.0F});
+    Matrix4 result = source;
+    result.values[0][0] = right.x;
+    result.values[0][1] = right.y;
+    result.values[0][2] = right.z;
+    result.values[1][0] = up.x;
+    result.values[1][1] = up.y;
+    result.values[1][2] = up.z;
+    result.values[2][0] = forward.x;
+    result.values[2][1] = forward.y;
+    result.values[2][2] = forward.z;
+    return result;
+}
+
 std::optional<Quaternion> QuaternionFromMatrix(
     const Matrix4& matrix) noexcept
 {
@@ -409,16 +480,48 @@ std::optional<Matrix4> UpdateD3D8ScopeAimSmoothing(
     const void* const soldier,
     const std::int32_t controllerGeneration,
     const std::int64_t predictedDisplayTime,
-    const bool enabled) noexcept
+    const bool enabled,
+    ScopeAimSmoothingDiagnostics* const diagnostics) noexcept
 {
+    if (diagnostics != nullptr)
+    {
+        *diagnostics = {};
+    }
+    const auto setOutcome = [diagnostics](
+        const ScopeAimSmoothingOutcome outcome) noexcept
+    {
+        if (diagnostics != nullptr)
+        {
+            diagnostics->outcome = outcome;
+        }
+    };
     if (!IsRigidAffine(currentGunWorld))
     {
+        setOutcome(ScopeAimSmoothingOutcome::InvalidMatrix);
         ResetD3D8ScopeAimSmoothing(state);
         return std::nullopt;
     }
-    if (!enabled || weapon == nullptr || soldier == nullptr ||
-        controllerGeneration <= 0 || predictedDisplayTime <= 0)
+    if (!enabled)
     {
+        setOutcome(ScopeAimSmoothingOutcome::Disabled);
+        ResetD3D8ScopeAimSmoothing(state);
+        return currentGunWorld;
+    }
+    if (weapon == nullptr || soldier == nullptr)
+    {
+        setOutcome(ScopeAimSmoothingOutcome::InvalidLifetime);
+        ResetD3D8ScopeAimSmoothing(state);
+        return currentGunWorld;
+    }
+    if (controllerGeneration <= 0)
+    {
+        setOutcome(ScopeAimSmoothingOutcome::InvalidControllerGeneration);
+        ResetD3D8ScopeAimSmoothing(state);
+        return currentGunWorld;
+    }
+    if (predictedDisplayTime <= 0)
+    {
+        setOutcome(ScopeAimSmoothingOutcome::InvalidPredictedDisplayTime);
         ResetD3D8ScopeAimSmoothing(state);
         return currentGunWorld;
     }
@@ -428,6 +531,7 @@ std::optional<Matrix4> UpdateD3D8ScopeAimSmoothing(
     if (sameLifetime &&
         state.controllerGeneration == controllerGeneration)
     {
+        setOutcome(ScopeAimSmoothingOutcome::DuplicateGeneration);
         return state.filteredGunWorld;
     }
 
@@ -439,6 +543,18 @@ std::optional<Matrix4> UpdateD3D8ScopeAimSmoothing(
         elapsedNanoseconds > 0 &&
         elapsedNanoseconds <=
             kScopeAimSmoothingMaximumSampleIntervalNanoseconds;
+    if (diagnostics != nullptr)
+    {
+        diagnostics->elapsedNanoseconds = elapsedNanoseconds;
+    }
+    if (!sameLifetime)
+    {
+        setOutcome(ScopeAimSmoothingOutcome::FirstSample);
+    }
+    else if (!continuousSample)
+    {
+        setOutcome(ScopeAimSmoothingOutcome::NonContinuousTime);
+    }
     if (continuousSample)
     {
         const auto angularError = RotationAngle(
@@ -446,8 +562,13 @@ std::optional<Matrix4> UpdateD3D8ScopeAimSmoothing(
             currentGunWorld);
         if (!angularError.has_value())
         {
+            setOutcome(ScopeAimSmoothingOutcome::RotationFailure);
             ResetD3D8ScopeAimSmoothing(state);
             return std::nullopt;
+        }
+        if (diagnostics != nullptr)
+        {
+            diagnostics->angularErrorRadians = *angularError;
         }
         if (*angularError < kScopeAimSmoothingMaximumErrorRadians)
         {
@@ -462,10 +583,16 @@ std::optional<Matrix4> UpdateD3D8ScopeAimSmoothing(
                 currentWeight);
             if (!stabilized.has_value())
             {
+                setOutcome(ScopeAimSmoothingOutcome::RotationFailure);
                 ResetD3D8ScopeAimSmoothing(state);
                 return std::nullopt;
             }
             filtered = *stabilized;
+            setOutcome(ScopeAimSmoothingOutcome::Smoothed);
+        }
+        else
+        {
+            setOutcome(ScopeAimSmoothingOutcome::AngularBoundaryBypass);
         }
     }
     state.filteredGunWorld = filtered;
@@ -632,28 +759,65 @@ std::optional<float> ComputeD3D8ScopeProjectionScale(
         : std::nullopt;
 }
 
-std::optional<Matrix4> MakeD3D8WeaponDirectedScopeCamera(
+std::optional<IndependentScopeRollCamera>
+MakeD3D8IndependentRollScopeCamera(
     const Matrix4& headAdjustedCameraWorld,
+    const Matrix4& relativeHeadCamera,
     const Matrix4& controllerGunWorld) noexcept
 {
     if (!IsRigidAffine(headAdjustedCameraWorld) ||
+        !IsRigidAffine(relativeHeadCamera) ||
         !IsRigidAffine(controllerGunWorld))
     {
         return std::nullopt;
     }
 
-    Matrix4 result = headAdjustedCameraWorld;
-    for (std::size_t row = 0; row < 3; ++row)
+    const auto headOrientation =
+        QuaternionFromMatrix(relativeHeadCamera);
+    const auto gunOrientation = QuaternionFromMatrix(controllerGunWorld);
+    if (!headOrientation.has_value() || !gunOrientation.has_value())
     {
-        for (std::size_t column = 0; column < 3; ++column)
-        {
-            result.values[row][column] =
-                controllerGunWorld.values[row][column];
-        }
+        return std::nullopt;
     }
-    return IsRigidAffine(result)
-        ? std::optional<Matrix4>(result)
+    const auto headTwist = ExtractLocalForwardTwist(*headOrientation);
+    const auto gunTwist = ExtractLocalForwardTwist(*gunOrientation);
+    if (!headTwist.has_value() || !gunTwist.has_value())
+    {
+        return std::nullopt;
+    }
+
+    // Preserve the gun's swing (its aim direction) while replacing only its
+    // local-forward twist with the head's independently tracked twist.
+    const auto gunSwing = NormalizeQuaternion(MultiplyQuaternion(
+        *gunOrientation,
+        ConjugateQuaternion(*gunTwist)));
+    const auto worldOrientation = gunSwing.has_value()
+        ? NormalizeQuaternion(MultiplyQuaternion(*gunSwing, *headTwist))
         : std::nullopt;
+    if (!worldOrientation.has_value())
+    {
+        return std::nullopt;
+    }
+
+    float overlayRollRadians =
+        SignedForwardTwistAngle(*gunTwist) -
+        SignedForwardTwistAngle(*headTwist);
+    while (overlayRollRadians > kPi)
+    {
+        overlayRollRadians -= 2.0F * kPi;
+    }
+    while (overlayRollRadians < -kPi)
+    {
+        overlayRollRadians += 2.0F * kPi;
+    }
+    const Matrix4 cameraWorld = ReplaceRotation(
+        headAdjustedCameraWorld,
+        *worldOrientation);
+    if (!IsRigidAffine(cameraWorld) || !std::isfinite(overlayRollRadians))
+    {
+        return std::nullopt;
+    }
+    return IndependentScopeRollCamera{cameraWorld, overlayRollRadians};
 }
 
 bool ApplyD3D8ScopeProjectionScale(

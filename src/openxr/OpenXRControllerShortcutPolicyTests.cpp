@@ -59,14 +59,14 @@ int main()
              true,
              false,
              true).recenterRequested,
-        "B must not recenter before 2.5 seconds");
+        "B must not recenter before 2 seconds");
     passed &= Expect(
         update(
             start + kControllerRecenterHoldNanoseconds,
             true,
             false,
             true).recenterRequested,
-        "B must recenter at the 2.5-second threshold");
+        "B must recenter at the 2-second threshold");
     passed &= Expect(
         !update(
              start + kControllerRecenterHoldNanoseconds + 1,

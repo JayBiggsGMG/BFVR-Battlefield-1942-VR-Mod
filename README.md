@@ -10,7 +10,7 @@
 
 ![BFVR logo](assets/BF42VRlogo.png)
 
-BFVR adds stereoscopic VR rendering, tracked-controller aiming, VR menus, and
+BFVR (now on version 1.0.2) adds stereoscopic VR rendering, tracked-controller aiming, VR menus, and
 VR comfort and graphics options to Battlefield 1942.
 
 The normal player version is launched by double-clicking `BFVR.exe`. It does
@@ -20,7 +20,7 @@ include it.
 
 ## Requirements
 
-- A working, legally installed copy of Battlefield 1942 on 64-bit Windows 10
+- A working, installed copy of Battlefield 1942 on 64-bit Windows 10
   or Windows 11.
 - A PC VR headset and an active OpenXR runtime, such as Meta Quest Link,
   SteamVR, or Virtual Desktop's VDXR runtime.
@@ -30,7 +30,7 @@ include it.
   separate `bf42++.dll`, or may already be included by a community game
   package as a recognized `dsound.dll` proxy. BF42++ is not included with
   BFVR. Do not add a second copy when a package already includes it. If both
-  are present, BFVR 1.0.1 selects the recognized bundled proxy and does not
+  are present, BFVR 1.0.2 selects the recognized bundled proxy and does not
   inject the extra `bf42++.dll`.
 
 BFVR has worked with several substantially different retail, digital, and
@@ -38,11 +38,14 @@ community-modified Battlefield packages in real testing. It does not block an
 unfamiliar executable. A specific untested build may still be incompatible
 because some BFVR features connect to internal game code.
 
-## Installing and playing
+For the easiest currently supported setup, the Moongamers Battlefield 1942
+versions are recommended. BFVR is planned to eventually be bundled with the
+Battlefield 1942 VKHD installers; until then, install BFVR separately using
+the guide below. 
 
-KNOWN WORKING VERSIONS OF BF1942:
-https://steamcommunity.com/sharedfiles/filedetails/?id=2721068159
-Please download the Moongamers versions, either Vulkan or DgVoodoo.
+Recommended BF1942 Versions (either MOONGAMERS one should work): https://steamcommunity.com/sharedfiles/filedetails/?id=2721068159
+
+## Installing and playing
 
 See [Installation](docs/INSTALLATION.md) for a beginner-friendly walkthrough.
 After installation:
@@ -61,7 +64,7 @@ BFVR loads its own DLL into the Battlefield 1942 process. That is how this mod
 connects VR rendering and controls to an old game that has no mod API for these
 features. Antivirus software may treat that technique cautiously.
 
-The v1.0.1 installer is intentionally unsigned, so Windows may display
+The v1.0.2 installer is intentionally unsigned, so Windows may display
 "Unknown publisher." Only run an installer downloaded from this repository's
 official GitHub Release page, and compare its published SHA-256 checksum when
 in doubt.
@@ -85,5 +88,5 @@ BFVR source is available under the [MIT License](LICENSE).
 ## Acknowledgements
 
 Special thanks to 333hronos, Arkyliën, Notagameaddict, Meurtreetbanane,
-Pande4360, and SnickersDaBunny, and to the wider VR modding and Battlefield
+Pande4360, SnickersDaBunny, Fearganainm, Myrothas, HeavyMetalGamer, whachusmokin, ZALIAS, _olku_, Irman and to the wider VR modding and Battlefield
 modding communities.

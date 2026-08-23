@@ -83,8 +83,9 @@ suspension/restoration, and launch-local renderer isolation.
 - `src/client/BF1942FrameLimiterOverride.*`
 
 The client owns game-side hooks, stereo world/UI production, recovered
-Battlefield input submission, native arm/weapon integration, frame-limiter
-override, and shared producer state.
+Battlefield input submission, native arm/weapon integration, native BfMenu
+feedback dispatch, confirmed local-kill observation, frame-limiter override,
+and shared producer state.
 
 ### D3D8 translator
 
@@ -99,11 +100,22 @@ post-Reset presentation dimensions, and BFVR runtime diagnostics.
 
 - `src/presenter/BFVRPresenter.cpp`
 - `src/presenter/SharedTextureConsumer.*`
+- `src/presenter/SharedTexturePerformanceSummary.*`
 - `src/openxr/OpenXRPresentation.*`
+- `src/openxr/OpenXRPerformanceSummary.*`
 - `src/openxr/OpenXRQuickMenu.*`
 
 The presenter owns OpenXR lifecycle, swapchains, D3D11 consumption/effects,
-desktop mirror, controller actions, haptics, and composition-layer submission.
+desktop mirror, controller actions, haptics, overlapping kill-sound voices,
+and composition-layer submission.
+
+`src/diagnostics/PerformanceSummary.h` supplies the common opt-in aggregate
+timer. `BFVR_PERFORMANCE_SUMMARY=1` is a targeted, low-volume performance mode:
+it leaves broad `BFVR_DIAGNOSTICS=off`, admits only prefixed x86 performance
+summary messages, and adds QPC timing around existing x64 source/OpenXR calls.
+It must not become a scheduling switch. In particular, it may not change the
+runtime-timed request sequence, source ownership acknowledgement, swapchain
+copy order, or `xrEndFrame` placement.
 
 ### Settings and menu
 
@@ -115,6 +127,75 @@ desktop mirror, controller actions, haptics, and composition-layer submission.
 `UserConfig.txt` is versioned, documented, and written atomically. Installer
 updates preserve an existing user file. New keys require a safe default,
 decode/encode coverage, menu wiring where applicable, and persistence tests.
+
+`BFVRVersion.inc` is the canonical release version. C++ consumes it through
+`src/BFVRVersion.h`; the loader resource and Inno Setup definition include it
+directly. Update that file instead of independently editing launcher text,
+Windows file metadata, installer naming, or the VR Settings credit. The credit
+is a static transparent OpenXR quad below the unchanged 1024-square Settings
+surface, so it does not alter the existing pointer coordinate system. The
+desktop mirror reproduces the same separate quad.
+
+The repository `assets/` directory is the canonical source for every runtime
+asset. The CMake runtime-asset targets execute whenever `BFVRClient` or
+`BFVRPresenter` is requested, so an asset-only edit is copied even when native
+compilation is already up to date. Player staging copies directly from that
+canonical directory rather than trusting a potentially stale build-tree copy.
+The outer checkout's development BAT may mirror those files into its local
+payload, but release publication still requires the complete release procedure
+below.
+
+The potential 1.0.2 settings group adds these runtime invariants:
+
+- `show_arms` is a migration-compatible three-state visibility setting:
+  `arms_and_hands`, `hands_only`, or `no_hands_or_arms`. Hands Only retains
+  only game-selected mesh templates with explicit left/right-hand names;
+  combined and unrecognized meshes fail closed to hidden. Tracking, native
+  animation, controller weapon transforms, hand placement, and elbow solving
+  continue while draws are hidden. Do not treat a narrow projection alone as
+  ownership during an active or entering scope: magnified world soldiers
+  satisfy the same lower bounds, so suppression must fail closed there.
+  The global forwarding hook records only the current AnimatedMesh context;
+  template-name classification is deferred until the draw policy has proven a
+  first-person candidate in Hands Only mode, then cached by template/name
+  storage identity. Do not move string inspection back onto every world-mesh
+  draw.
+- Hand weapons, mounted guns, and controller-pointer knife/throwable/gadget
+  items each own an independent `WorldCrosshairMode`. Crosshair color is a
+  shared base tint inside the existing D3D8 per-eye renderer; do not move this
+  path into an OpenXR overlay merely to isolate it from grading.
+- `hapticDeathSequence` and `localPlayerLifeState` share the verified
+  local-player observer. Shared protocol version 22 lets the presenter start
+  a bounded death effect and cancel it on a verified respawn.
+- Movement and death comfort are two targets of one `OpenXRComfortVignette`.
+  Death styling takes priority inside that compositor, which remains above
+  the stereo world and below Ref2/interface layers.
+- Color profile, exposure, contrast, and saturation are fused into the final
+  world scaler shader after AO/SSGI/reflections/bloom. Both world eyes always
+  retain that pass for live changes. Ref2 is passed neutral color settings;
+  separately composed UI never enters the shader.
+- Shared protocol version 22 adds a producer-to-presenter confirmed-kill
+  counter and presenter-to-producer menu highlight/OK/cancel counters. The
+  x86 client alone retains game pointers and invokes prefix-verified
+  `BfMenu::playLoadMenu*` wrappers; the x64 presenter alone owns XAudio2 and
+  creates an independent source voice for every confirmed kill.
+- Remote-MP kill eligibility comes from the unchanged
+  `GameClient::handleGameEventManagerEvent` path: event type `0x2A`, subtype
+  3, distinct killer/victim IDs, and a killer resolved by native `findPlayer`
+  to the BFPlayer returned by PlayerManager's native current-player virtual
+  service at `+0x20`; `GameClient +0x170` is fallback-only. MP playback is
+  owner-confirmed. SP did not traverse that received-client boundary, so BFVR
+  now also observes prefix-verified retail `GameServer::handleScore` at
+  `0x004AD2D0`. It accepts only score type 3 when the scoring BFPlayer is the
+  PlayerManager current player and the victim is different/non-null, rejects
+  teamkill type 6, and deduplicates only the same killer/victim pair if a
+  listen server exposes both sources. A separate 300 ms first-kill-wins burst
+  gate collapses grenade-style simultaneous kills into one sound; kills after
+  the window may still overlap. Owner testing confirms correct SP and MP
+  playback, teamkill silence, and multikill grouping. Other score variants
+  remain silent. The custom WAV
+  follows Windows output volume, not an unverified approximation of
+  Battlefield's private master-volume value.
 
 ## Critical compatibility invariants
 
@@ -161,11 +242,32 @@ These are established behaviors, not cleanup opportunities.
 - Use the translator's current post-Reset presentation dimensions rather than
   stale initial CreateDevice dimensions.
 - Keep producer ownership until the x64 consumer's queued source work is safe.
-- The SteamVR pacing correction intentionally overlaps legacy shared-resource
-  GPU completion with `xrEndFrame`; do not restore the former serial wait.
+- Preserve the Oasis compatibility invariant: the x86 producer temporarily
+  opens the first newly allocated D3D9Ex legacy shared texture through D3D11 on
+  the exact producer adapter before publishing any texture handles. Do not move
+  this primer to x64, remove it, or publish first.
+- The established immediate path queues legacy shared-resource reads before
+  `xrEndFrame` and defers their GPU completion/producer acknowledgement until
+  afterward. Do not restore the former serial wait ahead of `xrEndFrame`.
+- Do not add a SteamVR speculative future-frame buffer. Both the blocking and
+  non-blocking `predictedDisplayTime + predictedDisplayPeriod` variants were
+  live-rejected as equally awful and were completely removed. SteamVR, Oculus,
+  and VirtualDesktopXR all retain the established immediate path.
+- Do not add a native BF1942 bubble frame by acknowledging the current source
+  before `xrEndFrame` and waiting for the next real request at a later Present.
+  That distinct non-predictive experiment was also live-rejected: performance
+  was the same or probably worse, and gun alignment gained a severe erroneous
+  dependence on look direction. Its flag and implementation were fully
+  removed. Preserve request-bound camera, weapon, and submitted-source cadence.
 - UI capture policies distinguish full replacement frames from accumulating
   HUD draws. Combining them blindly can create trails or repeated translucent
   elements.
+- Retail projected terrain shadows have two proven outer producer returns,
+  `0x00682E95` and `0x00683ADD`, under wrapper `0x0066800A` and shared
+  `PatchCellBlock::draw` return `0x0069922E`. Keep both in the fail-closed
+  static classifier. Runtime state discovery is fallback-only and may inspect
+  only that shared indexed terrain-cell submission; do not spend its budget on
+  unrelated alpha-blended perspective draws.
 
 ### Frame limiter
 
@@ -201,8 +303,29 @@ The default aircraft layout is:
 The two aircraft options apply only to the recovered `VCAir` category. They do
 not change infantry, ground vehicles, boats, turrets, or mounted weapons.
 
+Surface/sea physical controller-motion aim is proof-gated by the occupied
+`PlayerControlObject` weapon vector used by BF1942's native vehicle HUD.
+Only a valid non-empty vector enables motion aim. Empty, malformed, unreadable,
+or unavailable vectors fail closed with controller motion disabled; head look,
+right-stick `mouseLookX/Y`, keyboard, and mouse remain independent and active.
+Every current-control-object identity change resets motion history, so moving
+between unarmed and armed seats cannot submit a stale controller delta.
+
 SteamVR binding changes are runtime-local. Meta OpenXR and VDXR use BFVR's
 suggested OpenXR bindings, not a user's SteamVR-only customization.
+
+Menu controller pointers share `UiPointerSmoother`, a normalized 2D adaptive
+low-pass with a 0.0015 output deadzone. The Quick Menu maintains independent
+history for its main, command, and utility surfaces; VR Settings and native
+BF1942 menu injection each maintain their own history. Rendering, hover, drag,
+and activation always use the same filtered coordinates. Reset history on
+tracking/panel discontinuities and keep the saved default-on toggle live; do
+not move this policy into startup, OpenXR runtime selection, or Oasis setup.
+
+All 3D crosshair controls are grouped on Controls page 2. The opacity setting
+is strictly 5..100% in 5% steps and changes the premultiplied ARGB tint used by
+both the world aiming crosshair and hit marker. The native scoped RGB synchronization
+remains color-only.
 
 ## Currently validated compatibility
 

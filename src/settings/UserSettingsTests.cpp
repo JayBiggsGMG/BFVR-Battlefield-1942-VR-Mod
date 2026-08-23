@@ -233,7 +233,7 @@ bool TestProductionSeedAndTypedValues(const std::wstring& directory)
     }
     const auto defaults = store.Defaults();
     const auto decodedDefaults = bfvr::settings::DecodeUserSettings(defaults);
-    if (defaults.values.size() != 27 ||
+    if (defaults.values.size() != 46 ||
         decodedDefaults.playMode != bfvr::settings::PlayMode::Seated ||
         decodedDefaults.artificialTurnMode !=
             bfvr::settings::ArtificialTurnMode::Smooth ||
@@ -241,22 +241,40 @@ bool TestProductionSeedAndTypedValues(const std::wstring& directory)
         decodedDefaults.movementDirection !=
             bfvr::settings::MovementDirection::Head ||
         decodedDefaults.vrHeightAdjustmentCentimeters != 0 ||
+        decodedDefaults.rightHandPositionXCentimeters != -7 ||
+        decodedDefaults.rightHandPositionYCentimeters != 4 ||
+        decodedDefaults.rightHandPositionZCentimeters != -5 ||
+        decodedDefaults.leftHandPositionXCentimeters != -2 ||
+        decodedDefaults.leftHandPositionYCentimeters != 6 ||
+        decodedDefaults.leftHandPositionZCentimeters != -2 ||
         decodedDefaults.standingEyeHeightCentimeters != 170 ||
         decodedDefaults.comfortVignetteEnabled ||
+        !decodedDefaults.deathCameraComfortEnabled ||
+        !decodedDefaults.keepHudUpright ||
+        decodedDefaults.firstPersonVisibility !=
+            bfvr::settings::FirstPersonVisibility::ArmsAndHands ||
         decodedDefaults.infantryTurnSpeedPercent != 200 ||
         decodedDefaults.invertFlightPitch ||
         decodedDefaults.aircraftPitchWithRoll ||
         decodedDefaults.swapAircraftSticks ||
         !decodedDefaults.invertTurretPitch ||
         decodedDefaults.invertTurretYaw ||
+        decodedDefaults.vehicleMotionAimSensitivityPercent != 200 ||
         !decodedDefaults.controllerHapticsEnabled ||
+        !decodedDefaults.killSoundEnabled ||
         !decodedDefaults.sniperScopeSmoothingEnabled ||
+        !decodedDefaults.menuPointerSmoothingEnabled ||
         decodedDefaults.offHandGripStyle !=
             bfvr::settings::OffHandGripStyle::Hold ||
         decodedDefaults.handWeaponCrosshair !=
             bfvr::settings::WorldCrosshairMode::HitMarkerOnly ||
         decodedDefaults.mountedWeaponCrosshair !=
             bfvr::settings::WorldCrosshairMode::On ||
+        decodedDefaults.pointerItemCrosshair !=
+            bfvr::settings::WorldCrosshairMode::On ||
+        decodedDefaults.crosshairColor !=
+            bfvr::settings::CrosshairColor::Green ||
+        decodedDefaults.crosshairOpacityPercent != 100 ||
         !decodedDefaults.fxaaEnabled ||
         decodedDefaults.fxaaSharpeningPercent != 30 ||
         !decodedDefaults.ambientOcclusionEnabled ||
@@ -265,7 +283,12 @@ bool TestProductionSeedAndTypedValues(const std::wstring& directory)
         !decodedDefaults.waterReflectionsEnabled ||
          !decodedDefaults.bloomEnabled ||
         decodedDefaults.bloomThresholdPercent != 75 ||
-        decodedDefaults.bloomIntensityPercent != 45)
+        decodedDefaults.bloomIntensityPercent != 45 ||
+        decodedDefaults.colorProfile !=
+            bfvr::settings::ColorProfile::Original ||
+        decodedDefaults.colorExposureTenthsEv != 0 ||
+        decodedDefaults.colorContrastPercent != 0 ||
+        decodedDefaults.colorSaturationPercent != 0)
     {
         return false;
     }
@@ -295,20 +318,37 @@ bool TestProductionSeedAndTypedValues(const std::wstring& directory)
     changed.movementDirection =
         bfvr::settings::MovementDirection::OffHandController;
     changed.vrHeightAdjustmentCentimeters = 12;
+    changed.rightHandPositionXCentimeters = -12;
+    changed.rightHandPositionYCentimeters = 3;
+    changed.rightHandPositionZCentimeters = 17;
+    changed.leftHandPositionXCentimeters = 9;
+    changed.leftHandPositionYCentimeters = -4;
+    changed.leftHandPositionZCentimeters = -20;
     changed.standingEyeHeightCentimeters = 182;
     changed.comfortVignetteEnabled = false;
+    changed.deathCameraComfortEnabled = false;
+    changed.keepHudUpright = false;
+    changed.firstPersonVisibility =
+        bfvr::settings::FirstPersonVisibility::HandsOnly;
     changed.invertFlightPitch = true;
     changed.aircraftPitchWithRoll = true;
     changed.swapAircraftSticks = true;
     changed.invertTurretPitch = true;
     changed.invertTurretYaw = true;
+    changed.vehicleMotionAimSensitivityPercent = 270;
     changed.controllerHapticsEnabled = false;
+    changed.killSoundEnabled = false;
     changed.sniperScopeSmoothingEnabled = false;
+    changed.menuPointerSmoothingEnabled = false;
     changed.offHandGripStyle = bfvr::settings::OffHandGripStyle::Toggle;
     changed.handWeaponCrosshair =
         bfvr::settings::WorldCrosshairMode::HitMarkerOnly;
     changed.mountedWeaponCrosshair =
         bfvr::settings::WorldCrosshairMode::Off;
+    changed.pointerItemCrosshair =
+        bfvr::settings::WorldCrosshairMode::HitMarkerOnly;
+    changed.crosshairColor = bfvr::settings::CrosshairColor::Purple;
+    changed.crosshairOpacityPercent = 35;
     changed.fxaaEnabled = false;
     changed.fxaaSharpeningPercent = 80;
     changed.ambientOcclusionEnabled = false;
@@ -318,6 +358,10 @@ bool TestProductionSeedAndTypedValues(const std::wstring& directory)
     changed.bloomEnabled = false;
     changed.bloomThresholdPercent = 55;
     changed.bloomIntensityPercent = 70;
+    changed.colorProfile = bfvr::settings::ColorProfile::Filmic;
+    changed.colorExposureTenthsEv = -7;
+    changed.colorContrastPercent = 18;
+    changed.colorSaturationPercent = -35;
     auto encoded = defaults;
     bfvr::settings::EncodeUserSettings(changed, encoded);
     if (!store.Save(encoded) ||
@@ -325,8 +369,26 @@ bool TestProductionSeedAndTypedValues(const std::wstring& directory)
     {
         return false;
     }
+    auto legacySettings = defaults;
+    legacySettings.values["show_arms"] = "false";
+    legacySettings.values["3d_crosshair_color"] = "magenta";
+    legacySettings.values["3d_crosshair_opacity_percent"] = "0";
+    legacySettings.values["right_hand_position_x_centimeters"] = "21";
+    const auto legacyDecoded =
+        bfvr::settings::DecodeUserSettings(legacySettings);
+    if (legacyDecoded.firstPersonVisibility !=
+            bfvr::settings::FirstPersonVisibility::NoHandsOrArms ||
+        legacyDecoded.crosshairColor != bfvr::settings::CrosshairColor::Pink ||
+        legacyDecoded.crosshairOpacityPercent !=
+            bfvr::settings::kDefaultCrosshairOpacityPercent ||
+        legacyDecoded.rightHandPositionXCentimeters !=
+            bfvr::settings::kDefaultRightHandPositionXCentimeters)
+    {
+        return false;
+    }
     auto liveOnlyChange = decodedDefaults;
     liveOnlyChange.fxaaEnabled = false;
+    liveOnlyChange.rightHandPositionXCentimeters = 6;
     auto waterRestartChange = decodedDefaults;
     waterRestartChange.waterReflectionsEnabled = false;
     if (bfvr::settings::UserSettingsRequireRestart(
@@ -358,10 +420,31 @@ bool TestProductionSeedAndTypedValues(const std::wstring& directory)
             std::string::npos &&
         contents.find("manual_height_adjustment_centimeters = 12") !=
             std::string::npos &&
+        contents.find("right_hand_position_x_centimeters = -12") !=
+            std::string::npos &&
+        contents.find("right_hand_position_y_centimeters = 3") !=
+            std::string::npos &&
+        contents.find("right_hand_position_z_centimeters = 17") !=
+            std::string::npos &&
+        contents.find("left_hand_position_x_centimeters = 9") !=
+            std::string::npos &&
+        contents.find("left_hand_position_y_centimeters = -4") !=
+            std::string::npos &&
+        contents.find("left_hand_position_z_centimeters = -20") !=
+            std::string::npos &&
+        contents.find("It does not alter aim, firing, projectile direction") !=
+            std::string::npos &&
         contents.find("standing_eye_height_centimeters = 182") !=
             std::string::npos &&
         contents.find("comfort_vignette_enabled = false") !=
             std::string::npos &&
+        contents.find("death_camera_comfort_enabled = false") !=
+            std::string::npos &&
+        contents.find("keep_hud_upright = false") !=
+            std::string::npos &&
+        contents.find("native menus, the scoreboard path") !=
+            std::string::npos &&
+        contents.find("show_arms = hands_only") != std::string::npos &&
         contents.find("HUD, scope, Quick Menu, VR Settings") !=
             std::string::npos &&
         contents.find("does not affect vehicles, aircraft, turrets") !=
@@ -375,20 +458,38 @@ bool TestProductionSeedAndTypedValues(const std::wstring& directory)
             std::string::npos &&
         contents.find("including right-stick and right-grip motion aim") !=
             std::string::npos &&
+        contents.find("vehicle_motion_aim_sensitivity_percent = 270") !=
+            std::string::npos &&
         contents.find("controller_haptics_enabled = false") !=
             std::string::npos &&
+        contents.find("kill_sound_enabled = false") !=
+            std::string::npos &&
+        contents.find("independent voice") != std::string::npos &&
         contents.find("one firing impulse per accepted local weapon shot") !=
             std::string::npos &&
         contents.find("sniper_scope_smoothing_enabled = false") !=
             std::string::npos &&
+        contents.find("menu_pointer_smoothing_enabled = false") !=
+            std::string::npos &&
+        contents.find("native menus, the Quick Menu") !=
+            std::string::npos &&
         contents.find("deliberate movement catches up to raw immediately") !=
             std::string::npos &&
         contents.find("off_hand_grip_style = toggle") != std::string::npos &&
-        contents.find("Gadget crosshairs always remain enabled") !=
+        contents.find("Knife, throwable, and gadget items have their own setting") !=
             std::string::npos &&
         contents.find("hand_weapon_3d_crosshair = hit_marker_only") !=
             std::string::npos &&
         contents.find("mounted_weapon_3d_crosshair = off") !=
+            std::string::npos &&
+        contents.find(
+            "knife_throwable_gadget_3d_crosshair = hit_marker_only") !=
+            std::string::npos &&
+        contents.find("3d_crosshair_color = purple") !=
+            std::string::npos &&
+        contents.find("3d_crosshair_opacity_percent = 35") !=
+            std::string::npos &&
+        contents.find("Zero is deliberately rejected") !=
             std::string::npos &&
         contents.find("fxaa_enabled = false") != std::string::npos &&
         contents.find("fxaa_sharpening_percent = 80") !=
@@ -404,6 +505,14 @@ bool TestProductionSeedAndTypedValues(const std::wstring& directory)
         contents.find("bloom_threshold_percent = 55") !=
             std::string::npos &&
         contents.find("bloom_intensity_percent = 70") !=
+            std::string::npos &&
+        contents.find("color_profile = filmic") != std::string::npos &&
+        contents.find("color_exposure_ev = -0.7") != std::string::npos &&
+        contents.find("color_contrast_percent = 18") !=
+            std::string::npos &&
+        contents.find("color_saturation_percent = -35") !=
+            std::string::npos &&
+        contents.find("Ref2 HUD and separately composed interface layers are unchanged") !=
             std::string::npos &&
         [&]() {
             auto legacy = defaults;

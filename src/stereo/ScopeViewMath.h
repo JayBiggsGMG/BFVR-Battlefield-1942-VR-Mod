@@ -29,6 +29,15 @@ struct ScopeOverlayQuad
     float heightMeters = 0.0F;
 };
 
+struct IndependentScopeRollCamera
+{
+    Matrix4 cameraWorld = {};
+    // Roll that the weapon-owned mask/reticle must apply relative to VIEW.
+    // The world camera already contains the head's roll, so this is exactly
+    // weapon roll minus head roll, wrapped to the shortest signed angle.
+    float overlayRollRadians = 0.0F;
+};
+
 inline constexpr float kEyeFillingScopeOverlayDistanceMeters = 1.0F;
 
 enum class ScopeAimSource
@@ -40,10 +49,10 @@ enum class ScopeAimSource
 };
 
 // Unity-style bounded angular stabilization. History can influence the result
-// only while its total orientation error is below 0.25 degrees. At or beyond
+// only while its total orientation error is below 1.5 degrees. At or beyond
 // that boundary, deliberate motion catches up to raw immediately.
 inline constexpr float kScopeAimSmoothingMaximumErrorRadians =
-    0.004363323F;
+    0.026179939F;
 inline constexpr std::int64_t
     kScopeAimSmoothingMaximumSampleIntervalNanoseconds = 50'000'000;
 
@@ -57,6 +66,33 @@ struct ScopeAimSmoothingState
     bool valid = false;
 };
 
+enum class ScopeAimSmoothingOutcome
+{
+    InvalidMatrix,
+    Disabled,
+    InvalidLifetime,
+    InvalidControllerGeneration,
+    InvalidPredictedDisplayTime,
+    FirstSample,
+    DuplicateGeneration,
+    NonContinuousTime,
+    Smoothed,
+    AngularBoundaryBypass,
+    RotationFailure
+};
+
+// Optional read-only classification of the exact boundary taken by one
+// smoothing update. It exists so runtime diagnostics can distinguish a real
+// filtered sample from the intentionally raw fail-closed paths without
+// duplicating the filter's math or changing its output.
+struct ScopeAimSmoothingDiagnostics
+{
+    ScopeAimSmoothingOutcome outcome =
+        ScopeAimSmoothingOutcome::InvalidMatrix;
+    std::int64_t elapsedNanoseconds = 0;
+    float angularErrorRadians = 0.0F;
+};
+
 // Filters rotation only and always keeps the newest sample's translation.
 // Repeated reads of one controller generation return the identical result.
 // Disabling, changing weapon/soldier lifetime, or receiving an invalid sample
@@ -68,7 +104,8 @@ struct ScopeAimSmoothingState
     const void* soldier,
     std::int32_t controllerGeneration,
     std::int64_t predictedDisplayTime,
-    bool enabled) noexcept;
+    bool enabled,
+    ScopeAimSmoothingDiagnostics* diagnostics = nullptr) noexcept;
 
 void ResetD3D8ScopeAimSmoothing(
     ScopeAimSmoothingState& state) noexcept;
@@ -156,11 +193,16 @@ void ResetD3D8ScopeAimSmoothing(
     float normalFovRadians,
     float scopeFovRadians) noexcept;
 
-// Keeps the already head-adjusted camera position at the viewer while using
-// the authoritative controller-directed gun basis for the scoped view. The
-// weapon translation is deliberately ignored.
-[[nodiscard]] std::optional<Matrix4> MakeD3D8WeaponDirectedScopeCamera(
+// Keeps the already head-adjusted camera position at the viewer and the gun's
+// yaw/pitch aim, but separates their sideways roll. relativeHeadCamera is the
+// raw tracked head delta with no native game-camera swing mixed in. The
+// magnified world takes roll only from that head delta; the returned relative
+// roll lets the native mask/reticle take roll only from the weapon. Weapon
+// translation is ignored.
+[[nodiscard]] std::optional<IndependentScopeRollCamera>
+MakeD3D8IndependentRollScopeCamera(
     const Matrix4& headAdjustedCameraWorld,
+    const Matrix4& relativeHeadCamera,
     const Matrix4& controllerGunWorld) noexcept;
 
 // Applies relative scope zoom to an asymmetric OpenXR projection without

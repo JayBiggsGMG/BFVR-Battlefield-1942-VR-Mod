@@ -1904,6 +1904,52 @@ void TestBF1942SemanticDrawPolicy()
 
     signature = {
         0x0066800A,
+        0x0069922E,
+        true,
+        true,
+        4,
+        648,
+        0x152,
+        1,
+        0,
+        1,
+        1,
+        0,
+        0x00682E95};
+    if (bfvr::stereo::ClassifyBF1942Win32SemanticDraw(signature) !=
+        D3D8SemanticDrawClass::ProjectedTerrainShadow)
+    {
+        Fail(test, "live vector terrain-shadow draw boundary was rejected");
+    }
+    signature.producerReturnAddress = 0x00683ADD;
+    if (bfvr::stereo::ClassifyBF1942Win32SemanticDraw(signature) !=
+        D3D8SemanticDrawClass::ProjectedTerrainShadow)
+    {
+        Fail(test, "alternate linked terrain-shadow boundary was rejected");
+    }
+    signature.producerReturnAddress = 0x00683ADE;
+    if (bfvr::stereo::ClassifyBF1942Win32SemanticDraw(signature) !=
+        D3D8SemanticDrawClass::Unclassified)
+    {
+        Fail(test, "ordinary PatchCellBlock caller did not fail closed");
+    }
+    signature.producerReturnAddress = 0x00682E95;
+    signature.rendererReturnAddress = 0x0069922F;
+    if (bfvr::stereo::ClassifyBF1942Win32SemanticDraw(signature) !=
+        D3D8SemanticDrawClass::Unclassified)
+    {
+        Fail(test, "different terrain-shadow return anchor did not fail closed");
+    }
+    signature.rendererReturnAddress = 0x0069922E;
+    signature.primitiveType = 5;
+    if (bfvr::stereo::ClassifyBF1942Win32SemanticDraw(signature) !=
+        D3D8SemanticDrawClass::Unclassified)
+    {
+        Fail(test, "non-triangle-list terrain draw did not fail closed");
+    }
+
+    signature = {
+        0x0066800A,
         0x00654571,
         true,
         true,
@@ -1958,6 +2004,12 @@ void TestBF1942SemanticDrawPolicy()
         D3D8SemanticDrawClass::AnimatedMeshSkinning, true, 1.60F, 2.84F);
     const bool unclassifiedViewmodel = bfvr::stereo::IsBF1942FirstPersonArmDraw(
         D3D8SemanticDrawClass::Unclassified, true, 2.25F, 3.75F);
+    const bool scopedWorldSoldier = bfvr::stereo::IsBF1942FirstPersonArmDraw(
+        D3D8SemanticDrawClass::AnimatedMeshSkinning,
+        true,
+        2.25F,
+        3.75F,
+        true);
     if (!exactFirstPersonArm)
     {
         Fail(test, "exact animated first-person projection was not suppressible");
@@ -1970,30 +2022,126 @@ void TestBF1942SemanticDrawPolicy()
     {
         Fail(test, "unclassified first-person draw was suppressible");
     }
+    if (scopedWorldSoldier)
+    {
+        Fail(test, "magnified world soldier was suppressible as first-person arms");
+    }
+    using bfvr::stereo::D3D8FirstPersonPartKind;
+    if (!bfvr::stereo::ShouldClassifyBF1942FirstPersonPartDraw(
+            true,
+            exactFirstPersonArm,
+            false,
+            true) ||
+        bfvr::stereo::ShouldClassifyBF1942FirstPersonPartDraw(
+            true,
+            exactFirstPersonArm,
+            true,
+            true) ||
+        bfvr::stereo::ShouldClassifyBF1942FirstPersonPartDraw(
+            true,
+            exactFirstPersonArm,
+            false,
+            false) ||
+        bfvr::stereo::ShouldClassifyBF1942FirstPersonPartDraw(
+            true,
+            ordinarySoldier,
+            false,
+            true) ||
+        bfvr::stereo::ShouldClassifyBF1942FirstPersonPartDraw(
+            false,
+            exactFirstPersonArm,
+            false,
+            true))
+    {
+        Fail(test, "first-person part classification was not limited to hands-only candidate draws");
+    }
     if (!bfvr::stereo::ShouldSuppressBF1942FirstPersonArmDraw(
             true,
             exactFirstPersonArm,
-            false))
+            D3D8FirstPersonPartKind::UnknownOrCombined,
+            false,
+            true))
     {
-        Fail(test, "default native-arm policy did not suppress the exact draw");
+        Fail(test, "hands-only policy did not suppress an arm/combined draw");
     }
     if (bfvr::stereo::ShouldSuppressBF1942FirstPersonArmDraw(
             true,
             exactFirstPersonArm,
+            D3D8FirstPersonPartKind::SeparateHand,
+            false,
             true))
     {
-        Fail(test, "enabled native-arm policy still suppressed the exact draw");
+        Fail(test, "hands-only policy suppressed a separate hand draw");
+    }
+    if (!bfvr::stereo::ShouldSuppressBF1942FirstPersonArmDraw(
+            true,
+            exactFirstPersonArm,
+            D3D8FirstPersonPartKind::SeparateHand,
+            false,
+            false))
+    {
+        Fail(test, "no-hands policy retained a separate hand draw");
     }
     if (bfvr::stereo::ShouldSuppressBF1942FirstPersonArmDraw(
             true,
             ordinarySoldier,
-            true) ||
+            D3D8FirstPersonPartKind::UnknownOrCombined,
+            false,
+            false) ||
         bfvr::stereo::ShouldSuppressBF1942FirstPersonArmDraw(
             false,
             exactFirstPersonArm,
+            D3D8FirstPersonPartKind::UnknownOrCombined,
+            false,
             false))
     {
-        Fail(test, "native-arm policy broadened beyond presentation exact-arm draws");
+        Fail(test, "part visibility policy broadened beyond presentation first-person draws");
+    }
+    if (bfvr::stereo::ClassifyD3D8FirstPersonPartTemplateName(
+            "rRightHand") != D3D8FirstPersonPartKind::SeparateHand ||
+        bfvr::stereo::ClassifyD3D8FirstPersonPartTemplateName(
+            "1P-Reb_Left_Hand") != D3D8FirstPersonPartKind::SeparateHand ||
+        bfvr::stereo::ClassifyD3D8FirstPersonPartTemplateName(
+            "rBody") != D3D8FirstPersonPartKind::UnknownOrCombined ||
+        bfvr::stereo::ClassifyD3D8FirstPersonPartTemplateName(
+            "1PMonCal_body") != D3D8FirstPersonPartKind::UnknownOrCombined)
+    {
+        Fail(test, "first-person part template classification changed");
+    }
+    bfvr::stereo::D3D8FirstPersonPartClassificationCache partCache;
+    const bfvr::stereo::D3D8FirstPersonPartTemplateCacheKey handCacheKey = {
+        0x1000U,
+        {0x694C5031U, 0x65487466U, 0x646E6148U, 0x00000000U}};
+    D3D8FirstPersonPartKind cachedPartKind =
+        D3D8FirstPersonPartKind::UnknownOrCombined;
+    if (partCache.Find(handCacheKey, cachedPartKind))
+    {
+        Fail(test, "empty first-person part cache reported a hit");
+    }
+    partCache.Store(handCacheKey, D3D8FirstPersonPartKind::SeparateHand);
+    if (!partCache.Find(handCacheKey, cachedPartKind) ||
+        cachedPartKind != D3D8FirstPersonPartKind::SeparateHand)
+    {
+        Fail(test, "first-person hand classification was not cached");
+    }
+    auto recycledTemplateKey = handCacheKey;
+    recycledTemplateKey.nameStorageIdentity[3] = 0x72657632U;
+    if (partCache.Find(recycledTemplateKey, cachedPartKind))
+    {
+        Fail(test, "first-person part cache ignored changed template-name storage");
+    }
+    partCache.Store(
+        recycledTemplateKey,
+        D3D8FirstPersonPartKind::UnknownOrCombined);
+    if (!partCache.Find(recycledTemplateKey, cachedPartKind) ||
+        cachedPartKind != D3D8FirstPersonPartKind::UnknownOrCombined)
+    {
+        Fail(test, "negative first-person part classification was not cached");
+    }
+    partCache.Clear();
+    if (partCache.Find(recycledTemplateKey, cachedPartKind))
+    {
+        Fail(test, "first-person part cache clear retained an entry");
     }
     signature = {
         0x0066800A,
@@ -2189,6 +2337,10 @@ void TestD3D8FrameCompositionPolicy()
             D3D8FrameCompositionLayer::WorldEyes ||
         bfvr::stereo::SelectD3D8FrameCompositionLayer(
             D3D8SemanticDrawClass::AnimatedMeshSkinning,
+            D3D8DrawPolicy::StereoPerspective) !=
+            D3D8FrameCompositionLayer::WorldEyes ||
+        bfvr::stereo::SelectD3D8FrameCompositionLayer(
+            D3D8SemanticDrawClass::ProjectedTerrainShadow,
             D3D8DrawPolicy::StereoPerspective) !=
             D3D8FrameCompositionLayer::WorldEyes ||
         bfvr::stereo::SelectD3D8FrameCompositionLayer(

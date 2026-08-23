@@ -14,6 +14,10 @@ constexpr std::uint32_t kMinimumInfantryTurnSpeedPercent = 50;
 constexpr std::uint32_t kMaximumInfantryTurnSpeedPercent = 300;
 constexpr std::uint32_t kInfantryTurnSpeedStepPercent = 10;
 constexpr std::uint32_t kDefaultInfantryTurnSpeedPercent = 200;
+constexpr std::uint32_t kMinimumVehicleMotionAimSensitivityPercent = 50;
+constexpr std::uint32_t kMaximumVehicleMotionAimSensitivityPercent = 300;
+constexpr std::uint32_t kVehicleMotionAimSensitivityStepPercent = 10;
+constexpr std::uint32_t kDefaultVehicleMotionAimSensitivityPercent = 200;
 constexpr std::uint32_t kMinimumSnapTurnAngleDegrees = 15;
 constexpr std::uint32_t kMaximumSnapTurnAngleDegrees = 90;
 constexpr std::uint32_t kSnapTurnAngleStepDegrees = 15;
@@ -22,6 +26,15 @@ constexpr std::int32_t kMinimumVrHeightAdjustmentCentimeters = -30;
 constexpr std::int32_t kMaximumVrHeightAdjustmentCentimeters = 30;
 constexpr std::int32_t kVrHeightAdjustmentStepCentimeters = 1;
 constexpr std::int32_t kDefaultVrHeightAdjustmentCentimeters = 0;
+constexpr std::int32_t kMinimumHandPositionCentimeters = -20;
+constexpr std::int32_t kMaximumHandPositionCentimeters = 20;
+constexpr std::int32_t kHandPositionStepCentimeters = 1;
+constexpr std::int32_t kDefaultRightHandPositionXCentimeters = -7;
+constexpr std::int32_t kDefaultRightHandPositionYCentimeters = 4;
+constexpr std::int32_t kDefaultRightHandPositionZCentimeters = -5;
+constexpr std::int32_t kDefaultLeftHandPositionXCentimeters = -2;
+constexpr std::int32_t kDefaultLeftHandPositionYCentimeters = 6;
+constexpr std::int32_t kDefaultLeftHandPositionZCentimeters = -2;
 constexpr std::uint32_t kMinimumStandingEyeHeightCentimeters = 50;
 constexpr std::uint32_t kMaximumStandingEyeHeightCentimeters = 250;
 constexpr std::uint32_t kDefaultStandingEyeHeightCentimeters = 170;
@@ -45,6 +58,22 @@ constexpr std::uint32_t kMinimumBloomIntensityPercent = 0;
 constexpr std::uint32_t kMaximumBloomIntensityPercent = 100;
 constexpr std::uint32_t kBloomIntensityStepPercent = 5;
 constexpr std::uint32_t kDefaultBloomIntensityPercent = 45;
+constexpr std::int32_t kMinimumColorExposureTenthsEv = -10;
+constexpr std::int32_t kMaximumColorExposureTenthsEv = 10;
+constexpr std::int32_t kColorExposureStepTenthsEv = 1;
+constexpr std::int32_t kDefaultColorExposureTenthsEv = 0;
+constexpr std::int32_t kMinimumColorContrastPercent = -50;
+constexpr std::int32_t kMaximumColorContrastPercent = 50;
+constexpr std::int32_t kColorContrastStepPercent = 1;
+constexpr std::int32_t kDefaultColorContrastPercent = 0;
+constexpr std::int32_t kMinimumColorSaturationPercent = -100;
+constexpr std::int32_t kMaximumColorSaturationPercent = 100;
+constexpr std::int32_t kColorSaturationStepPercent = 1;
+constexpr std::int32_t kDefaultColorSaturationPercent = 0;
+constexpr std::uint32_t kMinimumCrosshairOpacityPercent = 5;
+constexpr std::uint32_t kMaximumCrosshairOpacityPercent = 100;
+constexpr std::uint32_t kCrosshairOpacityStepPercent = 5;
+constexpr std::uint32_t kDefaultCrosshairOpacityPercent = 100;
 
 enum class OffHandGripStyle : std::uint32_t
 {
@@ -57,6 +86,32 @@ enum class WorldCrosshairMode : std::uint32_t
     Off = 0,
     On,
     HitMarkerOnly
+};
+
+enum class CrosshairColor : std::uint32_t
+{
+    White = 0,
+    Green,
+    Blue,
+    Purple,
+    Red,
+    Pink,
+    Orange,
+    Yellow
+};
+
+enum class ColorProfile : std::uint32_t
+{
+    Original = 0,
+    Filmic,
+    Vibrant
+};
+
+enum class FirstPersonVisibility : std::uint32_t
+{
+    ArmsAndHands = 0,
+    HandsOnly,
+    NoHandsOrArms
 };
 
 enum class PlayMode : std::uint32_t
@@ -88,20 +143,44 @@ struct UserSettingsValues
     MovementDirection movementDirection = MovementDirection::Head;
     std::int32_t vrHeightAdjustmentCentimeters =
         kDefaultVrHeightAdjustmentCentimeters;
+    std::int32_t rightHandPositionXCentimeters =
+        kDefaultRightHandPositionXCentimeters;
+    std::int32_t rightHandPositionYCentimeters =
+        kDefaultRightHandPositionYCentimeters;
+    std::int32_t rightHandPositionZCentimeters =
+        kDefaultRightHandPositionZCentimeters;
+    std::int32_t leftHandPositionXCentimeters =
+        kDefaultLeftHandPositionXCentimeters;
+    std::int32_t leftHandPositionYCentimeters =
+        kDefaultLeftHandPositionYCentimeters;
+    std::int32_t leftHandPositionZCentimeters =
+        kDefaultLeftHandPositionZCentimeters;
     std::uint32_t standingEyeHeightCentimeters =
         kDefaultStandingEyeHeightCentimeters;
     bool comfortVignetteEnabled = false;
+    bool deathCameraComfortEnabled = true;
+    bool keepHudUpright = true;
+    FirstPersonVisibility firstPersonVisibility =
+        FirstPersonVisibility::ArmsAndHands;
     bool invertFlightPitch = false;
     bool aircraftPitchWithRoll = false;
     bool swapAircraftSticks = false;
     bool invertTurretPitch = true;
     bool invertTurretYaw = false;
+    std::uint32_t vehicleMotionAimSensitivityPercent =
+        kDefaultVehicleMotionAimSensitivityPercent;
     bool controllerHapticsEnabled = true;
+    bool killSoundEnabled = true;
     bool sniperScopeSmoothingEnabled = true;
+    bool menuPointerSmoothingEnabled = true;
     OffHandGripStyle offHandGripStyle = OffHandGripStyle::Hold;
     WorldCrosshairMode handWeaponCrosshair =
         WorldCrosshairMode::HitMarkerOnly;
     WorldCrosshairMode mountedWeaponCrosshair = WorldCrosshairMode::On;
+    WorldCrosshairMode pointerItemCrosshair = WorldCrosshairMode::On;
+    CrosshairColor crosshairColor = CrosshairColor::Green;
+    std::uint32_t crosshairOpacityPercent =
+        kDefaultCrosshairOpacityPercent;
     bool fxaaEnabled = true;
     std::uint32_t fxaaSharpeningPercent = kDefaultFxaaSharpeningPercent;
     bool ambientOcclusionEnabled = true;
@@ -113,6 +192,10 @@ struct UserSettingsValues
     bool bloomEnabled = true;
     std::uint32_t bloomThresholdPercent = kDefaultBloomThresholdPercent;
     std::uint32_t bloomIntensityPercent = kDefaultBloomIntensityPercent;
+    ColorProfile colorProfile = ColorProfile::Original;
+    std::int32_t colorExposureTenthsEv = kDefaultColorExposureTenthsEv;
+    std::int32_t colorContrastPercent = kDefaultColorContrastPercent;
+    std::int32_t colorSaturationPercent = kDefaultColorSaturationPercent;
     bool headTrackedAudioEnabled = true;
     bool headTrackedAudioPositionEnabled = true;
 

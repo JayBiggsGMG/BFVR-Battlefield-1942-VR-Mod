@@ -12,7 +12,9 @@
 #include "openxr/OpenXRControllerBindingPolicy.h"
 #include "openxr/OpenXRControllerShortcutPolicy.h"
 #include "openxr/OpenXRQuickMenu.h"
+#include "openxr/OpenXRPerformanceSummary.h"
 #include "openxr/OpenXRPresentationSupport.h"
+#include "openxr/OpenXRHudRoll.h"
 #include "openxr/OpenXRScopeOverlayLayer.h"
 #include "openxr/OpenXRTrackingBasis.h"
 #include <algorithm>
@@ -1540,7 +1542,11 @@ public:
         return true;
     }
 
-    bool CopyToSwapchain(Swapchain& target, ID3D11Texture2D* source, const wchar_t* label)
+    bool CopyToSwapchain(
+        Swapchain& target,
+        ID3D11Texture2D* source,
+        const wchar_t* label,
+        OpenXRSwapchainPerformanceSlot performanceSlot)
     {
         if (!ValidateSourceTexture(source, target, label))
         {
@@ -1549,7 +1555,12 @@ public:
 
         uint32_t imageIndex = 0;
         XrSwapchainImageAcquireInfo acquireInfo{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
+        const std::int64_t acquireStarted =
+            performanceSummary.BeginSample();
         XrResult result = api.acquireSwapchainImage(target.handle, &acquireInfo, &imageIndex);
+        performanceSummary.EndSample(
+            OpenXRPerformanceStage::SwapchainAcquire,
+            acquireStarted);
         if (XR_FAILED(result) || imageIndex >= target.images.size())
         {
             WriteLog(
@@ -1563,10 +1574,27 @@ public:
         bool released = false;
         XrSwapchainImageWaitInfo waitInfo{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
         waitInfo.timeout = XR_INFINITE_DURATION;
+        const std::int64_t waitStarted = performanceSummary.BeginSample();
         result = api.waitSwapchainImage(target.handle, &waitInfo);
+        performanceSummary.EndSample(
+            performanceSlot == OpenXRSwapchainPerformanceSlot::LeftWorld
+                ? OpenXRPerformanceStage::LeftWorldSwapchainWait
+                : performanceSlot == OpenXRSwapchainPerformanceSlot::RightWorld
+                ? OpenXRPerformanceStage::RightWorldSwapchainWait
+                : OpenXRPerformanceStage::UiSwapchainWait,
+            waitStarted);
         if (XR_SUCCEEDED(result) && target.images[imageIndex].texture != nullptr)
         {
+            const std::int64_t copyStarted = performanceSummary.BeginSample();
             context->CopyResource(target.images[imageIndex].texture, source);
+            performanceSummary.EndSample(
+                performanceSlot == OpenXRSwapchainPerformanceSlot::LeftWorld
+                    ? OpenXRPerformanceStage::LeftWorldCopyEnqueue
+                    : performanceSlot ==
+                        OpenXRSwapchainPerformanceSlot::RightWorld
+                    ? OpenXRPerformanceStage::RightWorldCopyEnqueue
+                    : OpenXRPerformanceStage::UiCopyEnqueue,
+                copyStarted);
         }
         else
         {
@@ -1578,7 +1606,11 @@ public:
         }
 
         XrSwapchainImageReleaseInfo releaseInfo{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
+        const std::int64_t releaseStarted = performanceSummary.BeginSample();
         const XrResult releaseResult = api.releaseSwapchainImage(target.handle, &releaseInfo);
+        performanceSummary.EndSample(
+            OpenXRPerformanceStage::SwapchainRelease,
+            releaseStarted);
         released = XR_SUCCEEDED(releaseResult);
         if (!released)
         {
@@ -1606,7 +1638,12 @@ public:
 
         XrFrameWaitInfo waitInfo{XR_TYPE_FRAME_WAIT_INFO};
         pendingFrameState = {XR_TYPE_FRAME_STATE};
+        const std::int64_t waitFrameStarted =
+            performanceSummary.BeginSample();
         XrResult result = api.waitFrame(session, &waitInfo, &pendingFrameState);
+        performanceSummary.EndSample(
+            OpenXRPerformanceStage::WaitFrame,
+            waitFrameStarted);
         if (XR_FAILED(result))
         {
             WriteLog(
@@ -1617,7 +1654,12 @@ public:
         }
 
         XrFrameBeginInfo beginInfo{XR_TYPE_FRAME_BEGIN_INFO};
+        const std::int64_t beginFrameStarted =
+            performanceSummary.BeginSample();
         result = api.beginFrame(session, &beginInfo);
+        performanceSummary.EndSample(
+            OpenXRPerformanceStage::BeginFrame,
+            beginFrameStarted);
         if (XR_FAILED(result))
         {
             WriteLog(
@@ -1723,8 +1765,8 @@ public:
             {
                 WriteLog(
                     recentered
-                        ? L"Right B 2.5-second hold requested a forward recenter."
-                        : L"Right B 2.5-second hold could not recenter because head tracking was unavailable.");
+                        ? L"Right B 2-second hold requested a forward recenter."
+                        : L"Right B 2-second hold could not recenter because head tracking was unavailable.");
                 controllerRecenterPending = false;
             }
             if (recentered)
@@ -1795,7 +1837,8 @@ public:
         OpenXRUiReferenceMode uiReferenceMode,
         const OpenXRPresentationPose* worldUiAnchor,
         OpenXRUiPresentationMode uiPresentationMode,
-        OpenXRSwapchainContentMode swapchainContentMode)
+        OpenXRSwapchainContentMode swapchainContentMode,
+        const bool keepHudUpright)
     {
         if (!frameInProgress)
         {
@@ -1821,9 +1864,21 @@ public:
             if (updateSwapchainImages)
             {
                 imagesReady =
-                    CopyToSwapchain(eyeSwapchains[0], textures.leftWorld, L"left-world") &&
-                    CopyToSwapchain(eyeSwapchains[1], textures.rightWorld, L"right-world") &&
-                    CopyToSwapchain(uiSwapchain, textures.ref2Ui, L"Ref2-UI");
+                    CopyToSwapchain(
+                        eyeSwapchains[0],
+                        textures.leftWorld,
+                        L"left-world",
+                        OpenXRSwapchainPerformanceSlot::LeftWorld) &&
+                    CopyToSwapchain(
+                        eyeSwapchains[1],
+                        textures.rightWorld,
+                        L"right-world",
+                        OpenXRSwapchainPerformanceSlot::RightWorld) &&
+                    CopyToSwapchain(
+                        uiSwapchain,
+                        textures.ref2Ui,
+                        L"Ref2-UI",
+                        OpenXRSwapchainPerformanceSlot::Ui);
                 swapchainImagesValid = imagesReady;
             }
             else
@@ -1868,7 +1923,10 @@ public:
                         : 1.0F / 90.0F;
                     layerCount += static_cast<std::uint32_t>(
                         comfortVignette.AppendLayers(
-                            comfortVignetteTarget, deltaSeconds, viewSpace,
+                            comfortVignetteTarget,
+                            deathComfortVignetteTarget,
+                            deltaSeconds,
+                            viewSpace,
                             pendingHeadPose, pendingViews,
                             layers.data() + layerCount,
                             layers.size() - layerCount));
@@ -1879,6 +1937,16 @@ public:
                         OpenXRUiPresentationMode::EyeFillingScope &&
                     pendingHeadPoseValid)
                 {
+                    XrQuaternionf scopeRollInView = {};
+                    scopeRollInView.w = 1.0F;
+                    if (worldUiAnchor != nullptr)
+                    {
+                        scopeRollInView = {
+                            worldUiAnchor->orientationX,
+                            worldUiAnchor->orientationY,
+                            worldUiAnchor->orientationZ,
+                            worldUiAnchor->orientationW};
+                    }
                     submittedEyeFillingScope =
                         BuildOpenXREyeFillingScopeLayers(
                             viewSpace,
@@ -1887,6 +1955,7 @@ public:
                             uiSwapchain.height,
                             pendingHeadPose,
                             pendingViews,
+                            scopeRollInView,
                             scopeQuadLayers);
                     if (submittedEyeFillingScope)
                     {
@@ -1916,6 +1985,18 @@ public:
                     XrPosef uiPose = {};
                     uiPose.orientation.w = 1.0F;
                     uiPose.position.z = -configuration.uiDistanceMeters;
+                    if (uiReferenceMode ==
+                            OpenXRUiReferenceMode::HeadLocked &&
+                        keepHudUpright && pendingHeadPoseValid)
+                    {
+                        XrQuaternionf uprightRoll = {};
+                        if (BuildOpenXRGravityUprightViewRoll(
+                                pendingHeadPose.orientation,
+                                uprightRoll))
+                        {
+                            uiPose.orientation = uprightRoll;
+                        }
+                    }
                     if (uiReferenceMode ==
                         OpenXRUiReferenceMode::WorldLocked)
                     {
@@ -2020,7 +2101,16 @@ public:
         endInfo.environmentBlendMode = blendMode;
         endInfo.layerCount = haveLayers ? layerCount : 0;
         endInfo.layers = haveLayers ? layers.data() : nullptr;
+        const std::int64_t endFrameStarted =
+            performanceSummary.BeginSample();
         const XrResult result = api.endFrame(session, &endInfo);
+        performanceSummary.EndSample(
+            OpenXRPerformanceStage::EndFrame,
+            endFrameStarted);
+        performanceSummary.ReportIfDue(
+            GetTickCount(),
+            logCallback,
+            logContext);
         frameInProgress = false;
         pendingViewsValid = false;
         pendingHeadPoseValid = false;
@@ -2041,7 +2131,8 @@ public:
         const OpenXRPresentationTextures& textures,
         OpenXRUiReferenceMode uiReferenceMode,
         const OpenXRPresentationPose* worldUiAnchor,
-        OpenXRUiPresentationMode uiPresentationMode)
+        OpenXRUiPresentationMode uiPresentationMode,
+        const bool keepHudUpright)
     {
         OpenXRPresentationFrameState frameState = {};
         return BeginFrame(frameState) &&
@@ -2050,7 +2141,8 @@ public:
                 uiReferenceMode,
                 worldUiAnchor,
                 uiPresentationMode,
-                OpenXRSwapchainContentMode::Update);
+                OpenXRSwapchainContentMode::Update,
+                keepHudUpright);
     }
 
     void DestroySwapchain(Swapchain& swapchain)
@@ -2138,6 +2230,7 @@ public:
 
     void Shutdown()
     {
+        performanceSummary.ReportFinal(logCallback, logContext);
         if (frameInProgress && api.endFrame != nullptr)
         {
             XrFrameEndInfo endInfo{XR_TYPE_FRAME_END_INFO};
@@ -2209,7 +2302,9 @@ public:
         worldLockedUiPoseValid = false;
         uiReferenceModeInitialized = false;
         comfortVignetteTarget = 0.0F;
+        deathComfortVignetteTarget = 0.0F;
         textureRequirements = {};
+        performanceSummary.Reset();
     }
 
     HMODULE loader = nullptr;
@@ -2243,6 +2338,7 @@ public:
     OpenXRQuickMenu quickMenu = {};
     OpenXRComfortVignette comfortVignette = {};
     OpenXRTrackingBasis trackingBasis = {};
+    OpenXRPerformanceSummary performanceSummary = {};
     OpenXRPresentationConfiguration configuration = {};
     OpenXRUiLayerMode activeUiLayerMode = OpenXRUiLayerMode::Quad;
     OpenXRPresentationTextureRequirements textureRequirements = {};
@@ -2273,6 +2369,7 @@ public:
     bool lastEyeFillingScopePresented = false;
     bool scopePresentationInitialized = false;
     float comfortVignetteTarget = 0.0F;
+    float deathComfortVignetteTarget = 0.0F;
     XrSessionState sessionState = XR_SESSION_STATE_UNKNOWN;
     XrResult lastControllerSyncResult = XR_SUCCESS;
 };
@@ -2525,14 +2622,16 @@ bool OpenXRPresentation::SubmitFrame(
     const OpenXRPresentationTextures& textures,
     OpenXRUiReferenceMode uiReferenceMode,
     const OpenXRPresentationPose* worldUiAnchor,
-    OpenXRUiPresentationMode uiPresentationMode)
+    OpenXRUiPresentationMode uiPresentationMode,
+    const bool keepHudUpright)
 {
     return impl_ != nullptr &&
         impl_->SubmitFrame(
             textures,
             uiReferenceMode,
             worldUiAnchor,
-            uiPresentationMode);
+            uiPresentationMode,
+            keepHudUpright);
 }
 bool OpenXRPresentation::BeginFrame(OpenXRPresentationFrameState& frameState)
 {
@@ -2543,7 +2642,8 @@ bool OpenXRPresentation::EndFrame(
     OpenXRUiReferenceMode uiReferenceMode,
     const OpenXRPresentationPose* worldUiAnchor,
     OpenXRUiPresentationMode uiPresentationMode,
-    OpenXRSwapchainContentMode swapchainContentMode)
+    OpenXRSwapchainContentMode swapchainContentMode,
+    const bool keepHudUpright)
 {
     return impl_ != nullptr &&
         impl_->EndFrame(
@@ -2551,7 +2651,8 @@ bool OpenXRPresentation::EndFrame(
             uiReferenceMode,
             worldUiAnchor,
             uiPresentationMode,
-            swapchainContentMode);
+            swapchainContentMode,
+            keepHudUpright);
 }
 stereo::QuickMenuSelection
 OpenXRPresentation::TakeQuickMenuSelection() noexcept
@@ -2559,6 +2660,13 @@ OpenXRPresentation::TakeQuickMenuSelection() noexcept
     return impl_ == nullptr
         ? stereo::QuickMenuSelection::None
         : impl_->quickMenu.TakeReleasedSelection();
+}
+OpenXRNativeMenuSoundRequests
+OpenXRPresentation::TakeNativeMenuSoundRequests() noexcept
+{
+    return impl_ == nullptr
+        ? OpenXRNativeMenuSoundRequests{}
+        : impl_->quickMenu.TakeNativeMenuSoundRequests();
 }
 void OpenXRPresentation::OpenSettingsMenu() noexcept
 {
@@ -2575,12 +2683,17 @@ void OpenXRPresentation::SetMountedCameraDecoupled(
         impl_->quickMenu.SetMountedCameraDecoupled(decoupled);
     }
 }
-void OpenXRPresentation::SetComfortVignetteTarget(float strength) noexcept
+void OpenXRPresentation::SetComfortVignetteTargets(
+    float movementStrength,
+    float deathBlend) noexcept
 {
     if (impl_ != nullptr)
     {
-        impl_->comfortVignetteTarget = std::isfinite(strength)
-            ? std::clamp(strength, 0.0F, 1.0F)
+        impl_->comfortVignetteTarget = std::isfinite(movementStrength)
+            ? std::clamp(movementStrength, 0.0F, 1.0F)
+            : 0.0F;
+        impl_->deathComfortVignetteTarget = std::isfinite(deathBlend)
+            ? std::clamp(deathBlend, 0.0F, 1.0F)
             : 0.0F;
     }
 }

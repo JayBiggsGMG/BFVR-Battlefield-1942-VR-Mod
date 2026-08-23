@@ -243,7 +243,6 @@ void LogWaterPassState(
         device,
         kD3DRenderStateLocalViewer,
         &localViewer);
-
     constexpr std::array<DWORD, 8> kWaterStageStates = {
         1,  // D3DTSS_COLOROP
         2,  // D3DTSS_COLORARG1

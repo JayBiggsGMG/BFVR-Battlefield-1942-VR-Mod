@@ -295,6 +295,40 @@ bool TestInfantryPresentationIgnoresNativeAimAndOwnsArtificialTurn() noexcept
             recenterYaw);
 }
 
+bool TestInfantryPresentationTurnsThroughTransientBodyYawLoss() noexcept
+{
+    constexpr float degreesToRadians = 0.01745329251994329577F;
+    bfvr::D3D8RuntimeView head = {};
+    head.orientationW = 1.0F;
+    bfvr::D3D8TrackingAnchor anchor = {};
+    const bfvr::D3D8TrackingContext infantry = {
+        bfvr::D3D8TrackingContextKind::Infantry, 0x1000};
+
+    anchor.Update(
+        head, true, infantry, 1'000'000'000, 0,
+        false, true, 1.10F, 1.70F, 0.0F,
+        {0.0F, 10.0F * degreesToRadians, true});
+    anchor.Update(
+        head, true, infantry, 1'010'000'000, 0,
+        false, true, 1.10F, 1.70F, 0.0F,
+        {30.0F, 0.0F, false});
+    float presentationYaw = 0.0F;
+    if (!anchor.ReadInfantryPresentationYaw(presentationYaw) ||
+        !NearlyEqual(presentationYaw, 40.0F * degreesToRadians))
+    {
+        return false;
+    }
+
+    // When the pitched/temporarily unreadable native basis returns and has
+    // caught up by 20 degrees, it must not replay, cancel, or double the turn.
+    anchor.Update(
+        head, true, infantry, 1'020'000'000, 0,
+        false, true, 1.10F, 1.70F, 0.0F,
+        {0.0F, 30.0F * degreesToRadians, true});
+    return anchor.ReadInfantryPresentationYaw(presentationYaw) &&
+        NearlyEqual(presentationYaw, 40.0F * degreesToRadians);
+}
+
 bool TestControllerBodyBasisCorrectionMatchesFreshAnchorRebase() noexcept
 {
     constexpr float degreesToRadians = 0.01745329251994329577F;
@@ -369,6 +403,7 @@ int main()
         !TestTransientVehicleContextsDoNotPinHeadPose() ||
         !TestVehicleSeatChangeAndExitShareCommittedGeneration() ||
         !TestInfantryPresentationIgnoresNativeAimAndOwnsArtificialTurn() ||
+        !TestInfantryPresentationTurnsThroughTransientBodyYawLoss() ||
         !TestControllerBodyBasisCorrectionMatchesFreshAnchorRebase())
     {
         std::fprintf(

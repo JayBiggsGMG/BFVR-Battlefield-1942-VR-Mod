@@ -60,6 +60,10 @@ cbuffer Configuration : register(b0)
     float screenSpaceGlobalIlluminationIntensity;
     float screenSpaceGlobalIlluminationDebugMode;
     float fxaaSharpeningStrength;
+    float colorProfile;
+    float colorExposureEv;
+    float colorContrast;
+    float colorSaturation;
     float2 configurationPadding2;
 };
 
@@ -68,6 +72,40 @@ float3 SrgbToLinear(float3 color)
     const float3 low = color / 12.92;
     const float3 high = pow((color + 0.055) / 1.055, 2.4);
     return lerp(high, low, step(color, 0.04045));
+}
+
+float3 ApplyColorGrading(float3 color)
+{
+    if (colorProfile < 0.5 && abs(colorExposureEv) < 0.0001 &&
+        abs(colorContrast) < 0.0001 && abs(colorSaturation) < 0.0001)
+    {
+        // Preserve the established neutral output path apart from the same
+        // UNORM destination clamp that already bounded the prior shader.
+        return saturate(color);
+    }
+    color = max(color, 0.0) * exp2(colorExposureEv);
+    if (colorProfile > 0.5 && colorProfile < 1.5)
+    {
+        // Restrained fitted filmic toe/shoulder. This is deliberately applied
+        // in the final linear world pass rather than baked into game assets.
+        color = saturate(
+            (color * (2.51 * color + 0.03)) /
+            (color * (2.43 * color + 0.59) + 0.14));
+    }
+    else if (colorProfile >= 1.5)
+    {
+        // Bounded vivid profile: preserve white, gently lift midtones, then
+        // increase chroma without creating an additional render pass.
+        color = color * 1.10 / (1.0 + color * 0.10);
+        const float vibrantLuma = dot(
+            color, float3(0.2126, 0.7152, 0.0722));
+        color = lerp(vibrantLuma.xxx, color, 1.18);
+    }
+    color = max(
+        (color - 0.18) * (1.0 + colorContrast) + 0.18,
+        0.0);
+    const float luma = dot(color, float3(0.2126, 0.7152, 0.0722));
+    return saturate(lerp(luma.xxx, color, 1.0 + colorSaturation));
 }
 
 float4 main(float4 position : SV_Position, float2 texcoord : TEXCOORD0) : SV_Target
@@ -100,15 +138,22 @@ float4 main(float4 position : SV_Position, float2 texcoord : TEXCOORD0) : SV_Tar
 #if BFVR_WATER_REFLECTIONS
     const float4 reflection = waterReflectionTexture.SampleLevel(
         sourceSampler, texcoord, 0.0);
-    linearColor = lerp(
-        linearColor,
-        reflection.rgb,
-        saturate(reflection.a * waterReflectionIntensity));
+    // BF1942's blended foliage does not write depth, so the transported water
+    // mask can remain set behind a visible tree card. Preserve the complete
+    // source pixel and add a restrained reflection only into its remaining
+    // brightness instead of replacing foreground color.
+    const float reflectionStrength =
+        saturate(reflection.a * waterReflectionIntensity) * 0.20;
+    const float3 remainingBrightness =
+        float3(1.0, 1.0, 1.0) - saturate(linearColor);
+    linearColor = linearColor +
+        reflection.rgb * reflectionStrength * remainingBrightness;
 #endif
 #if BFVR_BLOOM
     linearColor += bloomTexture.SampleLevel(
         sourceSampler, texcoord, 0.0).rgb * bloomIntensity;
 #endif
+    linearColor = ApplyColorGrading(linearColor);
     return float4(linearColor, encoded.a);
 }
 )";
@@ -139,6 +184,10 @@ cbuffer Configuration : register(b0)
     float screenSpaceGlobalIlluminationIntensity;
     float screenSpaceGlobalIlluminationDebugMode;
     float fxaaSharpeningStrength;
+    float colorProfile;
+    float colorExposureEv;
+    float colorContrast;
+    float colorSaturation;
     float2 configurationPadding2;
 };
 
@@ -158,6 +207,34 @@ float3 SrgbToLinear(float3 color)
     const float3 low = color / 12.92;
     const float3 high = pow((color + 0.055) / 1.055, 2.4);
     return lerp(high, low, step(color, 0.04045));
+}
+
+float3 ApplyColorGrading(float3 color)
+{
+    if (colorProfile < 0.5 && abs(colorExposureEv) < 0.0001 &&
+        abs(colorContrast) < 0.0001 && abs(colorSaturation) < 0.0001)
+    {
+        return saturate(color);
+    }
+    color = max(color, 0.0) * exp2(colorExposureEv);
+    if (colorProfile > 0.5 && colorProfile < 1.5)
+    {
+        color = saturate(
+            (color * (2.51 * color + 0.03)) /
+            (color * (2.43 * color + 0.59) + 0.14));
+    }
+    else if (colorProfile >= 1.5)
+    {
+        color = color * 1.10 / (1.0 + color * 0.10);
+        const float vibrantLuma = dot(
+            color, float3(0.2126, 0.7152, 0.0722));
+        color = lerp(vibrantLuma.xxx, color, 1.18);
+    }
+    color = max(
+        (color - 0.18) * (1.0 + colorContrast) + 0.18,
+        0.0);
+    const float luma = dot(color, float3(0.2126, 0.7152, 0.0722));
+    return saturate(lerp(luma.xxx, color, 1.0 + colorSaturation));
 }
 
 float4 main(float4 position : SV_Position, float2 texcoord : TEXCOORD0) : SV_Target
@@ -297,15 +374,18 @@ float4 main(float4 position : SV_Position, float2 texcoord : TEXCOORD0) : SV_Tar
 #if BFVR_WATER_REFLECTIONS
     const float4 reflection = waterReflectionTexture.SampleLevel(
         sourceSampler, texcoord, 0.0);
-    linearColor = lerp(
-        linearColor,
-        reflection.rgb,
-        saturate(reflection.a * waterReflectionIntensity));
+    const float reflectionStrength =
+        saturate(reflection.a * waterReflectionIntensity) * 0.20;
+    const float3 remainingBrightness =
+        float3(1.0, 1.0, 1.0) - saturate(linearColor);
+    linearColor = linearColor +
+        reflection.rgb * reflectionStrength * remainingBrightness;
 #endif
 #if BFVR_BLOOM
     linearColor += bloomTexture.SampleLevel(
         sourceSampler, texcoord, 0.0).rgb * bloomIntensity;
 #endif
+    linearColor = ApplyColorGrading(linearColor);
     return float4(linearColor, center.a);
 }
 )";
@@ -537,6 +617,10 @@ bool D3D11TextureScaler::Initialize(
             nullptr,
             &vertexShader_);
     }
+    else
+    {
+        result = E_FAIL;
+    }
     if (SUCCEEDED(result) &&
         CompileShader(
             kTexturePixelShader,
@@ -550,6 +634,10 @@ bool D3D11TextureScaler::Initialize(
             pixelBytecode->GetBufferSize(),
             nullptr,
             &colorPixelShader_);
+    }
+    else
+    {
+        result = E_FAIL;
     }
     if (pixelBytecode != nullptr)
     {
@@ -574,6 +662,10 @@ bool D3D11TextureScaler::Initialize(
             pixelBytecode->GetBufferSize(),
             nullptr,
             &fxaaPixelShader_);
+    }
+    else
+    {
+        result = E_FAIL;
     }
     if (pixelBytecode != nullptr)
     {
@@ -602,6 +694,10 @@ bool D3D11TextureScaler::Initialize(
                 nullptr,
                 &compositeColorPixelShader_);
         }
+        else
+        {
+            result = E_FAIL;
+        }
         if (pixelBytecode != nullptr)
         {
             pixelBytecode->Release();
@@ -624,6 +720,10 @@ bool D3D11TextureScaler::Initialize(
                 pixelBytecode->GetBufferSize(),
                 nullptr,
                 &compositeFxaaPixelShader_);
+        }
+        else
+        {
+            result = E_FAIL;
         }
         if (pixelBytecode != nullptr)
         {
@@ -648,6 +748,10 @@ bool D3D11TextureScaler::Initialize(
                 nullptr,
                 &bloomDownsamplePixelShader_);
         }
+        else
+        {
+            result = E_FAIL;
+        }
         if (pixelBytecode != nullptr)
         {
             pixelBytecode->Release();
@@ -666,6 +770,10 @@ bool D3D11TextureScaler::Initialize(
                 pixelBytecode->GetBufferSize(),
                 nullptr,
                 &bloomBlurHorizontalPixelShader_);
+        }
+        else
+        {
+            result = E_FAIL;
         }
         if (pixelBytecode != nullptr)
         {
@@ -686,6 +794,10 @@ bool D3D11TextureScaler::Initialize(
                 nullptr,
                 &bloomBlurVerticalPixelShader_);
         }
+        else
+        {
+            result = E_FAIL;
+        }
         if (pixelBytecode != nullptr)
         {
             pixelBytecode->Release();
@@ -694,7 +806,7 @@ bool D3D11TextureScaler::Initialize(
     }
 
     D3D11_BUFFER_DESC configurationDescription = {};
-    configurationDescription.ByteWidth = sizeof(float) * 12;
+    configurationDescription.ByteWidth = sizeof(float) * 16;
     configurationDescription.Usage = D3D11_USAGE_DEFAULT;
     configurationDescription.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
     if (SUCCEEDED(result))
@@ -775,7 +887,7 @@ bool D3D11TextureScaler::Initialize(
     else if (enableWaterReflections)
     {
         WriteLog(
-            L"D3D11 texture scaler initialized with a water-reflection composite input; the input is sampled only for world eyes and Ref2 UI remains isolated.");
+            L"D3D11 texture scaler initialized with a source-preserving soft-add Water SSR input capped at 0.20 strength; the input is sampled only for world eyes and Ref2 UI remains isolated.");
     }
     else if (enableBloom)
     {
@@ -814,7 +926,8 @@ bool D3D11TextureScaler::ScaleAspectFit(
     float waterReflectionIntensity,
     bool applyBloom,
     float bloomThreshold,
-    float bloomIntensity)
+    float bloomIntensity,
+    const D3D11ColorGradingConfiguration& colorGrading)
 {
     if (context_ == nullptr ||
         device_ == nullptr ||
@@ -917,7 +1030,8 @@ bool D3D11TextureScaler::ScaleAspectFit(
         screenSpaceGlobalIlluminationIntensity,
         screenSpaceGlobalIlluminationDebugMode,
         waterReflectionIntensity,
-        applyAntialiasing ? fxaaSharpeningStrength : 0.0F);
+        applyAntialiasing ? fxaaSharpeningStrength : 0.0F,
+        colorGrading);
     context_->PSSetShader(
         applyAmbientOcclusion || applyScreenSpaceGlobalIllumination ||
                 applyBloom || applyWaterReflections
@@ -1053,7 +1167,8 @@ bool D3D11TextureScaler::BuildBloom(
             0.0F,
             0.0F,
             0.0F,
-            0.0F);
+            0.0F,
+            {});
         context_->OMSetRenderTargets(1, &output, nullptr);
         context_->RSSetViewports(1, &bloomViewport);
         context_->IASetInputLayout(nullptr);
@@ -1209,9 +1324,10 @@ void D3D11TextureScaler::UpdateConfiguration(
     float screenSpaceGlobalIlluminationIntensity,
     float screenSpaceGlobalIlluminationDebugMode,
     float waterReflectionIntensity,
-    float fxaaSharpeningStrength)
+    float fxaaSharpeningStrength,
+    const D3D11ColorGradingConfiguration& colorGrading)
 {
-    const float configuration[12] = {
+    const float configuration[16] = {
         sourceAlreadyLinear ? 1.0F : 0.0F,
         bloomThreshold,
         bloomIntensity,
@@ -1222,6 +1338,10 @@ void D3D11TextureScaler::UpdateConfiguration(
         screenSpaceGlobalIlluminationIntensity,
         screenSpaceGlobalIlluminationDebugMode,
         fxaaSharpeningStrength,
+        std::clamp(colorGrading.profile, 0.0F, 2.0F),
+        std::clamp(colorGrading.exposureEv, -1.0F, 1.0F),
+        std::clamp(colorGrading.contrast, -0.5F, 0.5F),
+        std::clamp(colorGrading.saturation, -1.0F, 1.0F),
         0.0F,
         0.0F};
     context_->UpdateSubresource(
