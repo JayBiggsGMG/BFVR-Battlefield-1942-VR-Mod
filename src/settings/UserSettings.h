@@ -196,6 +196,8 @@ struct UserSettingsValues
     std::int32_t colorExposureTenthsEv = kDefaultColorExposureTenthsEv;
     std::int32_t colorContrastPercent = kDefaultColorContrastPercent;
     std::int32_t colorSaturationPercent = kDefaultColorSaturationPercent;
+    bool headTrackedAudioEnabled = true;
+    bool headTrackedAudioPositionEnabled = true;
 
     [[nodiscard]] bool operator==(const UserSettingsValues&) const = default;
 };
