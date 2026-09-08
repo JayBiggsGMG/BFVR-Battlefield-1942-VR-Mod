@@ -327,6 +327,7 @@ struct DrawStateSnapshot
     std::uint64_t originalVertexShaderHash = 0;
     DWORD originalVertexShaderByteCount = 0;
     DWORD vertexShaderCreationOrdinal = 0;
+    bool originalVertexShaderProgrammable = false;
     DWORD zEnable = 0;
     DWORD zWriteEnable = 0;
     DWORD alphaBlendEnable = 0;
@@ -1045,6 +1046,8 @@ bool AcquireFrameDrawState(
             translatedIdentity.originalFunctionByteCount;
         snapshot.vertexShaderCreationOrdinal =
             translatedIdentity.creationOrdinal;
+        snapshot.originalVertexShaderProgrammable =
+            translatedIdentity.programmable != FALSE;
     }
     ReadProvenanceRenderStates(device, snapshot);
     if (!IsFiniteMatrix(snapshot.world) ||

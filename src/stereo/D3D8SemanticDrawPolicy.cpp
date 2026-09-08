@@ -29,9 +29,6 @@ constexpr std::uint32_t kSkyboxFvf = 0x112;
 constexpr std::uint32_t kTreeBillboardFvf = 0x2C2;
 constexpr std::uint32_t kTreeMeshFvf = 0x252;
 constexpr std::uint32_t kSkinningShader2BonesHandle = 0x17;
-constexpr std::uint64_t kTranslatedSkinningShader2BonesHash =
-    0x64F6D635ADDB7328ULL;
-constexpr std::uint32_t kTranslatedSkinningShader2BonesByteCount = 1836;
 constexpr std::uint64_t kTranslatedTreeSpriteShaderHash =
     0xC3A0389DCCB0E1B0ULL;
 constexpr std::uint32_t kTranslatedTreeSpriteShaderByteCount = 2256;
@@ -128,13 +125,11 @@ D3D8SemanticDrawClass ClassifyBF1942Win32SemanticDraw(
         return D3D8SemanticDrawClass::TreeMeshProgrammableSprite;
     }
 
-    const bool skinningShader2Bones =
+    // bf42++ fixAnimatedMeshLighting compatibility
+    const bool programmableSkinningShader =
         signature.vertexShaderOrFvf ==
             kSkinningShader2BonesHandle ||
-        (signature.originalVertexShaderHash ==
-             kTranslatedSkinningShader2BonesHash &&
-         signature.originalVertexShaderByteCount ==
-             kTranslatedSkinningShader2BonesByteCount);
+        signature.originalVertexShaderProgrammable;
     const bool animatedMeshSkinning =
         signature.wrapperReturnAddress == kDrawIndexedPrimitiveWrapperReturn &&
         signature.rendererReturnAddress == kAnimatedMeshDrawMeshReturn &&
@@ -143,7 +138,7 @@ D3D8SemanticDrawClass ClassifyBF1942Win32SemanticDraw(
         (signature.primitiveType == kTriangleList ||
          signature.primitiveType == kTriangleStrip) &&
         signature.primitiveCount != 0 &&
-        skinningShader2Bones &&
+        programmableSkinningShader &&
         signature.zEnable == 1 &&
         signature.zWriteEnable == 1 &&
         signature.alphaBlendEnable == 0 &&

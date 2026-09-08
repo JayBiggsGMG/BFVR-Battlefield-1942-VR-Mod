@@ -25,7 +25,8 @@ void ApplyFrameSemanticPolicy(
         addressAt(2),
         snapshot.originalVertexShaderHash,
         snapshot.originalVertexShaderByteCount,
-        snapshot.vertexShaderCreationOrdinal};
+        snapshot.vertexShaderCreationOrdinal,
+        snapshot.originalVertexShaderProgrammable};
     snapshot.semanticClass =
         bfvr::stereo::ClassifyBF1942Win32SemanticDraw(signature);
 
