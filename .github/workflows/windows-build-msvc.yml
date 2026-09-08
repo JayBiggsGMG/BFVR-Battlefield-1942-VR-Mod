@@ -1,0 +1,105 @@
+name: Build (Windows MSVC)
+
+on:
+  push:
+    paths-ignore:
+      - '**/README.md'
+
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-stage:
+    name: player payload
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Configure Win32 client
+      run: >
+        cmake -S src -B build\win32
+        -T host=x86 -A Win32
+        -DBFVR_PRESENTER_ONLY=OFF
+        -DBUILD_TESTING=OFF
+
+    - name: Build Win32 client
+      run: >
+        cmake --build build\win32 --config Release
+        --target BFVRClient BFVRLoader BFVRUserSettingsSeedWriter
+
+    - name: Configure x64 presenter
+      run: >
+        cmake -S src -B build\x64
+        -T host=x64 -A x64
+        -DBFVR_PRESENTER_ONLY=ON
+        -DBUILD_TESTING=OFF
+
+    - name: Build x64 presenter
+      run: >
+        cmake --build build\x64 --config Release
+        --target BFVRPresenter
+
+    - name: Read BFVR version
+      id: version
+      shell: pwsh
+      run: |
+        $inc = Get-Content -LiteralPath 'BFVRVersion.inc' -Raw
+        if ($inc -notmatch '#define\s+BFVR_VERSION_STRING\s+"([^"]+)"') {
+            throw 'BFVRVersion.inc does not define BFVR_VERSION_STRING.'
+        }
+        $version = $Matches[1]
+        $short = "${{ github.sha }}".Substring(0, 7)
+        Write-Host "BFVR version: $version ($short)"
+        "version=$version" >> $env:GITHUB_OUTPUT
+        "short_sha=$short" >> $env:GITHUB_OUTPUT
+
+    - name: Stage player payload
+      shell: pwsh
+      run: |
+        .\tools\Stage-BFVRPlayer.ps1 `
+          -Win32Build 'build\win32\Release' `
+          -X64Build 'build\x64\Release' `
+          -Destination '${{ github.workspace }}\payload\BFVR'
+
+    # installer/player-manifest.txt is the authority on what ships. Checking the
+    # staged tree against it here means a stager/manifest drift fails the run
+    # rather than shipping a payload with something quietly missing.
+    - name: Verify payload against player manifest
+      shell: pwsh
+      run: |
+        Set-StrictMode -Version Latest
+        $ErrorActionPreference = 'Stop'
+        $payload = '${{ github.workspace }}\payload\BFVR'
+        $missing = @()
+        foreach ($entry in Get-Content -LiteralPath 'installer\player-manifest.txt') {
+            $entry = $entry.Trim()
+            if ($entry -eq '') { continue }
+            if ($entry.EndsWith('\**')) {
+                $dir = Join-Path $payload $entry.Substring(0, $entry.Length - 3)
+                if (-not (Test-Path -LiteralPath $dir -PathType Container) -or
+                    -not (Get-ChildItem -LiteralPath $dir -Recurse -File)) {
+                    $missing += $entry
+                }
+            } elseif (-not (Test-Path -LiteralPath (Join-Path $payload $entry) -PathType Leaf)) {
+                $missing += $entry
+            }
+        }
+        if ($missing.Count -gt 0) {
+            throw "Staged payload is missing manifest entries:`n" + ($missing -join "`n")
+        }
+        Write-Host 'Payload matches installer/player-manifest.txt.'
+        Get-ChildItem -LiteralPath $payload -Recurse -File |
+            ForEach-Object { $_.FullName.Substring($payload.Length + 1) } |
+            Sort-Object
+
+    - name: Upload player payload
+      uses: actions/upload-artifact@v4
+      with:
+        name: 'BFVR-${{ steps.version.outputs.version }}-${{ steps.version.outputs.short_sha }}'
+        path: payload
+        if-no-files-found: error
+        compression-level: 9
