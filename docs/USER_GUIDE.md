@@ -126,7 +126,7 @@ one usable BF42++ loading path before loading BFVR into Battlefield 1942.
 
 Do not combine a bundled BF42++ `dsound.dll` with a second copied
 `bf42++.dll`. BFVR recognizes a bundled BF42++ proxy and uses that one directly
-to avoid loading BF42++ twice. If both are already present, BFVR 1.0.2 ignores
+to avoid loading BF42++ twice. If both are already present, BFVR ignores
 the extra `bf42++.dll` for that launch, so the duplicate should not break BFVR.
 
 If BFVR reports obsolete BF42Plus 1.3.4, remove that old `dsound.dll` and

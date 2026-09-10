@@ -3,7 +3,12 @@
 This file records user-visible changes to BFVR. GitHub Release notes should use
 the v1.0.2 section exactly as written below.
 
-## [1.0.2]
+## [1.0.3] - 2026-09-11
+
+-Added DSOAL/HRTF audio support
+-Fixed compatibility issues with bf42++ v2.0 (fixAnimatedMeshLighting feature)
+
+## [1.0.2] - 2026-08-23
 
 -Increased left hand grab radius from 12cm to 18cm.
 -Increased scope aim smoothing radius from 0.35 degrees to 1.5 degrees.
@@ -34,6 +39,64 @@ the v1.0.2 section exactly as written below.
 -Fixed a bug that would leave your weapon/arms out of alignment when landing after a paradrop.
 -Changed the relationship between head tilt and controller tilt when it comes to scoped weapon views. It should feel more natural now.
 -Fixed an ambient occlusion rendering artifact that created a visible box-shaped brightness cutoff across floors, walls, and ceilings. AO now renders consistently across the full view.
+
+## [Unreleased]
+
+### Added
+
+- **3D audio now follows your head.** Previously BFVR replaced only the render
+  camera, so Battlefield 1942 kept deriving its audio listener from the
+  untouched game camera: turning your head moved the picture but not the
+  sound, and a fixed source drifted away from where you were looking. BFVR now
+  gives the listener the same camera the world is rendered with, so sounds stay
+  where they belong. This works with whichever `dsound.dll` the package uses,
+  including OpenAL-Soft/DSOAL and BF42++ proxies, and it leaves Battlefield's
+  own audio untouched in menus, during loading, and outside VR. Two new
+  `UserConfig.txt` settings control it: `head_tracked_audio_enabled` (default
+  `true`) turns the correction off, and `head_tracked_audio_position_enabled`
+  (default `false`) additionally moves the listener to your head so leaning
+  changes which sounds are nearest. Both take effect when BFVR starts.
+- Added an opt-in DirectSound listener trace (`BFVR_DSOUND_LISTENER_PROBE=1`,
+  alongside `BFVR_DIAGNOSTICS=1`) recording how Battlefield 1942 and BFVR each
+  drive the 3D listener, including the basis submitted on every sampled call.
+- Added `BFVR_OPENXR_EYE_RESOLUTION_SCALE` (0.25 through 2.00, default 1.00),
+  which multiplies the OpenXR runtime's recommended per-eye resolution before
+  BFVR creates its swapchains. Lowering it reduces every destination-side cost
+  at once — the eye and UI swapchains, each frame's swapchain copies, and the
+  presenter's ambient-occlusion, water-reflection, and bloom targets — without
+  changing the headset's own resolution setting. It complements the existing
+  `BFVR_OPENXR_WORLD_RENDER_SCALE`, which instead changes how large an image
+  Battlefield 1942 renders before it is scaled into those swapchains. Values
+  are clamped to the runtime's maximum supported rectangle; an unparseable or
+  out-of-range value is logged and ignored.
+
+### Fixed
+
+- Fixed animated meshes rendering in the wrong place when BF42++'s
+  `fixAnimatedMeshLighting` option is enabled. Tank tracks stayed locked to a
+  camera that never moved, so they swung off the vehicle as you turned your
+  head, and Battlefield's own first-person hands were drawn alongside the
+  tracked VR ones, detached and mis-scaled. BFVR recognized Battlefield's
+  skinned draws by hashing the vertex shader's bytecode, and that option
+  substitutes a shader of its own, so those draws went unrecognized and lost
+  both their per-eye transform and the first-person suppression. Skinned draws
+  are now identified by their call site, their render states, and whether the
+  draw uses a programmable shader at all, so a substituted shader no longer
+  hides them.
+- Fixed the stereo renderer refusing to start whenever another BFVR module had
+  already initialized the shared hooking library. The stereo probe treated
+  "already initialized" as a fatal error and skipped installing its Direct3D
+  hooks, leaving the headset with no image, and it also tore the shared library
+  down on paths where other modules were still using it. It now tolerates a
+  prior initialization and only shuts the library down when it owns it.
+- Fixed the world appearing to swim with the head during rotation whenever
+  Battlefield 1942 could not deliver a new stereo pair in time. Repeated frames
+  were submitted describing the current head pose instead of the pose they were
+  rendered with, so the OpenXR runtime applied no reprojection and the stale
+  image became head-locked until the next fresh frame snapped it back. BFVR now
+  submits the camera each image was actually rendered with, letting the runtime
+  reproject repeated frames and keep them world-locked. Missed frames now read
+  as ordinary judder rather than snapping.
 
 ## [1.0.1] - 2026-08-11
 

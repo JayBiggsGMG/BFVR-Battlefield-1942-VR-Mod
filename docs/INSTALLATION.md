@@ -1,4 +1,4 @@
-# Installing BFVR v1.0.2
+# Installing BFVR
 
 This guide assumes no modding or programming experience.
 
@@ -40,7 +40,7 @@ First look in the folder containing `BF1942.exe`:
   as described below.
 
 1. Download BF42++ 2.0 RC6, or a newer compatible release, from the
-   [official BF42++ page](https://www.moddb.com/games/battlefield-1942/addons/bf42plusplus-v2-0-rc6).
+   [official BF42++ page](https://github.com/Casqade/bf42plusplus/releases).
 2. Extract all BF42++ installation files into the folder containing
    `BF1942.exe`. Keep their original names, including `bf42++.exe`,
    `bf42++.dll`, and `bf42++BlackScreen.exe`.
@@ -56,13 +56,19 @@ specifically known obsolete BF42Plus 1.3.4 `dsound.dll` remains blocked because
 its abandoned updater is unsafe.
 
 If both a recognized bundled BF42++ `dsound.dll` and a separately copied
-`bf42++.dll` are present, BFVR 1.0.2 prioritizes the bundled proxy and does not
+`bf42++.dll` are present, BFVR prioritizes the bundled proxy and does not
 inject the extra DLL. This prevents the duplicate from breaking BFVR, but the
 extra BF42++ files are unnecessary and can make ordinary non-VR troubleshooting
 more confusing. The simplest setup is to keep only the BF42++ form originally
 provided by the game package.
 
-## Install with the setup program
+## Install portable BFVR
+
+1. Download [latest BFVR release](https://github.com/Casqade/bfvr/releases).
+2. Unpack archive into your BF1942 directory so the path to BFVR.exe looks like `path/to/BF1942/BFVR/BFVR.exe`
+3. Run BFVR.exe
+
+## Install with the setup program (legacy, v1.0.3 onwards is unsupported)
 
 1. Download `BFVR-Setup-v1.0.2.exe` from the official v1.0.2 GitHub Release.
 2. Double-click the downloaded installer.

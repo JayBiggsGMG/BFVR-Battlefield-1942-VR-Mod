@@ -10,7 +10,7 @@
 
 ![BFVR logo](assets/BF42VRlogo.png)
 
-BFVR (now on version 1.0.2) adds stereoscopic VR rendering, tracked-controller aiming, VR menus, and
+BFVR adds stereoscopic VR rendering, tracked-controller aiming, VR menus, and
 VR comfort and graphics options to Battlefield 1942.
 
 The normal player version is launched by double-clicking `BFVR.exe`. It does
@@ -25,12 +25,12 @@ include it.
 - A PC VR headset and an active OpenXR runtime, such as Meta Quest Link,
   SteamVR, or Virtual Desktop's VDXR runtime.
 - A Battlefield 1942 installation containing `BF1942.exe`.
-- [BF42++ 2.0 RC6](https://www.moddb.com/games/battlefield-1942/addons/bf42plusplus-v2-0-rc6)
+- [BF42++ 2.0](https://github.com/Casqade/bf42plusplus/releases/tag/v2.0)
   or a newer compatible release. BF42++ may be installed as its
   separate `bf42++.dll`, or may already be included by a community game
   package as a recognized `dsound.dll` proxy. BF42++ is not included with
   BFVR. Do not add a second copy when a package already includes it. If both
-  are present, BFVR 1.0.2 selects the recognized bundled proxy and does not
+  are present, BFVR selects the recognized bundled proxy and does not
   inject the extra `bf42++.dll`.
 
 BFVR has worked with several substantially different retail, digital, and
