@@ -55,6 +55,7 @@ public:
         PFN_xrDestroyInstance destroyInstance = nullptr;
         PFN_xrGetInstanceProperties getInstanceProperties = nullptr;
         PFN_xrGetSystem getSystem = nullptr;
+        PFN_xrGetSystemProperties getSystemProperties = nullptr;
         PFN_xrStringToPath stringToPath = nullptr;
         PFN_xrPathToString pathToString = nullptr;
         PFN_xrGetD3D11GraphicsRequirementsKHR getD3D11GraphicsRequirements = nullptr;
@@ -361,6 +362,7 @@ public:
             ResolveInstance("xrDestroyInstance", api.destroyInstance) &&
             ResolveInstance("xrGetInstanceProperties", api.getInstanceProperties) &&
             ResolveInstance("xrGetSystem", api.getSystem) &&
+            ResolveInstance("xrGetSystemProperties", api.getSystemProperties) &&
             ResolveInstance("xrStringToPath", api.stringToPath) &&
             ResolveInstance("xrPathToString", api.pathToString) &&
             ResolveInstance(
@@ -2476,7 +2478,7 @@ bool OpenXRPresentation::Initialize(
     if (XR_SUCCEEDED(result))
     {
         impl_->WriteLog(
-            L"OpenXR active runtime is '%S' version %u.%u.%u.",
+            L"[PASS] OpenXR active runtime is '%S' version %u.%u.%u.",
             instanceProperties.runtimeName,
             static_cast<unsigned>(XR_VERSION_MAJOR(instanceProperties.runtimeVersion)),
             static_cast<unsigned>(XR_VERSION_MINOR(instanceProperties.runtimeVersion)),
@@ -2501,6 +2503,26 @@ bool OpenXRPresentation::Initialize(
             static_cast<long>(result));
         Shutdown();
         return false;
+    }
+    XrSystemProperties systemProperties{XR_TYPE_SYSTEM_PROPERTIES};
+    result = impl_->api.getSystemProperties(
+        impl_->instance,
+        impl_->systemId,
+        &systemProperties);
+    if (XR_SUCCEEDED(result))
+    {
+        impl_->WriteLog(
+            L"[PASS] OpenXR headset/system: '%S' (vendorId=%lu, systemId=%llu).",
+            systemProperties.systemName,
+            static_cast<unsigned long>(systemProperties.vendorId),
+            static_cast<unsigned long long>(impl_->systemId));
+    }
+    else
+    {
+        impl_->WriteLog(
+            L"OpenXR headset/system identity query failed (%s, %ld); runtime selection remains valid.",
+            DescribeOpenXRResult(result),
+            static_cast<long>(result));
     }
 
     XrGraphicsRequirementsD3D11KHR requirements{XR_TYPE_GRAPHICS_REQUIREMENTS_D3D11_KHR};
@@ -2610,7 +2632,7 @@ bool OpenXRPresentation::Initialize(
             L"Comfort-vignette resources are unavailable; world/HUD presentation remains active without the optional effect.");
     }
     impl_->initialized = true;
-    impl_->WriteLog(L"OpenXR presentation initialized; awaiting session READY before it submits frames.");
+    impl_->WriteLog(    L"[PASS] OpenXR presentation initialized; awaiting session READY before it submits frames.");
     return true;
 }
 

@@ -85,6 +85,10 @@ constexpr std::string_view kColorProfileKey = "color_profile";
 constexpr std::string_view kColorExposureKey = "color_exposure_ev";
 constexpr std::string_view kColorContrastKey = "color_contrast_percent";
 constexpr std::string_view kColorSaturationKey = "color_saturation_percent";
+constexpr std::string_view kHeadTrackedAudioEnabledKey =
+    "head_tracked_audio_enabled";
+constexpr std::string_view kHeadTrackedAudioPositionEnabledKey =
+    "head_tracked_audio_position_enabled";
 
 std::string_view Trim(std::string_view value) noexcept
 {
@@ -1007,6 +1011,24 @@ UserSettingsSchema SeededUserSettingsSchema()
                 "Accepted values: -100 through +100 percent in steps of 1. BFVR's 3D crosshair is already part of the stereo-world targets and is adjusted with the scene; Ref2 HUD and separately composed interface layers are unchanged. Applied after Graphics > Save without a restart."
             },
             IsColorSaturation
+        },
+        {
+            std::string(kHeadTrackedAudioEnabledKey),
+            "true",
+            {
+                "Makes Battlefield's DirectSound 3D listener follow the VR camera orientation during VR gameplay. BFVR does not install or replace dsound.dll or DSOAL. Battlefield must use its DirectSound3D/hardware audio path (game.setHardware 1 in Sound.con), and the loaded audio backend must expose IDirectSound3DListener. HRTF rendering still depends on the audio backend already configured for the game.",
+                "Accepted values: true or false. Set false to leave the listener unchanged. The setting takes effect after restarting BFVR."
+            },
+            IsBoolean
+        },
+        {
+            std::string(kHeadTrackedAudioPositionEnabledKey),
+            "false",
+            {
+                "Also moves the DirectSound 3D listener with the VR camera position. This is additional to orientation tracking and has no effect when head_tracked_audio_enabled is false.",
+                "Accepted values: true or false. Defaults to false to preserve the game's listener position. The setting takes effect after restarting BFVR."
+            },
+            IsBoolean
         }
     };
 }
@@ -1178,6 +1200,12 @@ UserSettingsValues DecodeUserSettings(const UserSettings& settings) noexcept
         kWaterReflectionsEnabledKey,
         true);
     result.bloomEnabled = readBoolean(kBloomEnabledKey, true);
+    result.headTrackedAudioEnabled = readBoolean(
+        kHeadTrackedAudioEnabledKey,
+        true);
+    result.headTrackedAudioPositionEnabled = readBoolean(
+        kHeadTrackedAudioPositionEnabledKey,
+        false);
     const auto readUnsigned = [&settings](
                                   std::string_view key,
                                   std::uint32_t fallback,
@@ -1432,6 +1460,10 @@ void EncodeUserSettings(
         values.waterReflectionsEnabled ? "true" : "false";
     settings.values[std::string(kBloomEnabledKey)] =
         values.bloomEnabled ? "true" : "false";
+    settings.values[std::string(kHeadTrackedAudioEnabledKey)] =
+        values.headTrackedAudioEnabled ? "true" : "false";
+    settings.values[std::string(kHeadTrackedAudioPositionEnabledKey)] =
+        values.headTrackedAudioPositionEnabled ? "true" : "false";
     const auto snap = [](std::uint32_t value,
                          std::uint32_t minimum,
                          std::uint32_t maximum,

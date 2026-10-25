@@ -8,6 +8,18 @@ when the game session ends.
 
 Mouse and keyboard remain available, including in menus.
 
+If Borderless1942 is installed, disable it while using BFVR. Its windowed
+launcher follows Battlefield 1942 as the game replaces its process between
+maps, but that process change can prevent BFVR from continuing VR presentation.
+The BFVR launch window explains that the game starting is not by itself proof
+that VR startup succeeded.
+
+BFVR writes `loader.log` and `BFVRPresenter-game.log` beside `BFVR.exe`.
+`loader.log` records game detection, validation, injection, and launch results;
+the presenter log records OpenXR startup, including the active runtime and,
+when the runtime provides it, the headset/system name. Keep both logs when
+reporting a problem.
+
 ## Default Touch-style controls
 
 - **Left stick:** Move. Its click retains the game's contextual vehicle action.
@@ -114,7 +126,21 @@ say that a BFVR restart is required. **Cancel** discards unsaved changes, and
 settings and may be edited with BFVR closed. Deleting it makes BFVR create a
 fresh file containing the release defaults on the next start.
 
+The `head_tracked_audio_enabled` setting makes Battlefield's DirectSound 3D
+listener follow the VR camera orientation. BFVR does not include or replace
+DSOAL or `dsound.dll`; HRTF still depends on the audio backend installed for
+the game. Set this key to `false` if you want BFVR to leave the listener
+unchanged. `head_tracked_audio_position_enabled` optionally moves the listener
+with your head and defaults to `false`.
+
 ## Troubleshooting
+
+### VR stops working after changing maps
+
+Disable Borderless1942 and launch Battlefield 1942 directly through `BFVR.exe`.
+Borderless1942 manages the game's window by following Battlefield 1942 when it
+replaces its process after a map. That process change can interrupt BFVR's VR
+presentation.
 
 ### BFVR says BF42++ is required
 
@@ -130,7 +156,7 @@ filenames. See the BF42++ section of the [Installation Guide](INSTALLATION.md).
 
 Do not combine a bundled BF42++ `dsound.dll` with a second copied
 `bf42++.dll`. BFVR recognizes a bundled BF42++ proxy and uses that one directly
-to avoid loading BF42++ twice. If both are already present, BFVR 1.0.2 ignores
+to avoid loading BF42++ twice. If both are already present, BFVR 1.0.3 ignores
 the extra `bf42++.dll` when starting VR, but the separate `bf42++.exe` can
 still fail when launched directly.
 
@@ -154,7 +180,10 @@ check, not a claim that the computer has already been compromised.
 ### The headset does not enter VR
 
 Confirm that the headset is connected and that the intended OpenXR runtime is
-active. SteamVR users should check SteamVR's desktop **Settings > OpenXR** page.
+active. The BFVR launch window confirms when the game process starts, not when
+VR is ready. Check `BFVRPresenter-game.log` beside `BFVR.exe` for the active
+runtime, headset/system name (if provided), and the specific OpenXR startup
+failure. SteamVR users should check SteamVR's desktop **Settings > OpenXR** page.
 Meta users should check the OpenXR setting in the Meta Quest Link PC app.
 Virtual Desktop users should select **VDXR/VirtualDesktopXR** in Virtual
 Desktop Streamer and confirm that the headset overlay says `Runtime: VDXR`.
@@ -213,7 +242,7 @@ assuming that the VR runtime or installation is broken.
 
 ### Windows or antivirus warns about BFVR
 
-The v1.0.2 installer is unsigned, and BFVR must load its DLL into an old game
+The BFVR installer is unsigned, and BFVR must load its DLL into an old game
 process. Only use files from the official BFVR GitHub Release and compare the
 published checksum. Do not disable antivirus globally.
 

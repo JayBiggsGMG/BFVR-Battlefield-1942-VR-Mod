@@ -138,26 +138,6 @@ std::optional<Quaternion> NormalizeQuaternion(
         : std::nullopt;
 }
 
-Quaternion MultiplyQuaternion(
-    const Quaternion& left,
-    const Quaternion& right) noexcept
-{
-    return {
-        left.w * right.x + left.x * right.w +
-            left.y * right.z - left.z * right.y,
-        left.w * right.y - left.x * right.z +
-            left.y * right.w + left.z * right.x,
-        left.w * right.z + left.x * right.y -
-            left.y * right.x + left.z * right.w,
-        left.w * right.w - left.x * right.x -
-            left.y * right.y - left.z * right.z};
-}
-
-Quaternion ConjugateQuaternion(const Quaternion& value) noexcept
-{
-    return {-value.x, -value.y, -value.z, value.w};
-}
-
 std::optional<Quaternion> ExtractLocalForwardTwist(
     const Quaternion& orientation) noexcept
 {
@@ -182,31 +162,15 @@ float SignedForwardTwistAngle(const Quaternion& twist) noexcept
     return angle;
 }
 
-BasisVector RotateBasisVector(
-    const Quaternion& orientation,
-    const BasisVector& value) noexcept;
-
-Matrix4 ReplaceRotation(
-    const Matrix4& source,
-    const Quaternion& orientation) noexcept
+BasisVector ProjectOntoPlane(
+    const BasisVector& value,
+    const BasisVector& normal) noexcept
 {
-    const BasisVector right =
-        RotateBasisVector(orientation, {1.0F, 0.0F, 0.0F});
-    const BasisVector up =
-        RotateBasisVector(orientation, {0.0F, 1.0F, 0.0F});
-    const BasisVector forward =
-        RotateBasisVector(orientation, {0.0F, 0.0F, 1.0F});
-    Matrix4 result = source;
-    result.values[0][0] = right.x;
-    result.values[0][1] = right.y;
-    result.values[0][2] = right.z;
-    result.values[1][0] = up.x;
-    result.values[1][1] = up.y;
-    result.values[1][2] = up.z;
-    result.values[2][0] = forward.x;
-    result.values[2][1] = forward.y;
-    result.values[2][2] = forward.z;
-    return result;
+    const float component = Dot(value, normal);
+    return {
+        value.x - normal.x * component,
+        value.y - normal.y * component,
+        value.z - normal.z * component};
 }
 
 std::optional<Quaternion> QuaternionFromMatrix(
@@ -772,36 +736,118 @@ MakeD3D8IndependentRollScopeCamera(
         return std::nullopt;
     }
 
-    const auto headOrientation =
-        QuaternionFromMatrix(relativeHeadCamera);
-    const auto gunOrientation = QuaternionFromMatrix(controllerGunWorld);
-    if (!headOrientation.has_value() || !gunOrientation.has_value())
+    const auto headOrientation = QuaternionFromMatrix(relativeHeadCamera);
+    if (!headOrientation.has_value())
     {
         return std::nullopt;
     }
     const auto headTwist = ExtractLocalForwardTwist(*headOrientation);
-    const auto gunTwist = ExtractLocalForwardTwist(*gunOrientation);
-    if (!headTwist.has_value() || !gunTwist.has_value())
+    if (!headTwist.has_value())
     {
         return std::nullopt;
     }
 
-    // Preserve the gun's swing (its aim direction) while replacing only its
-    // local-forward twist with the head's independently tracked twist.
-    const auto gunSwing = NormalizeQuaternion(MultiplyQuaternion(
-        *gunOrientation,
-        ConjugateQuaternion(*gunTwist)));
-    const auto worldOrientation = gunSwing.has_value()
-        ? NormalizeQuaternion(MultiplyQuaternion(*gunSwing, *headTwist))
-        : std::nullopt;
-    if (!worldOrientation.has_value())
+    BasisVector forward = {
+        controllerGunWorld.values[2][0],
+        controllerGunWorld.values[2][1],
+        controllerGunWorld.values[2][2]};
+    if (!Normalize(forward))
     {
         return std::nullopt;
     }
 
-    float overlayRollRadians =
-        SignedForwardTwistAngle(*gunTwist) -
-        SignedForwardTwistAngle(*headTwist);
+    BasisVector up = ProjectOntoPlane({0.0F, 1.0F, 0.0F}, forward);
+    BasisVector right = {};
+    bool usesHeadCameraBasis = false;
+    if (Normalize(up))
+    {
+        right = Cross(up, forward);
+        if (!Normalize(right))
+        {
+            return std::nullopt;
+        }
+        up = Cross(forward, right);
+        if (!Normalize(up))
+        {
+            return std::nullopt;
+        }
+    }
+    else
+    {
+        // World-up is undefined only when the gun points vertically. Use the
+        // head camera's own basis for that singular direction.
+        up = ProjectOntoPlane(
+            {
+                headAdjustedCameraWorld.values[1][0],
+                headAdjustedCameraWorld.values[1][1],
+                headAdjustedCameraWorld.values[1][2]},
+            forward);
+        if (Normalize(up))
+        {
+            right = Cross(up, forward);
+            if (!Normalize(right))
+            {
+                return std::nullopt;
+            }
+            up = Cross(forward, right);
+            if (!Normalize(up))
+            {
+                return std::nullopt;
+            }
+        }
+        else
+        {
+            right = ProjectOntoPlane(
+                {
+                    headAdjustedCameraWorld.values[0][0],
+                    headAdjustedCameraWorld.values[0][1],
+                    headAdjustedCameraWorld.values[0][2]},
+                forward);
+            if (!Normalize(right))
+            {
+                return std::nullopt;
+            }
+            up = Cross(forward, right);
+            if (!Normalize(up))
+            {
+                return std::nullopt;
+            }
+        }
+        usesHeadCameraBasis = true;
+    }
+
+    const float headRollRadians = usesHeadCameraBasis
+        ? 0.0F
+        : SignedForwardTwistAngle(*headTwist);
+    const float cosine = std::cos(headRollRadians);
+    const float sine = std::sin(headRollRadians);
+    const BasisVector cameraRight = {
+        right.x * cosine + up.x * sine,
+        right.y * cosine + up.y * sine,
+        right.z * cosine + up.z * sine};
+    const BasisVector cameraUp = {
+        up.x * cosine - right.x * sine,
+        up.y * cosine - right.y * sine,
+        up.z * cosine - right.z * sine};
+
+    const BasisVector gunUp = {
+        controllerGunWorld.values[1][0],
+        controllerGunWorld.values[1][1],
+        controllerGunWorld.values[1][2]};
+    float overlayRollRadians = std::atan2(
+        Dot(Cross(cameraUp, gunUp), forward),
+        Dot(cameraUp, gunUp));
+    Matrix4 cameraWorld = headAdjustedCameraWorld;
+    cameraWorld.values[0][0] = cameraRight.x;
+    cameraWorld.values[0][1] = cameraRight.y;
+    cameraWorld.values[0][2] = cameraRight.z;
+    cameraWorld.values[1][0] = cameraUp.x;
+    cameraWorld.values[1][1] = cameraUp.y;
+    cameraWorld.values[1][2] = cameraUp.z;
+    cameraWorld.values[2][0] = forward.x;
+    cameraWorld.values[2][1] = forward.y;
+    cameraWorld.values[2][2] = forward.z;
+
     while (overlayRollRadians > kPi)
     {
         overlayRollRadians -= 2.0F * kPi;
@@ -810,9 +856,6 @@ MakeD3D8IndependentRollScopeCamera(
     {
         overlayRollRadians += 2.0F * kPi;
     }
-    const Matrix4 cameraWorld = ReplaceRotation(
-        headAdjustedCameraWorld,
-        *worldOrientation);
     if (!IsRigidAffine(cameraWorld) || !std::isfinite(overlayRollRadians))
     {
         return std::nullopt;

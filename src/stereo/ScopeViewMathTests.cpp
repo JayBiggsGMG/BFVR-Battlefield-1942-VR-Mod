@@ -44,6 +44,18 @@ Matrix4 Roll(float radians) noexcept
     return result;
 }
 
+Matrix4 Pitch(float radians) noexcept
+{
+    Matrix4 result = Identity();
+    const float cosine = std::cos(radians);
+    const float sine = std::sin(radians);
+    result.values[1][1] = cosine;
+    result.values[1][2] = sine;
+    result.values[2][1] = -sine;
+    result.values[2][2] = cosine;
+    return result;
+}
+
 Matrix4 Multiply(const Matrix4& left, const Matrix4& right) noexcept
 {
     Matrix4 result = {};
@@ -304,6 +316,103 @@ bool TestScopeRollSourcesRemainIndependent() noexcept
         NearlyEqual(weaponOnly->overlayRollRadians, weaponRoll) &&
         NearlyEqual(matched->cameraWorld.values[0][1], std::sin(headRoll)) &&
         NearlyEqual(matched->overlayRollRadians, 0.0F);
+}
+
+bool TestScopeCameraKeepsGunForwardIndependentOfHeadCameraBasis() noexcept
+{
+    constexpr float headRoll = 0.24F;
+    Matrix4 firstHeadCamera = Multiply(Roll(-0.72F), Yaw(-0.3F));
+    Matrix4 secondHeadCamera = Multiply(Roll(0.61F), Pitch(0.43F));
+    firstHeadCamera.values[3][0] = 12.0F;
+    secondHeadCamera.values[3][0] = 20.0F;
+    const Matrix4 relativeHead = Roll(headRoll);
+    const Matrix4 bodyTilt = Multiply(Roll(0.37F), Pitch(-0.29F));
+    const Matrix4 unrolledGun = Multiply(bodyTilt, Yaw(0.82F));
+    const Matrix4 rolledGun = Multiply(Roll(-0.41F), unrolledGun);
+
+    const auto first = bfvr::stereo::MakeD3D8IndependentRollScopeCamera(
+        firstHeadCamera,
+        relativeHead,
+        unrolledGun);
+    const auto second = bfvr::stereo::MakeD3D8IndependentRollScopeCamera(
+        secondHeadCamera,
+        relativeHead,
+        rolledGun);
+    if (!first.has_value() || !second.has_value())
+    {
+        return false;
+    }
+
+    for (std::size_t column = 0; column < 3; ++column)
+    {
+        if (!NearlyEqual(
+                first->cameraWorld.values[2][column],
+                unrolledGun.values[2][column]) ||
+            !NearlyEqual(
+                first->cameraWorld.values[2][column],
+                second->cameraWorld.values[2][column]))
+        {
+            return false;
+        }
+        for (std::size_t row = 0; row < 3; ++row)
+        {
+            if (!NearlyEqual(
+                    first->cameraWorld.values[row][column],
+                    second->cameraWorld.values[row][column]))
+            {
+                return false;
+            }
+        }
+    }
+    return NearlyEqual(first->cameraWorld.values[3][0], 12.0F) &&
+        NearlyEqual(second->cameraWorld.values[3][0], 20.0F) &&
+        NearlyEqual(
+            second->overlayRollRadians - first->overlayRollRadians,
+            -0.41F);
+}
+
+bool TestScopeCameraHandlesVerticalAim() noexcept
+{
+    Matrix4 verticalGun = Identity();
+    verticalGun.values[1][1] = 0.0F;
+    verticalGun.values[1][2] = -1.0F;
+    verticalGun.values[2][1] = 1.0F;
+    verticalGun.values[2][2] = 0.0F;
+
+    const auto scoped = bfvr::stereo::MakeD3D8IndependentRollScopeCamera(
+        Identity(),
+        Identity(),
+        verticalGun);
+    return scoped.has_value() &&
+        NearlyEqual(scoped->cameraWorld.values[2][0], 0.0F) &&
+        NearlyEqual(scoped->cameraWorld.values[2][1], 1.0F) &&
+        NearlyEqual(scoped->cameraWorld.values[2][2], 0.0F) &&
+        NearlyEqual(scoped->overlayRollRadians, 0.0F);
+}
+
+bool TestScopeCameraKeepsUpStableWhenAimingSouthAndMovingLeftHand() noexcept
+{
+    constexpr float pi = 3.14159265358979323846F;
+    const auto upward = bfvr::stereo::MakeD3D8IndependentRollScopeCamera(
+        Identity(),
+        Identity(),
+        Multiply(Yaw(pi), Pitch(0.35F)));
+    const auto level = bfvr::stereo::MakeD3D8IndependentRollScopeCamera(
+        Identity(),
+        Identity(),
+        Yaw(pi));
+    const auto downward = bfvr::stereo::MakeD3D8IndependentRollScopeCamera(
+        Identity(),
+        Identity(),
+        Multiply(Yaw(pi), Pitch(-0.35F)));
+    return upward.has_value() && level.has_value() &&
+        downward.has_value() &&
+        upward->cameraWorld.values[1][1] > 0.9F &&
+        level->cameraWorld.values[1][1] > 0.98F &&
+        downward->cameraWorld.values[1][1] > 0.9F &&
+        upward->cameraWorld.values[2][2] < -0.9F &&
+        level->cameraWorld.values[2][2] < -0.99F &&
+        downward->cameraWorld.values[2][2] < -0.9F;
 }
 
 bool TestProjectionScalePreservesCentreAndDepth() noexcept
@@ -772,6 +881,9 @@ int main()
         !TestInvalidFovFailsClosed() ||
         !TestScopeCameraSeparatesHeadAndWeaponRoll() ||
         !TestScopeRollSourcesRemainIndependent() ||
+        !TestScopeCameraKeepsGunForwardIndependentOfHeadCameraBasis() ||
+        !TestScopeCameraHandlesVerticalAim() ||
+        !TestScopeCameraKeepsUpStableWhenAimingSouthAndMovingLeftHand() ||
         !TestScopeAimSmoothingAttenuatesMicroMotionAndTranslation() ||
         !TestScopeAimSmoothingHandlesSustainedMotionAndBypassesAtBound() ||
         !TestScopeAimSmoothingResetsAtEveryDiscontinuity() ||

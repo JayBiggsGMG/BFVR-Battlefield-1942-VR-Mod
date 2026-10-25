@@ -11,6 +11,16 @@
 namespace bfvr
 {
 
+struct D3D8To9SharedTargetDiagnostic
+{
+    HRESULT result = E_PENDING;
+    ULONG_PTR sharedHandle = 0;
+    UINT width = 0;
+    UINT height = 0;
+    DWORD format = 0;
+    bool surfaceCreated = false;
+};
+
 class D3D8To9SharedTextureProducer
 {
 public:
@@ -40,12 +50,16 @@ public:
 
     [[nodiscard]] bool IsAvailable() const noexcept;
     [[nodiscard]] HRESULT LastCreateResult() const noexcept;
+    [[nodiscard]] HRESULT DeviceDiagnosticsResult() const noexcept;
     [[nodiscard]] HRESULT SmallProbeResult() const noexcept;
     [[nodiscard]] HRESULT LastDepthCreateResult() const noexcept;
     [[nodiscard]] HRESULT LastDepthResolveResult() const noexcept;
     [[nodiscard]] std::size_t FailedTargetIndex() const noexcept;
     [[nodiscard]] const BFVRD3D8To9SharedDeviceDiagnostics&
         DeviceDiagnostics() const noexcept;
+    [[nodiscard]] const std::array<
+        D3D8To9SharedTargetDiagnostic,
+        shared::kTextureCount>& TargetDiagnostics() const noexcept;
 
 private:
     BFVRD3D8To9CreateSharedRenderTargetFn createSharedTarget_ = nullptr;
@@ -58,8 +72,12 @@ private:
     mutable HRESULT smallProbeResult_ = E_PENDING;
     mutable HRESULT lastDepthCreateResult_ = E_PENDING;
     mutable HRESULT lastDepthResolveResult_ = E_PENDING;
+    mutable HRESULT deviceDiagnosticsResult_ = E_PENDING;
     mutable std::size_t failedTargetIndex_ = shared::kTextureCount;
     mutable BFVRD3D8To9SharedDeviceDiagnostics deviceDiagnostics_ = {};
+    mutable std::array<
+        D3D8To9SharedTargetDiagnostic,
+        shared::kTextureCount> targetDiagnostics_ = {};
 };
 
 } // namespace bfvr

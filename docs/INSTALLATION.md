@@ -1,4 +1,4 @@
-# Installing BFVR v1.0.2
+# Installing BFVR
 
 This guide assumes no modding or programming experience.
 
@@ -70,7 +70,7 @@ specifically known obsolete BF42Plus 1.3.4 `dsound.dll` remains blocked because
 its abandoned updater is unsafe.
 
 If both a recognized bundled BF42++ `dsound.dll` and a separately copied
-`bf42++.dll` are present, BFVR 1.0.2 prioritizes the bundled proxy and does not
+`bf42++.dll` are present, BFVR 1.0.3 prioritizes the bundled proxy and does not
 inject the extra DLL. However, running the separately copied `bf42++.exe` can
 still produce the misleading error "bf42++ is being injected into unsupported
 executable" because the bundled copy has already loaded. The simplest and
@@ -82,9 +82,16 @@ move the added `bf42++.exe`, `bf42++.dll`, and `bf42++BlackScreen.exe` out of
 the game folder. Keep MoonGamers' existing `dsound.dll`, then start VR with
 `BFVR.exe`. The generated `bf42++.ini` file is normal and may be kept.
 
+BFVR's head-tracked audio does not install or replace `dsound.dll` or DSOAL.
+Do not overwrite a package's existing BF42++ or audio proxy to enable it. BFVR
+uses the DirectSound listener exposed by the audio backend already loaded by
+the game; HRTF remains the responsibility of an audio backend already
+configured for Battlefield.
+
 ## Install with the setup program
 
-1. Download `BFVR-Setup-v1.0.2.exe` from the official v1.0.2 GitHub Release.
+1. Download the latest BFVR setup program from the official GitHub Releases
+   page.
 2. Double-click the downloaded installer.
 3. Because the installer is unsigned, Windows may say **Unknown publisher**.
    If SmartScreen appears, choose **More info**, verify that the filename and

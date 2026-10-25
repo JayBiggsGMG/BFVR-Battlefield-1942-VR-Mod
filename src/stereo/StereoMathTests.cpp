@@ -1890,16 +1890,24 @@ void TestBF1942SemanticDrawPolicy()
     signature.vertexShaderOrFvf = 0x8B737890;
     signature.originalVertexShaderHash = 0x64F6D635ADDB7328ULL;
     signature.originalVertexShaderByteCount = 1836;
+    signature.originalVertexShaderProgrammable = true;
     if (bfvr::stereo::ClassifyBF1942Win32SemanticDraw(signature) !=
         D3D8SemanticDrawClass::AnimatedMeshSkinning)
     {
         Fail(test, "observed translated skinning-shader identity was rejected");
     }
-    signature.originalVertexShaderByteCount = 1832;
+    signature.originalVertexShaderHash = 0x1122334455667788ULL;
+    signature.originalVertexShaderByteCount = 576;
+    if (bfvr::stereo::ClassifyBF1942Win32SemanticDraw(signature) !=
+        D3D8SemanticDrawClass::AnimatedMeshSkinning)
+    {
+        Fail(test, "substituted skinning-shader bytecode was rejected");
+    }
+    signature.originalVertexShaderProgrammable = false;
     if (bfvr::stereo::ClassifyBF1942Win32SemanticDraw(signature) !=
         D3D8SemanticDrawClass::Unclassified)
     {
-        Fail(test, "translated skinning-shader byte count did not fail closed");
+        Fail(test, "declaration-only animated-mesh draw did not fail closed");
     }
 
     signature = {

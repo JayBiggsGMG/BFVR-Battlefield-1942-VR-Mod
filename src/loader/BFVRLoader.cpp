@@ -4,9 +4,11 @@
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstdio>
 #include <cwchar>
 #include <string>
+#include <ctime>
 #include <utility>
 #include <vector>
 
@@ -49,6 +51,7 @@ struct Options
     std::wstring clientPath;
     bool playerLaunch = false;
     bool bf42PlusPlus = false;
+    bool interopDiagnostics = false;
     bool dryRun = false;
     bool showHelp = false;
     bool presentBridgeProbe = false;
@@ -228,6 +231,8 @@ std::wstring HexDigest(
     return result;
 }
 
+void AppendLoaderLog(const std::wstring& message);
+
 void ReportPlayerGameBuild(
     const std::wstring& executablePath)
 {
@@ -247,6 +252,14 @@ void ReportPlayerGameBuild(
             digest.end(),
             kSupportedBf1942Sha256.begin()))
     {
+        wchar_t message[512] = {};
+        swprintf_s(
+            message,
+            std::size(message),
+            L"[WARN] BF1942.exe build is not in BFVR's verified hash set; startup will continue without claiming compatibility. size=%lld SHA-256=%ls.",
+            size,
+            HexDigest(digest).c_str());
+        AppendLoaderLog(message);
         fwprintf(
             stderr,
             L"[WARN] BFVR has worked with several Battlefield 1942 releases, but this exact BF1942.exe has not been verified. BFVR will try to start it.\n");
@@ -255,6 +268,11 @@ void ReportPlayerGameBuild(
             L"[INFO] Detected size=%lld SHA-256=%ls\n",
             size,
             HexDigest(digest).c_str());
+    }
+    else
+    {
+        AppendLoaderLog(
+            L"[PASS] BF1942.exe matches the BFVR verified build identity.");
     }
 }
 
@@ -265,6 +283,14 @@ void ResetLoaderLog()
     {
         fclose(file);
     }
+    else
+    {
+        fwprintf(
+            stderr,
+            L"[WARN] Could not reset BFVR log at %ls (errno=%d).\n",
+            LoaderLogPath().c_str(),
+            errno);
+    }
 }
 
 void AppendLoaderLog(const std::wstring& message)
@@ -272,8 +298,25 @@ void AppendLoaderLog(const std::wstring& message)
     FILE* file = nullptr;
     if (_wfopen_s(&file, LoaderLogPath().c_str(), L"at, ccs=UTF-8") != 0 || file == nullptr)
     {
+        fwprintf(
+            stderr,
+            L"[WARN] Could not write BFVR log at %ls (errno=%d).\n",
+            LoaderLogPath().c_str(),
+            errno);
         return;
     }
+    const std::time_t now = std::time(nullptr);
+    std::tm localTime = {};
+    wchar_t timestamp[32] = L"0000-00-00 00:00:00";
+    if (localtime_s(&localTime, &now) == 0)
+    {
+        wcsftime(
+            timestamp,
+            std::size(timestamp),
+            L"%Y-%m-%d %H:%M:%S",
+            &localTime);
+    }
+    fwprintf(file, L"[%ls] [INFO] ", timestamp);
     fputws(message.c_str(), file);
     fputws(L"\n", file);
     fclose(file);
@@ -281,8 +324,64 @@ void AppendLoaderLog(const std::wstring& message)
 
 void AppendLoaderError(const wchar_t* operation, DWORD error)
 {
-    wchar_t message[512] = {};
-    swprintf_s(message, std::size(message), L"%ls failed: %lu", operation, error);
+    wchar_t systemMessage[512] = {};
+    FormatMessageW(
+        FORMAT_MESSAGE_FROM_SYSTEM |
+            FORMAT_MESSAGE_IGNORE_INSERTS,
+        nullptr,
+        error,
+        0,
+        systemMessage,
+        static_cast<DWORD>(std::size(systemMessage)),
+        nullptr);
+    std::size_t systemMessageLength = wcslen(systemMessage);
+    while (systemMessageLength > 0 &&
+        (systemMessage[systemMessageLength - 1] == L'\r' ||
+         systemMessage[systemMessageLength - 1] == L'\n' ||
+         systemMessage[systemMessageLength - 1] == L' '))
+    {
+        systemMessage[--systemMessageLength] = L'\0';
+    }
+    wchar_t message[768] = {};
+    swprintf_s(
+        message,
+        std::size(message),
+        L"[FAIL] %ls failed (Win32=%lu / 0x%08lX): %ls",
+        operation,
+        error,
+        error,
+        systemMessage[0] == L'\0' ? L"No system description available." : systemMessage);
+    AppendLoaderLog(message);
+}
+
+void AppendDiagnosticFileIdentity(
+    const wchar_t* label,
+    const std::wstring& path)
+{
+    std::array<unsigned char, 32> digest = {};
+    LONGLONG size = 0;
+    if (!ComputeFileSha256(path, digest, size))
+    {
+        wchar_t message[512] = {};
+        swprintf_s(
+            message,
+            std::size(message),
+            L"Interop diagnostic file identity unavailable: %ls path=%ls error=%lu.",
+            label,
+            path.c_str(),
+            GetLastError());
+        AppendLoaderLog(message);
+        return;
+    }
+    wchar_t message[768] = {};
+    swprintf_s(
+        message,
+        std::size(message),
+        L"Interop diagnostic file identity: %ls path=%ls size=%lld SHA-256=%ls.",
+        label,
+        path.c_str(),
+        size,
+        HexDigest(digest).c_str());
     AppendLoaderLog(message);
 }
 
@@ -369,6 +468,10 @@ bool ParseOptions(int argc, wchar_t* argv[], Options& options)
         else if (argument == L"--bf42plusplus")
         {
             options.bf42PlusPlus = true;
+        }
+        else if (argument == L"--interop-diagnostics")
+        {
+            options.interopDiagnostics = true;
         }
         else if (argument == L"--present-bridge-probe")
         {
@@ -524,6 +627,11 @@ bool ParseOptions(int argc, wchar_t* argv[], Options& options)
         {
             return false;
         }
+    }
+
+    if (options.interopDiagnostics)
+    {
+        options.playerLaunch = true;
     }
 
     if (options.playerLaunch)
@@ -706,6 +814,7 @@ void PrintUsage()
     wprintf(L"Double-click BFVR.exe, or run it without arguments, to start Battlefield 1942 in VR.\n");
     wprintf(L"A diagnostic timeout closes only the game process started by this loader after the requested observation window. --run-until-stopped keeps the combined translated OpenXR test active for BF1942's process lifetime.\n");
     wprintf(L"Usage: BFVR [--play] [--dry-run] [developer diagnostic options] [--game-root <path>] [--client <path>] [-- <game arguments>]\n");
+    wprintf(L"--interop-diagnostics starts the normal BFVR player path and records a one-run loader, BF42++, D3D9Ex/D3D11 shared-texture, and OpenXR diagnostic bundle.\n");
     wprintf(L"The loader starts BF1942.exe suspended, loads BFVRClient.dll from the BFVR folder, then resumes it.\n");
     wprintf(L"--present-bridge-probe is an explicit active test: it installs a no-op in-process D3D8 Present detour only after the verified D3D8 lifecycle trace completes.\n");
     wprintf(L"--surface-descriptor-probe is a separate explicit one-shot test: at the passively confirmed ordinary-world Projection submission it calls GetRenderTarget/GetDesc/Release on the same D3D8 thread.\n");
@@ -1076,14 +1185,32 @@ struct ReplacementProcess
     DWORD threadId = 0;
 };
 
+struct ReplacementSearchDiagnostics
+{
+    std::vector<DWORD> candidateProcessIds;
+    std::vector<DWORD> candidatePathResultIds;
+    std::vector<DWORD> candidatePathFailureIds;
+    std::vector<DWORD> candidateInjectionAccessFailureIds;
+    std::vector<DWORD> candidateThreadFailureIds;
+    bool snapshotFailureLogged = false;
+};
+
 ReplacementProcess FindBf1942Replacement(
     const std::wstring& executablePath,
-    const std::vector<DWORD>& knownProcessIds)
+    const std::vector<DWORD>& knownProcessIds,
+    ReplacementSearchDiagnostics& diagnostics)
 {
     ReplacementProcess replacement = {};
     HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
     if (snapshot == INVALID_HANDLE_VALUE)
     {
+        if (!diagnostics.snapshotFailureLogged)
+        {
+            diagnostics.snapshotFailureLogged = true;
+            AppendLoaderError(
+                L"CreateToolhelp32Snapshot(replacement process search)",
+                GetLastError());
+        }
         return replacement;
     }
 
@@ -1099,6 +1226,102 @@ ReplacementProcess FindBf1942Replacement(
                 continue;
             }
 
+            const DWORD processId = entry.th32ProcessID;
+            const bool firstCandidateObservation =
+                !IsKnownProcessId(
+                    diagnostics.candidateProcessIds,
+                    processId);
+            if (firstCandidateObservation)
+            {
+                diagnostics.candidateProcessIds.push_back(processId);
+                wchar_t message[256] = {};
+                swprintf_s(
+                    message,
+                    std::size(message),
+                    L"Replacement candidate discovered: pid=%lu parent-pid=%lu image-name=%ls parent-is-attached-game=%ls.",
+                    processId,
+                    entry.th32ParentProcessID,
+                    entry.szExeFile,
+                    IsKnownProcessId(
+                        knownProcessIds,
+                        entry.th32ParentProcessID)
+                        ? L"yes"
+                        : L"no");
+                AppendLoaderLog(message);
+            }
+
+            HANDLE queryProcess = OpenProcess(
+                PROCESS_QUERY_LIMITED_INFORMATION,
+                FALSE,
+                processId);
+            if (queryProcess == nullptr)
+            {
+                if (firstCandidateObservation)
+                {
+                    const DWORD error = GetLastError();
+                    wchar_t message[256] = {};
+                    swprintf_s(
+                        message,
+                        std::size(message),
+                        L"Replacement candidate pid=%lu could not be opened for image-path query (error=%lu).",
+                        processId,
+                        error);
+                    AppendLoaderLog(message);
+                }
+                continue;
+            }
+
+            wchar_t imagePath[MAX_PATH] = {};
+            DWORD imagePathLength = static_cast<DWORD>(std::size(imagePath));
+            if (!QueryFullProcessImageNameW(
+                    queryProcess,
+                    0,
+                    imagePath,
+                    &imagePathLength))
+            {
+                const DWORD error = GetLastError();
+                if (!IsKnownProcessId(
+                        diagnostics.candidatePathFailureIds,
+                        processId))
+                {
+                    diagnostics.candidatePathFailureIds.push_back(processId);
+                    wchar_t message[256] = {};
+                    swprintf_s(
+                        message,
+                        std::size(message),
+                        L"Replacement candidate pid=%lu image path could not be queried (error=%lu).",
+                        processId,
+                        error);
+                    AppendLoaderLog(message);
+                }
+                CloseHandle(queryProcess);
+                continue;
+            }
+            CloseHandle(queryProcess);
+
+            const bool isExpectedImage =
+                _wcsicmp(imagePath, executablePath.c_str()) == 0;
+            if (!IsKnownProcessId(
+                    diagnostics.candidatePathResultIds,
+                    processId))
+            {
+                diagnostics.candidatePathResultIds.push_back(processId);
+                wchar_t message[2048] = {};
+                swprintf_s(
+                    message,
+                    std::size(message),
+                    L"Replacement candidate image check: pid=%lu actual=%ls expected=%ls result=%ls.",
+                    processId,
+                    imagePath,
+                    executablePath.c_str(),
+                    isExpectedImage ? L"same-install match" : L"different path; rejected");
+                AppendLoaderLog(message);
+            }
+            if (!isExpectedImage)
+            {
+                continue;
+            }
+
             HANDLE process = OpenProcess(
                 PROCESS_CREATE_THREAD |
                     PROCESS_QUERY_INFORMATION |
@@ -1107,37 +1330,97 @@ ReplacementProcess FindBf1942Replacement(
                     PROCESS_VM_WRITE |
                     SYNCHRONIZE,
                 FALSE,
-                entry.th32ProcessID);
+                processId);
             if (process == nullptr)
             {
+                if (!IsKnownProcessId(
+                        diagnostics.candidateInjectionAccessFailureIds,
+                        processId))
+                {
+                    diagnostics.candidateInjectionAccessFailureIds.push_back(
+                        processId);
+                    const DWORD error = GetLastError();
+                    wchar_t message[256] = {};
+                    swprintf_s(
+                        message,
+                        std::size(message),
+                        L"Same-install replacement candidate pid=%lu was identified, but injection access was denied (error=%lu).",
+                        processId,
+                        error);
+                    AppendLoaderLog(message);
+                }
                 continue;
             }
 
-            wchar_t imagePath[MAX_PATH] = {};
-            DWORD imagePathLength = static_cast<DWORD>(std::size(imagePath));
-            const bool isExpectedImage =
-                QueryFullProcessImageNameW(
+            wchar_t confirmedImagePath[MAX_PATH] = {};
+            DWORD confirmedImagePathLength =
+                static_cast<DWORD>(std::size(confirmedImagePath));
+            if (!QueryFullProcessImageNameW(
                     process,
                     0,
-                    imagePath,
-                    &imagePathLength) != FALSE &&
-                _wcsicmp(imagePath, executablePath.c_str()) == 0;
-            if (!isExpectedImage)
+                    confirmedImagePath,
+                    &confirmedImagePathLength))
             {
+                const DWORD error = GetLastError();
+                wchar_t message[512] = {};
+                swprintf_s(
+                    message,
+                    std::size(message),
+                    L"Replacement candidate pid=%lu failed identity verification after opening for injection (error=%lu); rejected.",
+                    processId,
+                    error);
+                AppendLoaderLog(message);
+                CloseHandle(process);
+                continue;
+            }
+            if (_wcsicmp(
+                    confirmedImagePath,
+                    executablePath.c_str()) != 0)
+            {
+                wchar_t message[1024] = {};
+                swprintf_s(
+                    message,
+                    std::size(message),
+                    L"Replacement candidate pid=%lu changed image path before injection: actual=%ls expected=%ls; rejected.",
+                    processId,
+                    confirmedImagePath,
+                    executablePath.c_str());
+                AppendLoaderLog(message);
                 CloseHandle(process);
                 continue;
             }
 
-            const DWORD threadId = FindAnyThreadForProcess(entry.th32ProcessID);
+            const DWORD threadId = FindAnyThreadForProcess(processId);
             if (threadId == 0)
             {
+                if (!IsKnownProcessId(
+                        diagnostics.candidateThreadFailureIds,
+                        processId))
+                {
+                    diagnostics.candidateThreadFailureIds.push_back(processId);
+                    wchar_t message[256] = {};
+                    swprintf_s(
+                        message,
+                        std::size(message),
+                        L"Replacement candidate pid=%lu matches this installation but has no available thread yet.",
+                        processId);
+                    AppendLoaderLog(message);
+                }
                 CloseHandle(process);
                 continue;
             }
 
             replacement.handle = process;
-            replacement.processId = entry.th32ProcessID;
+            replacement.processId = processId;
             replacement.threadId = threadId;
+            wchar_t message[256] = {};
+            swprintf_s(
+                message,
+                std::size(message),
+                L"Selected same-install replacement candidate pid=%lu thread=%lu for BFVR handoff.",
+                processId,
+                threadId);
+            AppendLoaderLog(message);
             break;
         } while (Process32NextW(snapshot, &entry));
     }
@@ -1146,7 +1429,8 @@ ReplacementProcess FindBf1942Replacement(
 }
 
 bool SetPlayerEnvironment(
-    const std::wstring& payloadDirectory)
+    const std::wstring& payloadDirectory,
+    bool interopDiagnosticsEnabled)
 {
     const std::pair<const wchar_t*, std::wstring> values[] = {
         {L"BFVR_DIAGNOSTICS", L"off"},
@@ -1171,6 +1455,16 @@ bool SetPlayerEnvironment(
                 GetLastError());
             return false;
         }
+    }
+    if (!SetEnvironmentVariableW(
+            L"BFVR_INTEROP_DIAGNOSTICS",
+            interopDiagnosticsEnabled ? L"1" : L"0"))
+    {
+        fwprintf(
+            stderr,
+            L"[FAIL] BFVR could not prepare its interop-diagnostics setting (error=%lu).\n",
+            GetLastError());
+        return false;
     }
     return true;
 }
@@ -1304,6 +1598,23 @@ int wmain(int argc, wchar_t* argv[])
         PrintUsage();
         return 0;
     }
+    ResetLoaderLog();
+    AppendLoaderLog(
+        (std::wstring(L"BFVR ") + bfvr::kVersionString +
+         L" startup; playerDiagnostics=off; gameRoot=" +
+         options.gameRoot + L".").c_str());
+    if (options.playerLaunch)
+    {
+        wprintf(
+            L"BFVR %s is starting Battlefield 1942 in VR.\n",
+            bfvr::kVersionString);
+        wprintf(
+            L"[INFO] Game launch does not confirm VR is ready; check BFVRPresenter-game.log for runtime and headset status.\n");
+        wprintf(
+            L"[INFO] If Borderless1942 is installed, disable it when using BFVR; it can stop VR across map transitions.\n");
+        wprintf(
+            L"[INFO] Troubleshooting logs are saved beside BFVR.exe: loader.log and BFVRPresenter-game.log.\n");
+    }
     const bool d3d8To9SharedFrameProbe =
         options.d3d8To9ObserverProbe && options.d3d8StereoFrameProbe;
     const bool d3d8To9OpenXRPresentationProbe =
@@ -1322,8 +1633,14 @@ int wmain(int argc, wchar_t* argv[])
     {
         fwprintf(stderr, L"[FAIL] Expected game executable or selected BFVR client DLL was not found.\n");
         fwprintf(stderr, L"[INFO] game=%ls\n[INFO] client=%ls\n", executablePath.c_str(), activeClientPath.c_str());
+        AppendLoaderLog(
+            (std::wstring(L"[FAIL] Required startup file missing: game=") +
+             executablePath + L" client=" + activeClientPath + L".").c_str());
         return 2;
     }
+    AppendLoaderLog(
+        (std::wstring(L"[PASS] Found game executable: ") +
+         executablePath + L".").c_str());
     if (options.bf42PlusPlus)
     {
         if (!ValidatePlayerBf42PlusPlus(
@@ -1332,8 +1649,16 @@ int wmain(int argc, wchar_t* argv[])
                 bf42PlusPlusPath,
                 bf42PlusPlusProxySelected))
         {
+            AppendLoaderLog(
+                L"[FAIL] BF42++ validation failed; see the preceding diagnostic for the missing or incompatible component.");
             return 2;
         }
+        AppendLoaderLog(
+            (std::wstring(L"[PASS] BF42++ validation selected ") +
+             (bf42PlusPlusProxySelected
+                  ? L"the recognized bundled proxy: "
+                  : L"the standalone library: ") +
+             bf42PlusPlusPath + L".").c_str());
         ReportPlayerGameBuild(executablePath);
     }
     const std::wstring d3d8To9Path =
@@ -1368,10 +1693,14 @@ int wmain(int argc, wchar_t* argv[])
                 return 2;
             }
         }
+        AppendLoaderLog(
+            L"[PASS] Required BFVR player files and OpenXR loader are present.");
     }
 
     if (options.dryRun)
     {
+        AppendLoaderLog(
+            L"[PASS] Dry-run validation completed; no Battlefield process was started.");
         wprintf(
             L"[PASS] Dry run only.\n[INFO] game=%ls\n[INFO] client=%ls\n",
             executablePath.c_str(),
@@ -1399,18 +1728,12 @@ int wmain(int argc, wchar_t* argv[])
         return 2;
     }
     if (options.playerLaunch &&
-        (!SetPlayerEnvironment(payloadDirectory) ||
+           (!SetPlayerEnvironment(
+               payloadDirectory,
+               options.interopDiagnostics) ||
          !startupMovies.Suspend(options.gameRoot)))
     {
         return 2;
-    }
-
-    if (options.bf42PlusPlus && !bf42PlusPlusProxySelected)
-    {
-        wprintf(
-            L"BFVR %s is starting Battlefield 1942 in VR.\n",
-            bfvr::kVersionString);
-        wprintf(L"Developer diagnostics are off. Close Battlefield 1942 normally to end BFVR.\n");
     }
 
     std::wstring commandLine = QuoteArgument(executablePath);
@@ -1420,7 +1743,6 @@ int wmain(int argc, wchar_t* argv[])
         commandLine += QuoteArgument(argument);
     }
     std::vector<wchar_t> mutableCommandLine(commandLine.begin(), commandLine.end());
-    ResetLoaderLog();
     const std::wstring playerStartMessage =
         std::wstring(L"Starting BFVR ") + bfvr::kVersionString +
         L" with player diagnostics disabled.";
@@ -1483,6 +1805,40 @@ int wmain(int argc, wchar_t* argv[])
             : options.presentBridgeProbe
                 ? L"Starting a bounded observer run with the explicit no-op Present bridge probe enabled."
                 : L"Starting a bounded passive observer run.");
+    AppendLoaderLog(
+        (std::wstring(L"Selected BFVR client DLL: ") +
+         activeClientPath + L".").c_str());
+    if (options.bf42PlusPlus)
+    {
+        AppendLoaderLog(
+            (std::wstring(L"Selected BF42++ component: ") +
+             bf42PlusPlusPath + L".").c_str());
+    }
+    if (options.interopDiagnostics)
+    {
+        AppendLoaderLog(
+            (std::wstring(L"One-run interop diagnostics enabled for BFVR ") +
+             bfvr::kVersionString +
+             L"; captures the selected game/BF42++/BFVR binaries plus producer and presenter shared-texture evidence.").c_str());
+        AppendDiagnosticFileIdentity(L"BF1942.exe", executablePath);
+        AppendDiagnosticFileIdentity(L"BFVR.exe", Combine(
+            GetModuleDirectory(), L"BFVR.exe"));
+        AppendDiagnosticFileIdentity(L"BFVRClient.dll", activeClientPath);
+        AppendDiagnosticFileIdentity(L"BFVRD3D8To9.dll", d3d8To9Path);
+        AppendDiagnosticFileIdentity(
+            L"BFVRPresenter.exe",
+            Combine(payloadDirectory, L"BFVRPresenter.exe"));
+        AppendDiagnosticFileIdentity(
+            L"BFVR x64 OpenXR loader",
+            Combine(
+                payloadDirectory,
+                L"runtime\\openxr\\win64\\openxr_loader.dll"));
+        AppendDiagnosticFileIdentity(
+            bf42PlusPlusProxySelected
+                ? L"Selected bundled BF42++ proxy"
+                : L"Selected BF42++ library",
+            bf42PlusPlusPath);
+    }
     mutableCommandLine.push_back(L'\0');
 
     STARTUPINFOW startupInfo = {};
@@ -1863,6 +2219,7 @@ int wmain(int argc, wchar_t* argv[])
     AppendLoaderLog(options.d3d8To9FlatProbe
         ? L"Injected the DXGI-free BFVRD3D8To9FlatClient.dll into the suspended BF1942.exe process."
         : L"Injected BFVRClient.dll into the suspended BF1942.exe process.");
+    AppendLoaderLog(L"[PASS] BFVR client DLL injection succeeded.");
 
     if (!InitializeObserver(processInfo.hProcess, processInfo.dwThreadId, activeClientPath, remoteModuleBase, options.presentBridgeProbe, options.surfaceDescriptorProbe, options.surfaceCopyProbe, options.surfaceStreamProbe, options.surfaceResetProbe, options.surfaceReadbackProbe, options.surfaceSceneReadbackProbe, options.surfaceD3D11UploadProbe, options.renderViewTransformProbe, options.renderViewSetterBaselineProbe, options.renderViewSingleEyeProbe, options.configuredViewListProbe, options.configuredViewListWriterProbe, options.sceneBatchProbe, options.d3d8CallInventoryProbe, options.d3d8StateCensusProbe, options.d3d8StereoPairProbe, options.d3d8StereoFrameProbe, options.d3d8StereoFramePresentationProbe, options.d3d8To9FlatProbe, options.d3d8To9ObserverProbe, options.playerInputProbe, options.weaponViewModelProbe, options.weaponTransformOwnershipProbe, options.weaponFireProbe, options.firstPersonArmProbe))
     {
@@ -1929,6 +2286,8 @@ int wmain(int argc, wchar_t* argv[])
             : options.presentBridgeProbe
                 ? L"Initialized the D3D8 observer and requested the no-op Present bridge probe outside DllMain while BF1942.exe remained suspended."
                 : L"Initialized the D3D8 observer outside DllMain while BF1942.exe remained suspended.");
+    AppendLoaderLog(
+        L"[PASS] BFVR observer initialization completed before the game resumed.");
 
     if (ResumeThread(processInfo.hThread) == static_cast<DWORD>(-1))
     {
@@ -1995,8 +2354,10 @@ int wmain(int argc, wchar_t* argv[])
             : options.presentBridgeProbe
                 ? L"Resumed BF1942.exe after observer injection with the no-op Present bridge probe requested."
                 : L"Resumed BF1942.exe after passive observer injection.");
+    AppendLoaderLog(
+        L"[PASS] BF1942's suspended primary thread was resumed after BFVR initialization.");
     wprintf(options.playerLaunch
-             ? L"[PASS] Started Battlefield 1942 in BFVR (pid=%lu).\n"
+             ? L"[PASS] Started BF1942.exe (pid=%lu); VR startup is still initializing. Check BFVRPresenter-game.log for the OpenXR result.\n"
              : d3d8To9SharedFrameProbe
              ? L"[PASS] Started BF1942.exe with the live D3D9Ex-to-x64 no-HMD GPU shared-target proof (pid=%lu).\n"
              : d3d8To9OpenXRPresentationProbe
@@ -2053,6 +2414,11 @@ int wmain(int argc, wchar_t* argv[])
                 ? L"[PASS] Started BF1942.exe with the BFVR D3D8 observer and opt-in no-op Present bridge probe (pid=%lu).\n"
                 : L"[PASS] Started BF1942.exe with the passive BFVR D3D8 observer (pid=%lu).\n",
         processInfo.dwProcessId);
+    if (options.playerLaunch)
+    {
+        AppendLoaderLog(
+            L"[PASS] BF1942.exe process created, BFVRClient.dll initialized, and game thread resumed; OpenXR startup continues asynchronously.");
+    }
     if (options.diagnosticTimeoutMs != 0)
     {
         HANDLE waitHandles[2] = {processLifetimeHandle, d3d8ProbeCompletionEvent};
@@ -2102,14 +2468,15 @@ int wmain(int argc, wchar_t* argv[])
         // starts a same-install replacement that owns the 2D main menu.
         // Follow that successor before treating the player session as finished.
         std::vector<DWORD> attachedProcessIds = {processInfo.dwProcessId};
+        ReplacementSearchDiagnostics replacementSearchDiagnostics;
         DWORD handoffSearchStartedAt = 0;
         constexpr DWORD kSuccessorSearchTimeoutMs = 10000;
         for (;;)
         {
-            const ReplacementProcess successor =
-                FindBf1942Replacement(
-                    executablePath,
-                    attachedProcessIds);
+            ReplacementProcess successor = FindBf1942Replacement(
+                executablePath,
+                attachedProcessIds,
+                replacementSearchDiagnostics);
             if (successor.handle != nullptr)
             {
                 DWORD successorBf42PlusPlusModuleBase = 0;

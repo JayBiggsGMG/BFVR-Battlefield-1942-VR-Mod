@@ -28,6 +28,107 @@ namespace
 constexpr DWORD kD3DFormatA8R8G8B8 = 21;
 constexpr DWORD kD3DFormatA2B10G10R10 = 31;
 constexpr DWORD kD3DFormatA16B16G16R16F = 113;
+volatile LONG g_interopPresenterLaunchSequence = 0;
+
+bool InteropDiagnosticsEnabled()
+{
+    wchar_t value[2] = {};
+    return GetEnvironmentVariableW(
+               L"BFVR_INTEROP_DIAGNOSTICS",
+               value,
+               static_cast<DWORD>(std::size(value))) == 1 &&
+        value[0] == L'1';
+}
+
+void ResetInteropDiagnosticLog(const std::wstring& directory)
+{
+    static bool resetForProcess = false;
+    if (!InteropDiagnosticsEnabled())
+    {
+        return;
+    }
+    if (resetForProcess)
+    {
+        return;
+    }
+    resetForProcess = true;
+    const std::wstring path = directory + L"\\BFVR-interop-producer.log";
+    FILE* file = nullptr;
+    if (_wfopen_s(&file, path.c_str(), L"wt, ccs=UTF-8") == 0 &&
+        file != nullptr)
+    {
+        fwprintf(
+            file,
+            L"BFVR producer interop diagnostics; pid=%lu; log=%s\n",
+            GetCurrentProcessId(),
+            path.c_str());
+        fclose(file);
+    }
+}
+
+void AppendInteropDiagnostic(
+    const std::wstring& directory,
+    const wchar_t* format,
+    ...)
+{
+    if (!InteropDiagnosticsEnabled())
+    {
+        return;
+    }
+    const std::wstring path = directory + L"\\BFVR-interop-producer.log";
+    FILE* file = nullptr;
+    if (_wfopen_s(&file, path.c_str(), L"at, ccs=UTF-8") != 0 ||
+        file == nullptr)
+    {
+        return;
+    }
+    wchar_t message[1400] = {};
+    va_list arguments;
+    va_start(arguments, format);
+    _vsnwprintf_s(message, std::size(message), _TRUNCATE, format, arguments);
+    va_end(arguments);
+    SYSTEMTIME now = {};
+    GetLocalTime(&now);
+    fwprintf(
+        file,
+        L"%04u-%02u-%02u %02u:%02u:%02u.%03u [pid=%lu] %s\n",
+        now.wYear,
+        now.wMonth,
+        now.wDay,
+        now.wHour,
+        now.wMinute,
+        now.wSecond,
+        now.wMilliseconds,
+        GetCurrentProcessId(),
+        message);
+    fclose(file);
+}
+
+void AppendLoadedModule(
+    const std::wstring& directory,
+    const wchar_t* moduleName)
+{
+    HMODULE module = GetModuleHandleW(moduleName);
+    if (module == nullptr)
+    {
+        AppendInteropDiagnostic(
+            directory,
+            L"module %s is not loaded in the BF1942 process.",
+            moduleName);
+        return;
+    }
+    std::array<wchar_t, 32768> path = {};
+    const DWORD length = GetModuleFileNameW(
+        module,
+        path.data(),
+        static_cast<DWORD>(path.size()));
+    AppendInteropDiagnostic(
+        directory,
+        L"module %s path=%s pathResult=%lu.",
+        moduleName,
+        length > 0 && length < path.size() ? path.data() : L"<unavailable>",
+        length);
+}
 
 std::wstring QuoteArgument(const std::wstring& argument)
 {
@@ -245,11 +346,30 @@ public:
             return false;
         }
 
-        std::wstring moduleDirectory;
         if (!GetModuleDirectory(moduleDirectory))
         {
             WriteLog(L"OpenXR game bridge could not resolve the BFVR client directory.");
             return false;
+        }
+        ResetInteropDiagnosticLog(moduleDirectory);
+        if (InteropDiagnosticsEnabled())
+        {
+            std::array<wchar_t, 32768> gamePath = {};
+            const DWORD gamePathLength = GetModuleFileNameW(
+                nullptr,
+                gamePath.data(),
+                static_cast<DWORD>(gamePath.size()));
+            AppendInteropDiagnostic(
+                moduleDirectory,
+                L"game executable=%s pathResult=%lu.",
+                gamePathLength > 0 && gamePathLength < gamePath.size()
+                    ? gamePath.data()
+                    : L"<unavailable>",
+                gamePathLength);
+            AppendLoadedModule(moduleDirectory, L"BFVRClient.dll");
+            AppendLoadedModule(moduleDirectory, L"BFVRD3D8To9.dll");
+            AppendLoadedModule(moduleDirectory, L"dsound.dll");
+            AppendLoadedModule(moduleDirectory, L"bf42++.dll");
         }
         companion = requestedCompanion;
         presenterPath = moduleDirectory +
@@ -295,10 +415,23 @@ public:
                 ? shared::kProducerFlagWaterReflectionsRequested
                 : 0);
 
-        const std::wstring presenterLog = moduleDirectory +
+        std::wstring presenterLog = moduleDirectory +
             (companion == D3D8PresentationCompanion::OfflineTransport
                 ? L"\\BFVRSharedTextureConsumer-game.log"
                 : L"\\BFVRPresenter-game.log");
+        if (companion == D3D8PresentationCompanion::OpenXR &&
+            InteropDiagnosticsEnabled())
+        {
+            wchar_t numberedLogName[64] = {};
+            const LONG sequence = InterlockedIncrement(
+                &g_interopPresenterLaunchSequence);
+            swprintf_s(
+                numberedLogName,
+                std::size(numberedLogName),
+                L"\\BFVRPresenter-game-%02ld.log",
+                sequence);
+            presenterLog = moduleDirectory + numberedLogName;
+        }
         wchar_t runUntilStoppedValue[2] = {};
         const bool runUntilStopped =
             companion == D3D8PresentationCompanion::OpenXR &&
@@ -488,6 +621,7 @@ public:
                 surfaces,
                 descriptions))
         {
+            LogGpuTargetDiagnostics(moduleDirectory, descriptions, false);
             WriteLog(
                 L"D3D9Ex shared-target creation failed on the D3D8 device thread: target=%zu size=%ux%u format=%s result=0x%08lX small64=0x%08lX extended=%d cooperative=0x%08lX helperAttempts=%ld helperStage=%lu helperResult=0x%08lX createDevice=0x%08lX createTexture=0x%08lX gameOpen=0x%08lX.",
                 gpuProducer.FailedTargetIndex(),
@@ -529,13 +663,20 @@ public:
                 shared::ProcessState::Failed);
             return false;
         }
+        LogGpuTargetDiagnostics(moduleDirectory, descriptions, true);
         // Best-effort compatibility initialization for graphics stacks that
         // reject a legacy D3D9 allocation when its first D3D11 open occurs in
         // the separate x64 presenter. The temporary local open is released
         // before publication and does not alter the normal transport path.
-        (void)PrimeD3D8To9D3D11SharedTextureInterop(
+        bfvr::D3D8To9InteropProbeResult interopProbe = {};
+        const bool interopPrimed = PrimeD3D8To9D3D11SharedTextureInterop(
             gpuProducer.DeviceDiagnostics(),
-            shared::LoadLegacySharedHandle(descriptions[0]));
+            shared::LoadLegacySharedHandle(descriptions[0]),
+            InteropDiagnosticsEnabled() ? &interopProbe : nullptr);
+        if (InteropDiagnosticsEnabled())
+        {
+            LogInteropProbe(moduleDirectory, interopPrimed, interopProbe);
+        }
         for (std::size_t index = 0; index < descriptions.size(); ++index)
         {
             block->textures[index] = descriptions[index];
@@ -1411,6 +1552,94 @@ public:
         logCallback(message);
     }
 
+    void LogGpuTargetDiagnostics(
+        const std::wstring& directory,
+        const std::array<shared::SharedTextureDescription, shared::kTextureCount>&
+            descriptions,
+        bool created) const
+    {
+        if (!InteropDiagnosticsEnabled())
+        {
+            return;
+        }
+        const BFVRD3D8To9SharedDeviceDiagnostics& device =
+            gpuProducer.DeviceDiagnostics();
+        AppendInteropDiagnostic(
+            directory,
+            L"D3D8To9 bridge available=%d version=%u targetCreationSucceeded=%d deviceDiagnosticsResult=0x%08lX extended=%d adapterOrdinal=%u adapterLuid=\"%08lX:%08lX\" getCreationParameters=0x%08lX getDirect3D=0x%08lX queryD3D9Ex=0x%08lX getAdapterLuid=0x%08lX cooperative=0x%08lX helperAttempts=%ld helperDeviceCreations=%ld helperStage=%lu helperResult=0x%08lX helperCreateDevice=0x%08lX helperCreateTexture=0x%08lX gameOpen=0x%08lX.",
+            gpuProducer.IsAvailable() ? 1 : 0,
+            BFVR_D3D8TO9_SHARED_BRIDGE_VERSION,
+            created ? 1 : 0,
+            static_cast<unsigned long>(
+                gpuProducer.DeviceDiagnosticsResult()),
+            device.extendedDevice,
+            device.adapterOrdinal,
+            static_cast<unsigned long>(
+                static_cast<DWORD>(device.adapterLuidHigh)),
+            static_cast<unsigned long>(device.adapterLuidLow),
+            static_cast<unsigned long>(device.getCreationParametersResult),
+            static_cast<unsigned long>(device.getDirect3DResult),
+            static_cast<unsigned long>(device.queryDirect3D9ExResult),
+            static_cast<unsigned long>(device.getAdapterLuidResult),
+            static_cast<unsigned long>(device.cooperativeLevel),
+            device.helperAttempts,
+            device.helperDeviceCreations,
+            static_cast<unsigned long>(device.lastHelperStage),
+            static_cast<unsigned long>(device.lastHelperResult),
+            static_cast<unsigned long>(device.lastHelperCreateDeviceResult),
+            static_cast<unsigned long>(device.lastHelperCreateTextureResult),
+            static_cast<unsigned long>(device.lastGameOpenResult));
+
+        const auto& targets = gpuProducer.TargetDiagnostics();
+        for (std::size_t index = 0; index < targets.size(); ++index)
+        {
+            const D3D8To9SharedTargetDiagnostic& target = targets[index];
+            AppendInteropDiagnostic(
+                directory,
+                L"shared target slot=%zu result=0x%08lX size=%ux%u D3D9Format=%lu handle=0x%p surfaceCreated=%d publishedHandle=0x%p publishedFormat=%lu.",
+                index,
+                static_cast<unsigned long>(target.result),
+                target.width,
+                target.height,
+                static_cast<unsigned long>(target.format),
+                reinterpret_cast<void*>(target.sharedHandle),
+                target.surfaceCreated ? 1 : 0,
+                shared::LoadLegacySharedHandle(descriptions[index]),
+                static_cast<unsigned long>(descriptions[index].format));
+        }
+    }
+
+    void LogInteropProbe(
+        const std::wstring& directory,
+        bool primed,
+        const D3D8To9InteropProbeResult& probe) const
+    {
+        AppendInteropDiagnostic(
+            directory,
+            L"same-adapter D3D11 prime succeeded=%d prerequisite=0x%08lX factory=0x%08lX adapterEnumeration=0x%08lX adapterDescription=0x%08lX producerAdapter=\"%08lX:%08lX\" probeAdapter=\"%08lX:%08lX\" adapterName=\"%s\" createDevice=0x%08lX featureLevel=0x%04X OpenSharedResource=0x%08lX openedTexture=%d texture=%ux%u format=%u samples=%u array=%u.",
+            primed ? 1 : 0,
+            static_cast<unsigned long>(probe.prerequisiteResult),
+            static_cast<unsigned long>(probe.factoryResult),
+            static_cast<unsigned long>(probe.adapterEnumerationResult),
+            static_cast<unsigned long>(probe.adapterDescriptionResult),
+            static_cast<unsigned long>(static_cast<DWORD>(
+                probe.producerAdapterLuid.HighPart)),
+            static_cast<unsigned long>(probe.producerAdapterLuid.LowPart),
+            static_cast<unsigned long>(static_cast<DWORD>(
+                probe.probeAdapterLuid.HighPart)),
+            static_cast<unsigned long>(probe.probeAdapterLuid.LowPart),
+            probe.adapterDescription,
+            static_cast<unsigned long>(probe.createDeviceResult),
+            static_cast<unsigned int>(probe.featureLevel),
+            static_cast<unsigned long>(probe.openSharedResourceResult),
+            probe.openedTexture ? 1 : 0,
+            probe.openedTextureDescription.Width,
+            probe.openedTextureDescription.Height,
+            static_cast<unsigned int>(probe.openedTextureDescription.Format),
+            probe.openedTextureDescription.SampleDesc.Count,
+            probe.openedTextureDescription.ArraySize);
+    }
+
     shared::SharedControlChannel channel;
     shared::SharedTextureProducer producer;
     D3D8To9SharedTextureProducer gpuProducer;
@@ -1419,6 +1648,7 @@ public:
     shared::SharedTextureRequirements destinationRequirements = {};
     PROCESS_INFORMATION presenterProcess = {};
     std::wstring channelName;
+    std::wstring moduleDirectory;
     std::wstring presenterPath;
     D3D8SharedPresentationLogCallback logCallback = nullptr;
     D3D8PresentationCompanion companion =

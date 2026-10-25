@@ -67,6 +67,30 @@ placed in a player package. The outer working checkout's
 
 The long-form investigation record remains in [devREADME.md](../devREADME.md).
 
+## One-run interop diagnostic
+
+For a user report involving OpenXR startup or D3D9Ex/D3D11 shared textures,
+build both architectures and stage a separate diagnostic folder:
+
+```powershell
+.\tools\Stage-BFVRInteropDiagnostic.ps1 `
+  -Win32Build ..\build\bfvr-release-win32\RelWithDebInfo `
+  -X64Build ..\build\bfvr-presenter-x64\Release `
+  -Destination ..\build\bfvr-interop-diagnostic\BFVR
+
+.\tools\Package-BFVRInteropDiagnosticBuild.ps1 `
+  -StagedBfvr ..\build\bfvr-interop-diagnostic\BFVR `
+  -Destination ..\build\BFVR-interop-diagnostic.zip
+```
+
+The archive extracts as a separate `BFVR-InteropDiagnostic` folder beside the
+existing `BFVR` installation. The user launches its
+`Run-BFVRInteropDiagnostic.cmd` once, reproduces the issue, and exits BF1942
+normally. The wrapper creates `BFVR-interop-diagnostic.zip` beside the game;
+that archive contains only the loader, producer, presenter, and BF42++ logs
+plus a SHA-256 manifest. The diagnostic install uses its own seeded settings
+file and does not replace the user's existing BFVR files or configuration.
+
 ## Stage the player payload
 
 Build both architectures and the settings seed writer, then run:

@@ -194,11 +194,11 @@ void ResetD3D8ScopeAimSmoothing(
     float scopeFovRadians) noexcept;
 
 // Keeps the already head-adjusted camera position at the viewer and the gun's
-// yaw/pitch aim, but separates their sideways roll. relativeHeadCamera is the
-// raw tracked head delta with no native game-camera swing mixed in. The
-// magnified world takes roll only from that head delta; the returned relative
-// roll lets the native mask/reticle take roll only from the weapon. Weapon
-// translation is ignored.
+// aim direction, while building the view's up direction from world-up and
+// applying only the tracked head's local-forward roll. relativeHeadCamera is
+// the raw tracked head delta with no native game-camera swing mixed in. The
+// returned relative roll lets the native mask/reticle take roll only from the
+// weapon. Weapon translation is ignored.
 [[nodiscard]] std::optional<IndependentScopeRollCamera>
 MakeD3D8IndependentRollScopeCamera(
     const Matrix4& headAdjustedCameraWorld,

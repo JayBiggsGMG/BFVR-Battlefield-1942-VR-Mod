@@ -3,9 +3,26 @@
 #include "bfvr_shared_bridge.hpp"
 
 #include <windows.h>
+#include <d3d11.h>
 
 namespace bfvr
 {
+
+struct D3D8To9InteropProbeResult
+{
+    HRESULT prerequisiteResult = E_PENDING;
+    HRESULT factoryResult = E_PENDING;
+    HRESULT adapterEnumerationResult = E_PENDING;
+    HRESULT adapterDescriptionResult = E_PENDING;
+    HRESULT createDeviceResult = E_PENDING;
+    HRESULT openSharedResourceResult = E_PENDING;
+    LUID producerAdapterLuid = {};
+    LUID probeAdapterLuid = {};
+    D3D_FEATURE_LEVEL featureLevel = static_cast<D3D_FEATURE_LEVEL>(0);
+    wchar_t adapterDescription[128] = {};
+    D3D11_TEXTURE2D_DESC openedTextureDescription = {};
+    bool openedTexture = false;
+};
 
 // Opens one newly created legacy D3D9 shared texture through a temporary
 // in-process D3D11 device on the producer's exact adapter. Some graphics
@@ -15,6 +32,7 @@ namespace bfvr
 // frame.
 [[nodiscard]] bool PrimeD3D8To9D3D11SharedTextureInterop(
     const BFVRD3D8To9SharedDeviceDiagnostics& producerDiagnostics,
-    HANDLE legacySharedHandle) noexcept;
+    HANDLE legacySharedHandle,
+    D3D8To9InteropProbeResult* probeResult = nullptr) noexcept;
 
 } // namespace bfvr

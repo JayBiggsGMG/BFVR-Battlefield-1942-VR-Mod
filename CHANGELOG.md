@@ -1,7 +1,31 @@
 # BFVR Changelog
 
 This file records user-visible changes to BFVR. GitHub Release notes should use
-the v1.0.2 section exactly as written below.
+the current version's section once it is released.
+
+## [1.0.3] - 2026-10-24
+
+### Added
+
+- The DirectSound 3D listener now follows the VR camera orientation when the
+  active audio backend exposes `IDirectSound3DListener`. BFVR does not bundle,
+  install, replace, or reconfigure `dsound.dll` or DSOAL. Optional listener
+  position tracking is available in `UserConfig.txt` and defaults off.
+
+### Fixed
+
+- Fixed intermittent scoped-view orientation snaps near the backward-facing
+  aim direction by keeping the corrected weapon direction and deriving camera
+  up from world-up; head roll and weapon-reticle roll remain independent.
+- Fixed VR placement of animated meshes when BF42++ 2.0's
+  `fixAnimatedMeshLighting` feature substitutes its programmable vertex shader;
+  soldier hands and vehicle tracks no longer get treated as camera-locked
+  geometry. The existing animated-mesh draw-site checks remain in place.
+
+### Credits
+
+- Thanks to Casqade for the DSOAL and BF42++ animated-mesh fixes that informed
+  the audio-listener and animated-mesh improvements in this release.
 
 ## [1.0.2]
 

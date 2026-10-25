@@ -74,11 +74,19 @@ pointers, C++ object ownership, or architecture-sized fields in shared records.
 The launcher owns player startup, diagnostics defaults, BF42++ selection,
 game-build reporting, injection, process replacement following, startup-movie
 suspension/restoration, and launch-local renderer isolation.
+When following BF1942 process replacements, the loader verifies each
+replacement's full image path against the selected installation before
+injection. Its process snapshot scan logs each unseen candidate's PID, parent
+PID, resolved image path, same-install comparison, and access/query/thread
+rejection once per PID. Borderless1942 may create replacements that Windows
+does not allow the loader to inspect; users should disable Borderless1942 when
+using BFVR.
 
 ### Win32 game client
 
 - `src/client/BFVRClient.cpp`
 - `src/client/D3D8StereoPairProbe.cpp` and `src/client/internal/`
+- `src/client/DSoundListenerProbe.*` and `src/client/VrListenerBasis.*`
 - `src/client/ControllerInputOverlay.cpp`
 - `src/client/BF1942FrameLimiterOverride.*`
 
@@ -86,6 +94,12 @@ The client owns game-side hooks, stereo world/UI production, recovered
 Battlefield input submission, native arm/weapon integration, native BfMenu
 feedback dispatch, confirmed local-kill observation, frame-limiter override,
 and shared producer state.
+
+The DirectSound listener correction does not ship or replace an audio proxy.
+It uses the already-loaded DirectSound implementation, only substitutes the
+current renderer camera while that VR basis is fresh, and otherwise forwards
+the game's listener values. Keep optional listener-position tracking disabled
+by default unless a change explicitly validates its effects.
 
 ### D3D8 translator
 

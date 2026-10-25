@@ -233,7 +233,7 @@ bool TestProductionSeedAndTypedValues(const std::wstring& directory)
     }
     const auto defaults = store.Defaults();
     const auto decodedDefaults = bfvr::settings::DecodeUserSettings(defaults);
-    if (defaults.values.size() != 46 ||
+    if (defaults.values.size() != 48 ||
         decodedDefaults.playMode != bfvr::settings::PlayMode::Seated ||
         decodedDefaults.artificialTurnMode !=
             bfvr::settings::ArtificialTurnMode::Smooth ||
@@ -288,7 +288,9 @@ bool TestProductionSeedAndTypedValues(const std::wstring& directory)
             bfvr::settings::ColorProfile::Original ||
         decodedDefaults.colorExposureTenthsEv != 0 ||
         decodedDefaults.colorContrastPercent != 0 ||
-        decodedDefaults.colorSaturationPercent != 0)
+        decodedDefaults.colorSaturationPercent != 0 ||
+        !decodedDefaults.headTrackedAudioEnabled ||
+        decodedDefaults.headTrackedAudioPositionEnabled)
     {
         return false;
     }
@@ -362,6 +364,8 @@ bool TestProductionSeedAndTypedValues(const std::wstring& directory)
     changed.colorExposureTenthsEv = -7;
     changed.colorContrastPercent = 18;
     changed.colorSaturationPercent = -35;
+    changed.headTrackedAudioEnabled = false;
+    changed.headTrackedAudioPositionEnabled = true;
     auto encoded = defaults;
     bfvr::settings::EncodeUserSettings(changed, encoded);
     if (!store.Save(encoded) ||
@@ -511,6 +515,10 @@ bool TestProductionSeedAndTypedValues(const std::wstring& directory)
         contents.find("color_contrast_percent = 18") !=
             std::string::npos &&
         contents.find("color_saturation_percent = -35") !=
+            std::string::npos &&
+        contents.find("head_tracked_audio_enabled = false") !=
+            std::string::npos &&
+        contents.find("head_tracked_audio_position_enabled = true") !=
             std::string::npos &&
         contents.find("Ref2 HUD and separately composed interface layers are unchanged") !=
             std::string::npos &&

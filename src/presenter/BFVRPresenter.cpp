@@ -6,6 +6,7 @@
 #include "presenter/SharedTextureConsumer.h"
 #include "settings/UserSettings.h"
 #include "stereo/ComfortVignette.h"
+#include "../BFVRVersion.h"
 
 #include <windows.h>
 
@@ -13,6 +14,7 @@
 #include <array>
 #include <cstdio>
 #include <cwchar>
+#include <ctime>
 #include <iterator>
 
 namespace
@@ -36,7 +38,18 @@ bool ReadPerformanceDiagnosticsEnabled() noexcept
 
 void WriteLog(void*, const wchar_t* message)
 {
-    fwprintf(g_output, L"[PRESENTER] %s\n", message);
+    const std::time_t now = std::time(nullptr);
+    std::tm localTime = {};
+    wchar_t timestamp[32] = L"0000-00-00 00:00:00";
+    if (localtime_s(&localTime, &now) == 0)
+    {
+        wcsftime(
+            timestamp,
+            std::size(timestamp),
+            L"%Y-%m-%d %H:%M:%S",
+            &localTime);
+    }
+    fwprintf(g_output, L"[%ls] [PRESENTER] %s\n", timestamp, message);
     fflush(g_output);
 }
 
@@ -1670,6 +1683,13 @@ int wmain(int argc, wchar_t** argv)
             L"[FAIL] Select either --duration-ms or --run-until-stopped.\n");
         return 2;
     }
+
+    fwprintf(
+        g_output,
+        L"[PRESENTER] BFVR %s OpenXR presenter starting; runUntilStopped=%ls.\n",
+        bfvr::kVersionString,
+        runUntilStopped ? L"yes" : L"no");
+    fflush(g_output);
 
     wchar_t payloadDirectory[MAX_PATH] = {};
     if (!GetExecutableDirectory(payloadDirectory, std::size(payloadDirectory)))

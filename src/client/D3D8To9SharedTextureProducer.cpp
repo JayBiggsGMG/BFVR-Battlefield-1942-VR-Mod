@@ -199,7 +199,9 @@ bool D3D8To9SharedTextureProducer::CreateTargets(
     smallProbeResult_ = E_PENDING;
     failedTargetIndex_ = shared::kTextureCount;
     deviceDiagnostics_ = {};
+    deviceDiagnosticsResult_ = E_PENDING;
     deviceDiagnostics_.size = sizeof(deviceDiagnostics_);
+    targetDiagnostics_ = {};
     if (!IsAvailable() || d3d8Device == nullptr)
     {
         lastCreateResult_ = E_NOINTERFACE;
@@ -234,6 +236,13 @@ bool D3D8To9SharedTextureProducer::CreateTargets(
             d3dFormats[index],
             &handle,
             &surfaces[index]);
+        targetDiagnostics_[index] = {
+            result,
+            reinterpret_cast<ULONG_PTR>(handle),
+            widths[index],
+            heights[index],
+            d3dFormats[index],
+            surfaces[index] != nullptr};
         lastCreateResult_ = result;
         created = created &&
             SUCCEEDED(result) &&
@@ -256,7 +265,7 @@ bool D3D8To9SharedTextureProducer::CreateTargets(
                 &smallHandle,
                 &smallSurface);
             ReleaseSurface(smallSurface);
-            getDeviceDiagnostics_(
+            deviceDiagnosticsResult_ = getDeviceDiagnostics_(
                 d3d8Device,
                 &deviceDiagnostics_);
             break;
@@ -280,7 +289,7 @@ bool D3D8To9SharedTextureProducer::CreateTargets(
     }
     else
     {
-        getDeviceDiagnostics_(
+        deviceDiagnosticsResult_ = getDeviceDiagnostics_(
             d3d8Device,
             &deviceDiagnostics_);
     }
@@ -319,6 +328,11 @@ HRESULT D3D8To9SharedTextureProducer::LastCreateResult() const noexcept
     return lastCreateResult_;
 }
 
+HRESULT D3D8To9SharedTextureProducer::DeviceDiagnosticsResult() const noexcept
+{
+    return deviceDiagnosticsResult_;
+}
+
 HRESULT D3D8To9SharedTextureProducer::SmallProbeResult() const noexcept
 {
     return smallProbeResult_;
@@ -333,5 +347,13 @@ const BFVRD3D8To9SharedDeviceDiagnostics&
 D3D8To9SharedTextureProducer::DeviceDiagnostics() const noexcept
 {
     return deviceDiagnostics_;
+}
+
+const std::array<
+    D3D8To9SharedTargetDiagnostic,
+    shared::kTextureCount>&
+D3D8To9SharedTextureProducer::TargetDiagnostics() const noexcept
+{
+    return targetDiagnostics_;
 }
 } // namespace bfvr

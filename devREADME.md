@@ -23,9 +23,14 @@ shortcuts; the player does not need the development batch file.
 
 ## Audio compatibility
 
-BFVR does not replace, reroute, or otherwise modify Battlefield 1942's audio
-backend. Audio remains owned by the installed game and any user-selected audio
-patch, including fan builds that restore hardware audio or provide HRTF.
+BFVR does not bundle, install, replace, or reconfigure Battlefield 1942's
+`dsound.dll` or DSOAL installation. During active VR presentation it hooks the
+DirectSound 3D listener exposed by the already-loaded audio backend so its
+orientation can follow the renderer's current VR camera. The hook forwards
+Battlefield's values unchanged unless a fresh VR camera basis is available;
+listener position tracking is separately configurable and defaults off.
+Existing HRTF support remains the responsibility of the audio backend already
+installed and configured for the game.
 
 ## Multiplayer compatibility and throwable items
 

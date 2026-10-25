@@ -38,6 +38,7 @@ struct BF1942D3D8DrawSignature
     std::uint64_t originalVertexShaderHash = 0;
     std::uint32_t originalVertexShaderByteCount = 0;
     std::uint32_t originalVertexShaderCreationOrdinal = 0;
+    bool originalVertexShaderProgrammable = false;
 };
 
 // This classifier is deliberately specific to the profiled BF1942 Win32
